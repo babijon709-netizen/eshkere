@@ -38,6 +38,28 @@ inline bool finite(const Vec3& value) {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
 
+// Семантика поля gravity — у двух источников цепочки она разная (снимки
+// дампов лежат в jni/tests/test_no_ballistics_memory.cpp):
+//   BallisticProfile.GRAVITY          — множитель штатного ускорения
+//                                       (замер профиля: 0.65; 1.0 = обычная
+//                                       гравитация);
+//   ShaftedProjectile.GRAVITY         — абсолютное ускорение в м/с²
+//                                       (замер префаба: 9.81).
+// Интегратор считает ускорение как kGravityY * params.gravity, то есть ждёт
+// множитель. Если взять м/с² напрямую, ускорение выходит 9.81² и дуга
+// перекомпенсируется в десять раз — аим стабильно стреляет ВЫШЕ головы на
+// дистанции (отчёт 10.2026), причём тем сильнее, чем дальше цель.
+// Порог 4 м/с²: множителем 4+ снаряд не описывается (такое оружие было бы видно
+// в игре сразу), а реальные значения файла — 9.81 и его полу-, кратные.
+// Отрицательное значение означает то же падение вниз.
+// Всегда возвращает множитель ≥ 0, пригодный для интегратора.
+inline float gravity_multiplier(float field_value) {
+    if (!finite(field_value)) return 1.0f;
+    float magnitude = field_value < 0.0f ? -field_value : field_value;
+    if (magnitude > 4.0f) magnitude /= -kGravityY;
+    return magnitude;
+}
+
 inline Vec3 add(const Vec3& a, const Vec3& b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }

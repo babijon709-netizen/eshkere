@@ -5,6 +5,7 @@
 #include "fast_loot_memory.h"
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
+#include "skin_memory.h"
 #include "object_data_memory.h"
 #include "app_state.h"
 #include "farm.h"
@@ -207,6 +208,10 @@ struct HeapMemory {
     bool read_range(uint64_t address, void* out, std::size_t size) {
         return address >= 0x10000 && size > 0 && g_mem.read_quiet(address, out, size);
     }
+    uint64_t ptr(uint64_t address) {
+        uint64_t p = 0;
+        return read(address, p) ? memio::untag(p) : 0;
+    }
     bool named_klass(uint64_t klass, const char* name, const char* namespaze) {
         if (klass < 0x10000) return false;
         uint64_t np=memory.ptr(klass+go_active::IL2CPP_CLASS_NAME);
@@ -305,6 +310,7 @@ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
 no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
+skin_memory::Controller<HeapMemory> skin_ctl(heap_memory);
 
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
@@ -529,6 +535,7 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
+    skin_ctl.reset(restore && g_mem.bound());
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -549,6 +556,8 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
         no_recoil_ctl.status = settings.no_recoil_button ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_ballistics_ctl.reset(false);
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
+        skin_ctl.reset(false);
+        skin_ctl.diag.status = settings.skin_changer ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -571,6 +580,26 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
             loot_announced = true;
         }
         if (!settings.fast_loot) loot_announced = false;
+    }
+    {
+        // Скинченджер: стор VNB не зависит от цепочки игрока — тикается до
+        // её резолва, как и быстрый подбор. Обход стора стоит пару–десятков
+        // читок на каждую запись, поэтому темп — 250 мс; изменение настроек
+        // (тумблер/слоты) пробивает темп немедленно.
+        const uint32_t skin_flags = (settings.skin_changer ? 1u : 0u);
+        static uint32_t skin_last_flags = ~0u;
+        static Clock::time_point skin_last_tick{};
+        const auto skin_now = Clock::now();
+        const bool skin_due = skin_flags != skin_last_flags ||
+                              skin_ctl.has_state() ||
+                              skin_now - skin_last_tick >= std::chrono::milliseconds(250);
+        if (skin_due) {
+            uint64_t store = g_il2cpp_base;
+            skin_last_tick = skin_now;
+            skin_last_flags = skin_flags;
+            skin_ctl.tick(epoch, store, settings.skin_changer,
+                          settings.skin_slots, 4);
+        }
     }
     const bool want_no_spread = settings.no_spread || esp_silent_wants_no_spread();
     // Use the local identity already validated by the world reader first. The
@@ -677,6 +706,11 @@ viewmodel::Diagnostics esp_viewmodel_diagnostics() {
     status.no_spread = weapons.spread;
     status.fast_fire = rapid_fire.status;
     return status;
+}
+
+viewmodel::SkinDiag esp_skin_diagnostics() {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    return skin_ctl.diag;
 }
 
 viewmodel::FpsUiInfo esp_viewmodel_fps_ui() {

@@ -628,6 +628,32 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xDD79368; // release 11949: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // было 0x28; перед spawned вставлен handlers(+0x28)
 
+// ---- Скинченджер: локальный стор выбранных скинов (SelectedSkinsKey.json) ---
+// Класс VNB (обфусцированное имя, TypeDefIndex 9984) держит статик lhb —
+// SelectedSkins, тот самый стор, который игра пишет/читает в
+// SelectedSkinsKey.json. Механизмрезолва тот же, что у NetworkClient выше:
+// слот TypeInfo берём из кода класса: обфусцированная .data-запись (outer)
+// загружается adrp/ldr, её содержимое лоадер восстанавливает R_AARCH64_RELATIVE
+// (адрес внутреннего слота), а Il2CppClass* читается уже по внутреннему слоту.
+//
+// VNB.Mpf (getter,(service 0x6AEE64C):
+//   adrp x19, 0xda4a000 ; ldr x19,[x19,#0x658]      <- outer slot 0xDA4A658
+//   ldr x0,[x19]                                    <- klass из inner slot
+//   ldr w8,[x0,#0xe4] ...bl..(class init)           <- живость класса
+//   ldr x8,[x0,#0xb8]                               <- static_fields
+//   ldr x0,[x8,#0x8]                                <- static lhb (с dump.cs «// 0x8»)
+// Релокация R_AARCH64_RELATIVE на 0xDA4A658: addend 0xDD7E788 = внутренний слот.
+inline constexpr std::uint64_t SKIN_STORE_TYPEINFO_RVA     = 0xDD7E788;
+inline constexpr std::uint64_t SKIN_STORE_SELECTED_SKINS   = 0x8;    // VNB.lhb (статик)
+// SelectedSkins (Oxide.GUISystem): List<SelectedSkin> selectedSkins @0x10.
+inline constexpr std::uint64_t SKIN_STORE_LIST             = 0x10;
+// SelectedSkin: string itemShortName @0x10, List<OrderedSkin> orderedSkin @0x18.
+inline constexpr std::uint64_t SELECTED_SKIN_SHORT_NAME    = 0x10;
+inline constexpr std::uint64_t SELECTED_SKIN_ORDERED       = 0x18;
+// OrderedSkin: int skinId @0x10 — это «Номер» скина из ItemSkinsDTO/SkinMappingDTO.
+// Строковые смещения: общие IL2CPP_STRING_LENGTH / IL2CPP_STRING_CHARS выше.
+inline constexpr std::uint64_t ORDERED_SKIN_SKIN_ID        = 0x10;
+
 // System.Collections.Generic.Dictionary<uint, NetworkIdentity> (this BCL has no
 // _fastModMultiplier): _buckets 0x10, _entries 0x18, _count 0x20, _freeList 0x24.
 // Entry { int hashCode; int next; uint key; object value; } -> 24 bytes.

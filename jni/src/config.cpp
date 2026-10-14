@@ -477,9 +477,27 @@ static void LoadCfgByName(const char* name, bool announce) {
     uint8_t buf[sizeof(s)];
     f.read((char*)buf, sizeof(buf));
     size_t got = (size_t)f.gcount();
+    // Прицеп конфига бывает двух длин: 36 байт (v3–v6) и 68 (v7, слоты
+    // скинченджера). Длина нужна ДО чтения UI-трейлера, иначе старый конфиг
+    // прочитает UI-трейлер со смещением, а новый наоборот. Размер прицепа
+    // лежит на смещении 0x8 в самой записи, но XOR в XorBuf зависит от
+    // индекса — расшифровка «головы» не является расшифровкой целого прицепа.
+    // Поэтому длина вычитывается из временной копии (расшифровка первых
+    // 36 байт и чтение поля size), а сам буфер остаётся сырым: дальше
+    // XorBuf(extra, extraGot) расшифрует ровно его целиком.
     uint8_t extra[sizeof(viewmodel::ConfigExtension)]{};
+    uint8_t extra_probe[sizeof(viewmodel::ConfigExtension)]{};
     f.read((char*)extra, sizeof(extra));
-    size_t extraGot = (size_t)f.gcount();
+    memcpy(extra_probe, extra, sizeof(extra));
+    const size_t extraRaw = (size_t)f.gcount();
+    size_t extraGot = extraRaw;
+    if (extraRaw >= 36) {
+        for (size_t i = 0; i < 36; ++i)
+            extra_probe[i] ^= (kXorKey ^ (uint8_t)(i * 0x1D + 0x3B));
+        const uint32_t declared = extra_probe[8] | (extra_probe[9] << 8) |
+                                  (extra_probe[10] << 16) | ((uint32_t)extra_probe[11] << 24);
+        if (declared == 36 || declared == 68) extraGot = declared <= extraRaw ? declared : extraRaw;
+    }
     CfgUiTrailer ui{};
     const bool hasUi = ReadUiTrailer(f, ui);
     f.close();
@@ -503,7 +521,8 @@ static void LoadCfgByName(const char* name, bool announce) {
         viewmodel::ConfigExtension extension;
         memcpy(&extension, extra, extraGot);   // v3: 32 байта, хвост — дефолты
         if (extension.magic == 0x31574d56u &&
-            (extension.version == 3 || extension.version == 4 || extension.version == 5 || extension.version == 6) &&
+            (extension.version == 3 || extension.version == 4 || extension.version == 5 ||
+             extension.version == 6 || extension.version == 7) &&
             extension.size == extraGot) {
             g_state.esp_turrets = (extension.flags & 128u) != 0;
             g_state.esp_backpacks = (extension.flags & 256u) != 0;

@@ -257,6 +257,13 @@ inline std::uint64_t IL2CPP_LIST_SIZE = game_offsets::IL2CPP_LIST_SIZE;
 inline std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = game_offsets::IL2CPP_ARRAY_FIRST_ELEMENT;
 inline std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = game_offsets::NETWORK_CLIENT_TYPEINFO_RVA;
 inline std::uint64_t NETWORK_CLIENT_SPAWNED = game_offsets::NETWORK_CLIENT_SPAWNED;
+// Скинченджер: смещения только для release-дампа (skin_memory.h).
+inline std::uint64_t SKIN_STORE_TYPEINFO_RVA = game_offsets::SKIN_STORE_TYPEINFO_RVA;
+inline std::uint64_t SKIN_STORE_SELECTED_SKINS = game_offsets::SKIN_STORE_SELECTED_SKINS;
+inline std::uint64_t SKIN_STORE_LIST = game_offsets::SKIN_STORE_LIST;
+inline std::uint64_t SELECTED_SKIN_SHORT_NAME = game_offsets::SELECTED_SKIN_SHORT_NAME;
+inline std::uint64_t SELECTED_SKIN_ORDERED = game_offsets::SELECTED_SKIN_ORDERED;
+inline std::uint64_t ORDERED_SKIN_SKIN_ID = game_offsets::ORDERED_SKIN_SKIN_ID;
 inline std::uint64_t DICT_ENTRIES = game_offsets::DICT_ENTRIES;
 inline std::uint64_t DICT_COUNT = game_offsets::DICT_COUNT;
 inline std::uint64_t DICT_ENTRY_STRIDE = game_offsets::DICT_ENTRY_STRIDE;

@@ -1032,6 +1032,88 @@ float TabContent(int tab, float dt, float cW) {
                   g_state.a_no_ballistics, true, false);
         if (oldSpread != vm.no_spread || oldRecoil != vm.no_recoil_button ||
             oldBallistics != vm.no_ballistics) esp_viewmodel_tick(vm);
+
+
+        // ---- Скинченджер ---------------------------------------------------
+        // Перезапись skinId в локальном сторе выбранных скинов (skin_memory.h,
+        // тик из esp_viewmodel_tick). Список предметов — снимок стора из
+        // контроллера: esp_skin_diagnostics() отдаёт уже снятый снимок и не
+        // ходит в память игры из меню.
+        SHdr(XS("Скинченджер"));
+        {
+            const viewmodel::SkinDiag sd = esp_skin_diagnostics();
+            static int s_item_index = 0;       // выбранный «Предмет» (0..n-1)
+            static int s_applied_index = -1;   // предмет, за которым закреплён слот 0
+            static float s_skin_value = 0.f;   // «Номер скина» 0..32
+            CardBg(Layout::RowH * 2.f + Layout::SliderH * 2.f);
+            ToggleRow("##skinchange", XS("Скинченджер"), &vm.skin_changer,
+                      g_state.a_skinchanger, true, false);
+            if (s_item_index > sd.entry_count - 1) s_item_index = std::max(0, sd.entry_count - 1);
+            // Строка предмета: тап листает записи стора, справа — имя записи и
+            // её текущий номер скина. Динамическая подпись, поэтому паттерн
+            // prioRow (InvisibleButton + AddText): голый ImGui::Text в этом
+            // меню живёт под своим тач-пайплайном.
+            {
+                const float rowH = Layout::RowH;
+                const float inset = Layout::Inset, padX = Layout::PadX;
+                const float avW = ImGui::GetContentRegionAvail().x;
+                auto* dl = ImGui::GetWindowDrawList();
+                auto* fn = ImGui::GetFont();
+                const float fs = ImGui::GetFontSize() * 1.15f;
+                auto pos = ImGui::GetCursorScreenPos();
+                const float cX = pos.x + inset, cW = avW - inset * 2.f;
+                const float cy = pos.y + rowH * 0.5f;
+                ImGui::InvisibleButton("##skinitem", {avW, rowH});
+                const bool popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+                if (WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed) {
+                    s_item_index = (s_item_index + 1) % std::max(1, sd.entry_count);
+                    g_input.touchConsumed = true;
+                    PlaySound(SND_CLICK);
+                }
+                dl->AddText(fn, fs, {cX + padX, cy - fs * 1.15f * 0.5f}, C::U(C::Dim()),
+                            XS("Предмет"));
+                char val[72];
+                if (sd.entry_count > 0 && s_item_index < viewmodel::kSkinDiagEntries) {
+                    const viewmodel::SkinDiagEntry& e = sd.entry[s_item_index];
+                    snprintf(val, sizeof(val), XS("%s - скин %d"),
+                             e.item[0] ? e.item : "?", (int)e.skin_id);
+                } else {
+                    snprintf(val, sizeof(val), "%s", XS("Нет записей"));
+                }
+                const auto vsz = fn->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, val);
+                dl->AddText(fn, ImGui::GetFontSize(),
+                            {cX + cW - padX - vsz.x, cy - vsz.y * 0.5f},
+                            C::U(C::Txt()), val);
+            }
+            float item_f = (float)s_item_index;
+            SliderRow("##skitem", XS(" "),
+                      &item_f, 0.f, std::max(0.f, (float)sd.entry_count - 1.f), "%.0f",
+                      true, false, g_state.sl_skin_item, dt);
+            s_item_index = (int)std::lround(item_f);
+            // Слот 0 закрепляется за выбранным предметом: при смене выбора хэш
+            // коммитится в слот, номер скина подтягивается к текущему значению.
+            uint32_t want_hash = 0;
+            int32_t current_skin = 0;
+            if (sd.entry_count > 0 && s_item_index < viewmodel::kSkinDiagEntries) {
+                want_hash = sd.entry[s_item_index].hash;
+                current_skin = sd.entry[s_item_index].skin_id;
+            }
+            if (s_item_index != s_applied_index) {
+                s_applied_index = s_item_index;
+                s_skin_value = current_skin >= 0 ? (float)current_skin : 0.f;
+                vm.skin_slots[0].hash = want_hash;
+                vm.skin_slots[0].skin_id = (int32_t)s_skin_value;
+                esp_viewmodel_tick(vm);
+            }
+            SliderRow("##sknum", XS("Номер скина"), &s_skin_value, 0.f, 32.f, "%.0f",
+                      true, false, g_state.sl_skin_number, dt);
+            const int32_t new_skin = (int32_t)std::lround(s_skin_value);
+            if (vm.skin_slots[0].hash != want_hash || vm.skin_slots[0].skin_id != new_skin) {
+                vm.skin_slots[0].hash = want_hash;
+                vm.skin_slots[0].skin_id = new_skin;
+                esp_viewmodel_tick(vm);
+            }
+        }
         // Диагностические строки («не применено» / «ожидание») убраны по
         // просьбе пользователя: применение видно в игре, подробности — в журнале.
         SHdr(XS("Темп оружия"));

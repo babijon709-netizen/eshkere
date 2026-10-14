@@ -144,30 +144,39 @@ void test_config_extension() {
     settings.no_ballistics = true;
     settings.no_spread = true;
     settings.fast_loot = true;
+    settings.skin_changer = true;
+    settings.skin_slots[0].hash = 123u;
+    settings.skin_slots[0].skin_id = 5;
     auto encoded = viewmodel::encode(settings);
-    assert(encoded.version == 6 && encoded.size == sizeof(encoded));
+    assert(encoded.version == 7 && encoded.size == sizeof(encoded));
     assert((encoded.flags & 2048u) != 0);
+    assert((encoded.flags & 4096u) != 0); // бит 12: скинченджер
     auto decoded = viewmodel::decode(&encoded, sizeof(encoded));
     assert(decoded.no_ballistics && decoded.no_spread && decoded.fast_loot);
+    assert(decoded.skin_changer);
+    assert(decoded.skin_slots[0].hash == 123u && decoded.skin_slots[0].skin_id == 5);
 
     encoded.aim_lead_ms = 75.f;
     assert(viewmodel::decode_aim_lead_ms(&encoded, sizeof(encoded)) == 75.f);
-    auto v5 = encoded;
-    v5.version = 5;
-    v5.flags &= ~2048u;
-    decoded = viewmodel::decode(&v5, sizeof(v5));
-    assert(!decoded.no_ballistics);
-    assert(viewmodel::decode_aim_lead_ms(&v5, sizeof(v5)) == 75.f);
+    // v6 не знает про бит 12 и слоты скинов: старый конфиг грузится без них.
+    auto v6 = encoded;
+    v6.version = 6;
+    v6.flags &= ~4096u;
+    decoded = viewmodel::decode(&v6, sizeof(v6));
+    assert(decoded.no_ballistics && !decoded.skin_changer);
+    assert(decoded.skin_slots[0].hash == 0);
+    assert(viewmodel::decode_aim_lead_ms(&v6, sizeof(v6)) == 75.f);
 
-    auto old_unknown_flag = v5;
-    old_unknown_flag.flags |= 2048u;
+    auto old_unknown_flag = v6;
+    old_unknown_flag.flags |= 4096u; // v6 не знает бит 12
     decoded = viewmodel::decode(&old_unknown_flag, sizeof(old_unknown_flag));
     assert(!decoded.no_ballistics && !decoded.no_spread && !decoded.fast_loot);
 
     auto corrupt = encoded;
-    corrupt.flags |= 4096u;
+    corrupt.flags |= 8192u; // бит старше поддерживаемых → конфиг полностью сбрасывается
     decoded = viewmodel::decode(&corrupt, sizeof(corrupt));
     assert(!decoded.no_ballistics && !decoded.no_spread && !decoded.fast_loot);
+    assert(!decoded.skin_changer);
 }
 
 void test_kind(fast_fire::Kind kind) {

@@ -372,6 +372,7 @@ int main(int argc, char* argv[]) {
         esp_freecam_set(false);
         stop_attach_thread();
         esp_viewmodel_reset(true);
+        esp_fog_sky_restore();   // свой туман/небо: вернуть поля и цвет ключей
         process_detach();
         CfgWatchFree();
         AudioFree();
@@ -383,6 +384,7 @@ int main(int argc, char* argv[]) {
     RestoreLang();          // язык из прошлого запуска (конфиг ниже может его переписать)
     RestoreAccent();        // акцент интерфейса из прошлого запуска
     RestoreLayout();        // кнопки и тач-зоны из прошлого запуска (точку аима конфиг ниже может переписать)
+    RestoreFogSky();        // свой туман/небо из прошлого запуска (fog_sky.h)
     CfgScanDir();
     ConfigLoadLast();
     ApplyTheme();
@@ -485,6 +487,7 @@ int main(int argc, char* argv[]) {
     esp_freecam_set(false);
     stop_attach_thread();
     esp_viewmodel_reset(true);
+    esp_fog_sky_restore();   // свой туман/небо: вернуть поля и цвет ключей
     process_detach();
     CfgWatchFree();
     AudioFree();

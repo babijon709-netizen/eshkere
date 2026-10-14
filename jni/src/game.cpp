@@ -4,6 +4,7 @@
 #include "player_esp_watchdog.h"
 #include "silent_aim.h"
 #include "viewmodel.h"
+#include "fog_sky.h"             // «свой туман и своё небо»: настройки (реализация — ниже)
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
@@ -183,24 +184,259 @@ static void xray_apply(uint64_t native_cam) {
     }
 }
 
-// ==== Всегда день: TOD_Sky (ассет Time Of Day) ==============================
-// Инстанс ищется сканом области TypeInfo-слотов и валидируется структурой
+// ==== Всегда день, свой туман и своё небо: TOD_Sky ==========================
+// Инстанс неба ищется сканом области TypeInfo-слотов и валидируется структурой
 // (см. TOD_* в game_offsets.h): статик-список инстансов -> элемент того же
-// класса -> Cycle -> Hour/Day/Month/Year в разумных пределах. Пока включено,
-// фоновый поток пишет полдень прямо в Cycle.Hour — игровой Update сам
-// разворачивает солнце.
+// класса -> Cycle -> Hour/Day/Month/Year в разумных пределах. «Всегда день»
+// пишет полдень прямо в Cycle.Hour — игровой Update сам разворачивает солнце.
+//
+// «Свой туман и своё небо» (настройки — fog_sky.h, меню — вкладка «Разное»)
+// живёт на этом же инстансе и делит с «Всегда день» один фоновый писатель:
+//   * «быстрые» поля (Cycle.Hour, Clouds.Coverage/Brightness,
+//     Atmosphere.Fogginess) игра переписывает сама каждый тик — их держит
+//     писатель с периодом ~2 мс;
+//   * «долгие» поля (размер/насыщенность облаков, рэлей/ми/яркость/контраст
+//     воздуха) игра не трогает — пишем один раз и возвращаем при выключении;
+//   * цвет — содержимое нативного буфера Gradient-ов SkyColor/FogColor: ссылки
+//     на сами Gradient-ы игра переставляет (погодный блендер
+//     BiomeDayParametersMixer собирает свой кэш и подменяет им параметры неба),
+//     а вот буфер ключей остаётся нашим. Оригинал сохраняется побайтно.
 static bool     g_day_enabled = false;
 static uint64_t g_day_tod = 0;          // подтверждённый инстанс TimeOfDay
-static std::atomic<uint64_t> g_day_cycle_addr{0}; // Cycle.Hour для писателя
-static std::atomic<bool>     g_day_writer_running{false};
-static int      g_day_retry = 0;
 
 void esp_set_always_day(bool enabled) { g_day_enabled = enabled; }
 
-static void always_day_tick() {
-    if (!g_day_enabled) {
-        // Выключили: писатель замолкает (адрес в 0), часы игры идут сами.
-        g_day_cycle_addr.store(0);
+// ---- настройки из меню и быстрый план писателя -----------------------------
+// esp_set_fog_sky() зовётся меню каждый кадр (esp_draw.cpp, рядом с
+// esp_set_always_day): здесь только сравнение и копия, без чтений игры.
+static std::mutex        g_fs_mu;           // защищает g_fs и g_fs_rapid
+static fog_sky::Settings g_fs;              // последние настройки
+static bool              g_fs_dirty = true; // настройки сменились -> пересобрать
+static uint64_t          g_fs_tod = 0;      // инстанс, к которому привязаны патчи
+
+void esp_set_fog_sky(const fog_sky::Settings& s) {
+    const fog_sky::Settings v = fog_sky::sanitize(s);
+    std::lock_guard<std::mutex> lock(g_fs_mu);
+    if (!fog_sky::same(v, g_fs)) { g_fs = v; g_fs_dirty = true; }
+}
+
+// Поля, которые игра переписывает сама: адрес + значение. Адрес 0 — поле не
+// наше (фича выключена), писатель его не трогает.
+struct FsRapid {
+    uint64_t hour_addr = 0; float hour = 0.f;
+    uint64_t cov_addr  = 0; float cov  = 0.f;
+    uint64_t bri_addr  = 0; float bri  = 0.f;
+    uint64_t fog_addr  = 0; float fog  = 0.f;
+    bool empty() const { return !hour_addr && !cov_addr && !bri_addr && !fog_addr; }
+};
+static FsRapid g_fs_rapid;                  // под g_fs_mu
+static std::atomic<bool> g_env_writer_started{false}; // поток писателя запущен
+
+// Единственный писатель «быстрых» полей на обе фичи. Период ~2 мс: с периодом
+// кадра игровое время успевало мигнуть своим значением (проверено на «Всегда
+// день»), с 2 мс окно практически исчезает.
+static void env_writer_loop() {
+    for (;;) {
+        FsRapid p;
+        {
+            std::lock_guard<std::mutex> lock(g_fs_mu);
+            p = g_fs_rapid;
+        }
+        if (p.hour_addr) wr_buf(p.hour_addr, &p.hour, sizeof(float));
+        if (p.cov_addr)  wr_buf(p.cov_addr,  &p.cov,  sizeof(float));
+        if (p.bri_addr)  wr_buf(p.bri_addr,  &p.bri,  sizeof(float));
+        if (p.fog_addr)  wr_buf(p.fog_addr,  &p.fog,  sizeof(float));
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
+
+// ---- «долгие» поля и цвет ключей Gradient-ов -------------------------------
+// Оригиналы храним сами: при выключении возвращаем на место; при потере
+// инстанса (смена сцены/мира) — просто забываем, писать по мёртвым адресам
+// нельзя (тот же принцип, что у esp_viewmodel_reset(false)).
+struct FsScalar { uint64_t addr = 0; float orig = 0.f; float now = 0.f; bool valid = false; };
+static FsScalar g_fs_scalars[6];            // облака (2) + воздух (4)
+struct FsGradient {
+    uint64_t buf = 0; uint32_t len = 0;
+    fog_sky::Layout layout{};
+    uint8_t orig[fog_sky::kBufMax];
+    bool valid = false;
+};
+static FsGradient g_fs_grads[4];            // Day/Night: SkyColor, FogColor
+
+static void fs_forget_env(bool write_back) {
+    for (auto& s : g_fs_scalars) {
+        if (s.valid && write_back && s.addr) wr_buf(s.addr, &s.orig, sizeof(float));
+        s = FsScalar{};
+    }
+    for (auto& g : g_fs_grads) {
+        if (g.valid && write_back && g.buf) wr_buf(g.buf, g.orig, g.len);
+        g = FsGradient{};
+    }
+}
+
+// «Долгие» float-поля: пишем, только пока фича включена, выключили — вернули.
+static void fs_apply_scalars(const fog_sky::Settings& fs) {
+    struct Want { uint64_t addr; float v; };
+    Want want[6];
+    int n = 0;
+    const uint64_t clouds = rd_ptr(g_day_tod + TOD_SKY_CLOUDS);
+    const uint64_t atmo   = rd_ptr(g_day_tod + TOD_SKY_ATMOSPHERE);
+    if (fs.sky_on) {
+        if (clouds >= 0x10000) {
+            want[n++] = {clouds + TOD_CLOUD_SIZE,       fs.cloud_size};
+            want[n++] = {clouds + TOD_CLOUD_SATURATION, fs.cloud_saturation};
+        }
+        if (atmo >= 0x10000) {
+            want[n++] = {atmo + TOD_ATMO_RAYLEIGH,   fs.atmo_rayleigh};
+            want[n++] = {atmo + TOD_ATMO_MIE,        fs.atmo_mie};
+            want[n++] = {atmo + TOD_ATMO_BRIGHTNESS, fs.atmo_brightness};
+            want[n++] = {atmo + TOD_ATMO_CONTRAST,   fs.atmo_contrast};
+        }
+    }
+    for (int i = 0; i < 6; ++i) {
+        FsScalar& s = g_fs_scalars[i];
+        if (i >= n) {
+            if (s.valid) { if (s.addr) wr_buf(s.addr, &s.orig, sizeof(float)); s = FsScalar{}; }
+            continue;
+        }
+        if (!s.valid || s.addr != want[i].addr) {
+            if (s.valid && s.addr) wr_buf(s.addr, &s.orig, sizeof(float));
+            float orig = 0.f;
+            if (!rd_buf(want[i].addr, &orig, sizeof(orig))) { s = FsScalar{}; continue; }
+            s = FsScalar{}; s.addr = want[i].addr; s.orig = orig; s.now = orig; s.valid = true;
+        }
+        if (s.now != want[i].v && wr_buf(s.addr, &want[i].v, sizeof(float))) s.now = want[i].v;
+    }
+}
+
+// Цвет ключей: целимся в САМ буфер (Gradient.m_Ptr), а не в ссылку на Gradient.
+// Пишем от сохранённого оригинала: иначе повторные применения накапливали бы
+// оттенок. Раскладку буфера определяет fog_sky::probe — на незнакомом буфере
+// (другая версия Unity) просто ничего не делаем.
+static void fs_apply_colors(const fog_sky::Settings& fs) {
+    const uint64_t day   = rd_ptr(g_day_tod + TOD_SKY_DAY);
+    const uint64_t night = rd_ptr(g_day_tod + TOD_SKY_NIGHT);
+    const uint64_t objs[4] = {
+        day   >= 0x10000 ? rd_ptr(day   + TOD_PARAM_SKY_COLOR) : 0,
+        night >= 0x10000 ? rd_ptr(night + TOD_PARAM_SKY_COLOR) : 0,
+        day   >= 0x10000 ? rd_ptr(day   + TOD_PARAM_FOG_COLOR) : 0,
+        night >= 0x10000 ? rd_ptr(night + TOD_PARAM_FOG_COLOR) : 0,
+    };
+    const bool  on[4] = {fs.sky_on && fs.sky_tint > 0.005f, fs.sky_on && fs.sky_tint > 0.005f,
+                         fs.fog_on && fs.fog_tint > 0.005f, fs.fog_on && fs.fog_tint > 0.005f};
+    const float* rgb[4] = {fs.sky_color, fs.sky_color, fs.fog_color, fs.fog_color};
+    const float strength[4] = {fs.sky_tint, fs.sky_tint, fs.fog_tint, fs.fog_tint};
+    for (int i = 0; i < 4; ++i) {
+        FsGradient& g = g_fs_grads[i];
+        if (!on[i] || objs[i] < 0x10000) {
+            if (g.valid) { if (g.buf) wr_buf(g.buf, g.orig, g.len); g = FsGradient{}; }
+            continue;
+        }
+        const uint64_t buf = rd_ptr(objs[i] + GRADIENT_NATIVE_PTR);
+        if (buf < 0x1000) continue;                 // m_Ptr ещё не создан
+        if (!g.valid || g.buf != buf) {
+            if (g.valid && g.buf) wr_buf(g.buf, g.orig, g.len);
+            // Нативный буфер Gradient-а может быть ровно 0xF0 байт (раскладка
+            // со шагом ключа 0x14), и чтение «с запасом» упёрлось бы в конец
+            // отображения — такое чтение падает целиком, а не частично. Поэтому
+            // пробуем размеры по убыванию; непрочитанный хвост остаётся нулями.
+            static const std::uint32_t kTrySize[] = {fog_sky::kBufMax, 0x150, 0x110, 0xf0};
+            uint8_t raw[fog_sky::kBufMax] = {};
+            fog_sky::Layout lay{};
+            bool probed = false;
+            for (std::uint32_t n : kTrySize) {
+                if (!rd_buf(buf, raw, n)) continue;
+                if (fog_sky::probe(raw, n, lay)) { probed = true; break; }
+            }
+            if (!probed) { g = FsGradient{}; continue; }
+            g = FsGradient{}; g.buf = buf; g.len = lay.bytes; g.layout = lay;
+            std::memcpy(g.orig, raw, lay.bytes);
+            g.valid = true;
+        }
+        uint8_t out[fog_sky::kBufMax];
+        std::memcpy(out, g.orig, g.len);
+        fog_sky::tint_keys(out, g.layout, rgb[i], strength[i]);
+        wr_buf(g.buf, out, g.len);
+    }
+}
+
+// Возврат «долгих» полей и цвета ключей на место при выходе (живое соединение),
+// симметрично esp_viewmodel_reset(true): адреса игры ещё живы, поэтому оригиналы
+// пишутся обратно. Писатель при этом замолкает.
+void esp_fog_sky_restore() {
+    { std::lock_guard<std::mutex> lock(g_fs_mu); g_fs_rapid = FsRapid{}; }
+    fs_forget_env(true);
+    g_fs_tod = 0;
+}
+
+// ---- поиск инстанса неба ---------------------------------------------------
+// g_day_tod — объект TOD_Sky (небесный менеджер ассета Time of Day). Имя его
+// класса обфусцировано и РОТИРУЕТ каждый билд: в дампе 89e0b63 это был "IY", в
+// 62a8534 — "UV" (в ещё более старом — "Gq"), в 11949 — "eN", в 11959 (beta) —
+// "rU". Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
+// метадата-слоты так и не инициализированы (лог day_log: нечётные токены) —
+// Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его класса
+// первое статик-поле — список инстансов List<Self>; элемент списка — объект того
+// же класса; у объекта по TOD_SKY_CYCLE (0x40) лежит TOD_CycleParameters с
+// полями Hour(float 0..24)/Day(1..31)/Month(1..12)/Year(1900..2100). Имя
+// TOD_CycleParameters не обфусцировано — по нему класс и находится в новом
+// дампе (grep 'TOD_CycleParameters_o\* Cycle' il2cpp.h).
+static bool tod_find_sky() {
+    static uint64_t s_scan_rva = TOD_SCAN_RVA_BEGIN;
+    const uint64_t kScanEnd = TOD_SCAN_RVA_END;
+    uint64_t slots[128];
+    if (rd_buf(g_il2cpp_base + s_scan_rva, slots, sizeof(slots))) {
+        for (int i = 0; i < 128 && !g_day_tod; ++i) {
+            uint64_t klass = slots[i];
+            if (klass < 0x10000 || (klass & 0x7) != 0) continue;
+            uint64_t statics = rd_ptr(klass + 0xB8);
+            if (statics < 0x10000) continue;
+            uint64_t list = rd_ptr(statics);      // static List<Self> instances
+            if (list < 0x10000) continue;
+            uint64_t items = rd_ptr(list + 0x10); // List._items
+            int32_t size = rd<int32_t>(list + 0x18);
+            if (items < 0x10000 || size <= 0 || size > 4) continue;
+            uint64_t sky = rd_ptr(items + 0x20);  // [0]
+            if (sky < 0x10000) continue;
+            if (rd_ptr(sky) != klass) continue;   // элемент — того же класса
+            uint64_t cyc = rd_ptr(sky + TOD_SKY_CYCLE);
+            if (cyc < 0x10000) continue;
+            float hour = rd<float>(cyc + TOD_CYCLE_HOUR);
+            int day = rd<int32_t>(cyc + TOD_CYCLE_DAY);
+            int mon = rd<int32_t>(cyc + TOD_CYCLE_MONTH);
+            int year = rd<int32_t>(cyc + TOD_CYCLE_YEAR);
+            if (std::isfinite(hour) && hour >= 0.0F && hour <= 24.0F &&
+                day >= 1 && day <= 31 && mon >= 1 && mon <= 12 &&
+                year >= 1900 && year <= 2100)
+                g_day_tod = sky;
+        }
+    }
+    s_scan_rva += 128 * 8;
+    if (s_scan_rva >= kScanEnd) s_scan_rva = TOD_SCAN_RVA_BEGIN;
+    return g_day_tod != 0;
+}
+
+// Единственный тик на «Всегда день» и «Свой туман/своё небо»: инстанс неба,
+// быстрый план и «долгие» патчи. Вызывается из read_camera_frame (обе ветки,
+// после чтения кадра), как раньше «Всегда день».
+static void tod_env_tick() {
+    fog_sky::Settings fs;
+    bool dirty = false;
+    {
+        std::lock_guard<std::mutex> lock(g_fs_mu);
+        fs = g_fs;
+        dirty = g_fs_dirty;
+        g_fs_dirty = false;
+    }
+    const bool want_hour = g_day_enabled || (fs.sky_on && fs.sky_time);
+    const bool want_env  = fs.sky_on || fs.fog_on;
+
+    if (!want_hour && !want_env) {
+        // Всё выключено: писатель молчит, «долгие» поля и цвет — на место.
+        { std::lock_guard<std::mutex> lock(g_fs_mu); g_fs_rapid = FsRapid{}; }
+        fs_forget_env(true);
+        g_fs_tod = 0;
         g_day_tod = 0;
         return;
     }
@@ -211,77 +447,55 @@ static void always_day_tick() {
         float hour = (cyc >= 0x10000) ? rd<float>(cyc + TOD_CYCLE_HOUR) : -1.0F;
         if (!(std::isfinite(hour) && hour >= 0.0F && hour <= 24.0F)) g_day_tod = 0;
     }
-    // g_day_tod здесь — объект TOD_Sky (небесный менеджер ассета Time of
-    // Day). Имя его класса обфусцировано и РОТИРУЕТ каждый билд: в дампе
-    // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq").
-    // Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
-    // метадата-слоты так и не инициализированы (лог day_log: нечётные токены)
-    // — Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его
-    // класса первое статик-поле — список инстансов List<Self>; элемент списка —
-    // объект того же класса; у объекта по TOD_SKY_CYCLE (0x40) лежит
-    // TOD_CycleParameters с полями Hour(float 0..24)/Day(1..31)/Month(1..12)/
-    // Year(1900..2100). Имя TOD_CycleParameters не обфусцировано — по нему
-    // класс и находится в новом дампе (grep 'TOD_CycleParameters_o\* Cycle').
-    if (!g_day_tod) {
-        static uint64_t s_scan_rva = TOD_SCAN_RVA_BEGIN;
-        const uint64_t kScanEnd = TOD_SCAN_RVA_END;
-        const uint64_t kCycleOff = TOD_SKY_CYCLE;
-        uint64_t slots[128];
-        if (rd_buf(g_il2cpp_base + s_scan_rva, slots, sizeof(slots))) {
-            for (int i = 0; i < 128 && !g_day_tod; ++i) {
-                uint64_t klass = slots[i];
-                if (klass < 0x10000 || (klass & 0x7) != 0) continue;
-                uint64_t statics = rd_ptr(klass + 0xB8);
-                if (statics < 0x10000) continue;
-                uint64_t list = rd_ptr(statics);      // static List<Gq> instances
-                if (list < 0x10000) continue;
-                uint64_t items = rd_ptr(list + 0x10); // List._items
-                int32_t size = rd<int32_t>(list + 0x18);
-                if (items < 0x10000 || size <= 0 || size > 4) continue;
-                uint64_t sky = rd_ptr(items + 0x20);  // [0]
-                if (sky < 0x10000) continue;
-                if (rd_ptr(sky) != klass) continue;   // элемент — того же класса
-                uint64_t cyc = rd_ptr(sky + kCycleOff);
-                if (cyc < 0x10000) continue;
-                float hour = rd<float>(cyc + TOD_CYCLE_HOUR);
-                int day = rd<int32_t>(cyc + TOD_CYCLE_DAY);
-                int mon = rd<int32_t>(cyc + TOD_CYCLE_MONTH);
-                int year = rd<int32_t>(cyc + TOD_CYCLE_YEAR);
-                if (std::isfinite(hour) && hour >= 0.0F && hour <= 24.0F &&
-                    day >= 1 && day <= 31 && mon >= 1 && mon <= 12 &&
-                    year >= 1900 && year <= 2100)
-                    g_day_tod = sky;
-            }
-        }
-        s_scan_rva += 128 * 8;
-        if (s_scan_rva >= kScanEnd) s_scan_rva = TOD_SCAN_RVA_BEGIN;
-        if (!g_day_tod) return;
+    if (!g_day_tod && !tod_find_sky()) return;
+    if (g_fs_tod && g_fs_tod != g_day_tod) {
+        // Инстанс сменился (загрузка мира): старые адреса мертвы — забыть без
+        // записей, настройки применить заново.
+        fs_forget_env(false);
+        g_fs_dirty = true;
     }
-    // Полдень: писатель-доминатор. Игровой писатель обновляет Cycle.Hour
-    // каждый кадр, и запись раз в кадр оверлея с ним гонялась — отсюда
-    // миллисекундные проблески старого времени. Теперь час пишет фоновый
-    // поток с периодом ~2 мс: окно, в котором игра успевает и записать своё
-    // время, и отрендерить его, практически исчезает.
-    {
-        uint64_t cyc = rd_ptr(g_day_tod + TOD_SKY_CYCLE);
+    g_fs_tod = g_day_tod;
+
+    // «Быстрые» поля. «Своё время» сильнее «Всегда день»: включены оба — час из
+    // слайдера, включено только «Всегда день» — полдень.
+    FsRapid plan;
+    if (want_hour) {
+        const uint64_t cyc = rd_ptr(g_day_tod + TOD_SKY_CYCLE);
         if (cyc >= 0x10000) {
-            g_day_cycle_addr.store(cyc + TOD_CYCLE_HOUR);
-            if (!g_day_writer_running.exchange(true)) {
-                std::thread([]() {
-                    while (g_day_writer_running.load()) {
-                        uint64_t addr = g_day_cycle_addr.load();
-                        if (addr && g_day_enabled && g_pid > 0) {
-                            float noon = 12.0F;
-                            wr_buf(addr, &noon, sizeof(float));
-                        }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                    }
-                }).detach();
-            }
-        } else {
-            g_day_tod = 0; // объект умер (смена сцены) — переискать
-            g_day_cycle_addr.store(0);
+            plan.hour_addr = cyc + TOD_CYCLE_HOUR;
+            plan.hour = (fs.sky_on && fs.sky_time) ? fs.sky_hour : 12.0f;
         }
+    }
+    if (fs.sky_on) {
+        const uint64_t clouds = rd_ptr(g_day_tod + TOD_SKY_CLOUDS);
+        if (clouds >= 0x10000) {
+            plan.cov_addr = clouds + TOD_CLOUD_COVERAGE;   plan.cov = fs.cloud_coverage;
+            plan.bri_addr = clouds + TOD_CLOUD_BRIGHTNESS; plan.bri = fs.cloud_brightness;
+        }
+    }
+    if (fs.fog_on) {
+        const uint64_t atmo = rd_ptr(g_day_tod + TOD_SKY_ATMOSPHERE);
+        if (atmo >= 0x10000) {
+            plan.fog_addr = atmo + TOD_ATMO_FOGGINESS;
+            plan.fog = fs.fog_density;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_fs_mu);
+        g_fs_rapid = plan;
+        if (!plan.empty() && !g_env_writer_started.exchange(true))
+            std::thread(env_writer_loop).detach();
+    }
+
+    // «Долгие» поля и цвет: при смене настроек — сразу, иначе переподтверждаем
+    // раз в ~100 мс (погодный блендер отмечает свои интервалы и переставляет
+    // ссылки на Gradient-ы — цвет надо вернуть).
+    static double s_last_env = 0.0;
+    const double now = memio::now_seconds();
+    if (dirty || now - s_last_env >= 0.1) {
+        s_last_env = now;
+        fs_apply_scalars(fs);
+        if (want_env) fs_apply_colors(fs);
     }
 }
 
@@ -8113,7 +8327,9 @@ void esp_reset() {
     g_game_controller_static_fields_cached = 0;
     g_camera_manager_cached = 0;
     g_xray_cam = 0; g_xray_saved_valid = false; // процесс ушёл — восстанавливать нечего
-    g_day_tod = 0; g_day_retry = 0; g_day_cycle_addr.store(0);
+    g_day_tod = 0; g_fs_tod = 0;
+    fs_forget_env(false);   // процесс ушёл — восстанавливать нечего
+    { std::lock_guard<std::mutex> lock(g_fs_mu); g_fs_rapid = FsRapid{}; }
     g_frame_transforms.clear(); g_frame_transforms_empty_streak = 0;
     g_frame_publish_fail_streak = 0;
     g_player_esp_watchdog.reset();
@@ -8230,7 +8446,7 @@ static bool read_camera_frame(float aspect, uint64_t& native, Mat4& projection, 
     native = resolve_native_camera_pointer(true);
     if (native && read_native_camera_matrices(native, aspect, projection, view, force_aspect)) {
         xray_apply(native);
-        always_day_tick();
+        tod_env_tick();
         return true;
     }
 
@@ -8244,7 +8460,7 @@ static bool read_camera_frame(float aspect, uint64_t& native, Mat4& projection, 
         read_native_camera_matrices(refreshed, aspect, projection, view, force_aspect)) {
         native = refreshed;
         xray_apply(native);
-        always_day_tick();
+        tod_env_tick();
         return true;
     }
     return false;

@@ -1203,6 +1203,56 @@ float TabContent(int tab, float dt, float cW) {
         CardBg(Layout::RowH);
         ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, true, true);
 
+        // Свой туман и своё небо: параметры живого TOD_Sky (fog_sky.h, блок
+        // TOD_* в game_offsets.h). «Быстрые» поля держит фоновый писатель
+        // (~2 мс; тот же, что у «Всегда день»), «долгие» поля и цвет ключей
+        // Gradient-ов возвращаются при выключении. Меню только правит
+        // структуру — в память игры её каждый кадр отправляет esp_draw.cpp.
+        {
+            fog_sky::Settings& fs = g_state.fog_sky;
+            fs.fog_color[0] = g_state.fs_fog_color.x;
+            fs.fog_color[1] = g_state.fs_fog_color.y;
+            fs.fog_color[2] = g_state.fs_fog_color.z;
+            fs.sky_color[0] = g_state.fs_sky_color.x;
+            fs.sky_color[1] = g_state.fs_sky_color.y;
+            fs.sky_color[2] = g_state.fs_sky_color.z;
+
+            SHdr(XS("Туман"));
+            CardBg(Layout::RowH * 2.f + Layout::SliderH * 2.f);
+            ToggleRow("##fg0", XS("Свой туман"), &fs.fog_on, g_state.a_fog_on, false, true);
+            ColorRow("##fgc", XS("Цвет тумана"), &g_state.fs_fog_color, false);
+            SliderRow("##fgd", XS("Плотность"), &fs.fog_density,
+                      0.f, 1.f, "%.2f", false, false, g_state.fs_sl[0], dt);
+            SliderRow("##fgt", XS("Сила цвета"), &fs.fog_tint,
+                      0.f, 1.f, "%.2f", true, false, g_state.fs_sl[1], dt);
+
+            SHdr(XS("Небо"));
+            CardBg(Layout::RowH * 3.f + Layout::SliderH * 10.f);
+            ToggleRow("##sk0", XS("Своё небо"), &fs.sky_on, g_state.a_sky_on, false, true);
+            ToggleRow("##sk1", XS("Своё время"), &fs.sky_time, g_state.a_sky_time, false, false);
+            SliderRow("##skh", XS("Час"), &fs.sky_hour,
+                      0.f, 24.f, XS("%.1f ч"), false, false, g_state.fs_sl[2], dt);
+            ColorRow("##skc", XS("Цвет неба"), &g_state.fs_sky_color, false);
+            SliderRow("##skt", XS("Сила цвета"), &fs.sky_tint,
+                      0.f, 1.f, "%.2f", false, false, g_state.fs_sl[3], dt);
+            SliderRow("##skcv", XS("Облачность"), &fs.cloud_coverage,
+                      0.f, 1.f, "%.2f", false, false, g_state.fs_sl[4], dt);
+            SliderRow("##skcb", XS("Яркость облаков"), &fs.cloud_brightness,
+                      0.f, 2.f, "%.2f", false, false, g_state.fs_sl[5], dt);
+            SliderRow("##skcs", XS("Насыщенность облаков"), &fs.cloud_saturation,
+                      0.f, 2.f, "%.2f", false, false, g_state.fs_sl[6], dt);
+            SliderRow("##sksz", XS("Размер облаков"), &fs.cloud_size,
+                      0.5f, 5.f, "%.2f", false, false, g_state.fs_sl[7], dt);
+            SliderRow("##skr", XS("Синь неба"), &fs.atmo_rayleigh,
+                      0.f, 4.f, "%.2f", false, false, g_state.fs_sl[8], dt);
+            SliderRow("##skm", XS("Дымка"), &fs.atmo_mie,
+                      0.f, 4.f, "%.2f", false, false, g_state.fs_sl[9], dt);
+            SliderRow("##skab", XS("Яркость неба"), &fs.atmo_brightness,
+                      0.f, 2.f, "%.2f", false, false, g_state.fs_sl[10], dt);
+            SliderRow("##skac", XS("Контраст"), &fs.atmo_contrast,
+                      0.f, 2.f, "%.2f", true, false, g_state.fs_sl[11], dt);
+        }
+
         ImGui::Dummy({1.f, 12.f});
     }
 

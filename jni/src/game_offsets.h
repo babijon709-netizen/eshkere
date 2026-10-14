@@ -722,6 +722,47 @@ inline constexpr std::uint64_t TOD_CYCLE_DAY      = 0x14;
 inline constexpr std::uint64_t TOD_CYCLE_MONTH    = 0x18;
 inline constexpr std::uint64_t TOD_CYCLE_YEAR     = 0x1C;
 
+// ---- Свой туман и своё небо: параметры TOD_Sky ------------------------------
+// Пути от того же инстанса TOD_Sky: параметры — обычные managed-объекты по
+// фиксированным смещениям. Сверено сразу по ДВУМ дампам — Release 11949 (класс
+// `eN`) и Beta 11959 (класс `rU`): смещения внутри TOD_* совпадают байт в байт,
+// поэтому блок общий, без *_beta-варианта (различается только окно скана — оно
+// в шапке выше и в game_offsets_beta.h).
+// Проверка для нового билда: у класса, где `TOD_CycleParameters_o* Cycle` лежит
+// на 0x40, обязаны быть Day 0x58 / Night 0x60 / Clouds 0x80 / Atmosphere 0x50.
+//
+// ВАЖНО: часть этих полей игра переписывает сама каждый тик — Cycle.Hour
+// (часы), Clouds.Coverage(0x18)/Brightness(0x2C) и Atmosphere.Fogginess(0x24)
+// (система погоды). Их держит фоновый писатель с периодом ~2 мс, как у
+// «Всегда день»; одиночная запись тут не живёт.
+inline constexpr std::uint64_t TOD_SKY_ATMOSPHERE = 0x50; // TOD_AtmosphereParameters
+inline constexpr std::uint64_t TOD_SKY_DAY        = 0x58; // TOD_DayParameters
+inline constexpr std::uint64_t TOD_SKY_NIGHT      = 0x60; // TOD_NightParameters
+inline constexpr std::uint64_t TOD_SKY_CLOUDS     = 0x80; // TOD_CloudParameters
+// TOD_AtmosphereParameters (все — float):
+inline constexpr std::uint64_t TOD_ATMO_RAYLEIGH    = 0x10; // RayleighMultiplier: синь
+inline constexpr std::uint64_t TOD_ATMO_MIE         = 0x14; // MieMultiplier: дымка
+inline constexpr std::uint64_t TOD_ATMO_BRIGHTNESS  = 0x18;
+inline constexpr std::uint64_t TOD_ATMO_CONTRAST    = 0x1C;
+inline constexpr std::uint64_t TOD_ATMO_DIRECTION   = 0x20; // Directionality
+inline constexpr std::uint64_t TOD_ATMO_FOGGINESS   = 0x24; // плотность тумана
+// TOD_CloudParameters (все — float):
+inline constexpr std::uint64_t TOD_CLOUD_SIZE        = 0x10;
+inline constexpr std::uint64_t TOD_CLOUD_OPACITY     = 0x14;
+inline constexpr std::uint64_t TOD_CLOUD_COVERAGE    = 0x18;
+inline constexpr std::uint64_t TOD_CLOUD_SHARPNESS   = 0x1C;
+inline constexpr std::uint64_t TOD_CLOUD_ATTENUATION = 0x20;
+inline constexpr std::uint64_t TOD_CLOUD_SATURATION  = 0x24;
+inline constexpr std::uint64_t TOD_CLOUD_SCATTERING  = 0x28;
+inline constexpr std::uint64_t TOD_CLOUD_BRIGHTNESS  = 0x2C;
+// TOD_DayParameters / TOD_NightParameters — ссылки на Gradient (managed):
+inline constexpr std::uint64_t TOD_PARAM_SKY_COLOR = 0x28; // Gradient SkyColor
+inline constexpr std::uint64_t TOD_PARAM_FOG_COLOR = 0x38; // Gradient FogColor
+// UnityEngine.Gradient: managed-обёртка, сами ключи — в нативном буфере m_Ptr.
+// Раскладку буфера НЕ хардкодим: её определяет fog_sky::probe() по инвариантам
+// (смещения блоков ключей/int в версиях Unity отличались) — см. fog_sky.h.
+inline constexpr std::uint64_t GRADIENT_NATIVE_PTR = 0x10; // Gradient.m_Ptr
+
 // Oxide.MineableObject — the shared base of ore nodes, trees and animals.
 // Всё сверено с дампом 62a8534 (il2cpp.h: Oxide_MineableObject_Fields).
 inline constexpr std::uint64_t MINEABLE_LOOT           = 0xA0; // List<Oxide.LootItem>

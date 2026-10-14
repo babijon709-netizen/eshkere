@@ -284,6 +284,30 @@ inline constexpr std::uint64_t TOD_CYCLE_HOUR = game_offsets::TOD_CYCLE_HOUR;
 inline constexpr std::uint64_t TOD_CYCLE_DAY = game_offsets::TOD_CYCLE_DAY;
 inline constexpr std::uint64_t TOD_CYCLE_MONTH = game_offsets::TOD_CYCLE_MONTH;
 inline constexpr std::uint64_t TOD_CYCLE_YEAR = game_offsets::TOD_CYCLE_YEAR;
+// Свой туман и своё небо: те же смещения, что у Release — сверено по дампу
+// 11959 (класс TOD_Sky в нём `rU`, у его параметров те же 0x10…0x2C, а сам
+// инстанс держит Day 0x58 / Night 0x60 / Clouds 0x80 / Atmosphere 0x50).
+inline constexpr std::uint64_t TOD_SKY_ATMOSPHERE = game_offsets::TOD_SKY_ATMOSPHERE;
+inline constexpr std::uint64_t TOD_SKY_DAY        = game_offsets::TOD_SKY_DAY;
+inline constexpr std::uint64_t TOD_SKY_NIGHT      = game_offsets::TOD_SKY_NIGHT;
+inline constexpr std::uint64_t TOD_SKY_CLOUDS     = game_offsets::TOD_SKY_CLOUDS;
+inline constexpr std::uint64_t TOD_ATMO_RAYLEIGH    = game_offsets::TOD_ATMO_RAYLEIGH;
+inline constexpr std::uint64_t TOD_ATMO_MIE         = game_offsets::TOD_ATMO_MIE;
+inline constexpr std::uint64_t TOD_ATMO_BRIGHTNESS  = game_offsets::TOD_ATMO_BRIGHTNESS;
+inline constexpr std::uint64_t TOD_ATMO_CONTRAST    = game_offsets::TOD_ATMO_CONTRAST;
+inline constexpr std::uint64_t TOD_ATMO_DIRECTION   = game_offsets::TOD_ATMO_DIRECTION;
+inline constexpr std::uint64_t TOD_ATMO_FOGGINESS   = game_offsets::TOD_ATMO_FOGGINESS;
+inline constexpr std::uint64_t TOD_CLOUD_SIZE        = game_offsets::TOD_CLOUD_SIZE;
+inline constexpr std::uint64_t TOD_CLOUD_OPACITY     = game_offsets::TOD_CLOUD_OPACITY;
+inline constexpr std::uint64_t TOD_CLOUD_COVERAGE    = game_offsets::TOD_CLOUD_COVERAGE;
+inline constexpr std::uint64_t TOD_CLOUD_SHARPNESS   = game_offsets::TOD_CLOUD_SHARPNESS;
+inline constexpr std::uint64_t TOD_CLOUD_ATTENUATION = game_offsets::TOD_CLOUD_ATTENUATION;
+inline constexpr std::uint64_t TOD_CLOUD_SATURATION  = game_offsets::TOD_CLOUD_SATURATION;
+inline constexpr std::uint64_t TOD_CLOUD_SCATTERING  = game_offsets::TOD_CLOUD_SCATTERING;
+inline constexpr std::uint64_t TOD_CLOUD_BRIGHTNESS  = game_offsets::TOD_CLOUD_BRIGHTNESS;
+inline constexpr std::uint64_t TOD_PARAM_SKY_COLOR = game_offsets::TOD_PARAM_SKY_COLOR;
+inline constexpr std::uint64_t TOD_PARAM_FOG_COLOR = game_offsets::TOD_PARAM_FOG_COLOR;
+inline constexpr std::uint64_t GRADIENT_NATIVE_PTR = game_offsets::GRADIENT_NATIVE_PTR;
 inline constexpr std::uint64_t MINEABLE_LOOT = game_offsets::MINEABLE_LOOT;
 inline constexpr std::uint64_t MINEABLE_FINISH_BONUS = game_offsets::MINEABLE_FINISH_BONUS;
 inline constexpr std::uint64_t MINEABLE_CURRENT_HEALTH = game_offsets::MINEABLE_CURRENT_HEALTH;

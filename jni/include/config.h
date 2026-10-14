@@ -28,6 +28,8 @@ void ConfigDelete(int idx);
 void RestoreLang();
 void RestoreAccent();
 void RestoreLayout();
+// «Свой туман и своё небо»: настройки из трейлера CSK1 самого свежего конфига.
+void RestoreFogSky();
 // Режим чтения, выбранный на экране выбора; -1 если ничего нет.
 // Источник: /storage/emulated/0/benzware/.mode (пишется каждым выбором),
 // затем (legacy) трейлер самого свежего конфига.

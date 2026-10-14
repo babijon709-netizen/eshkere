@@ -5,6 +5,7 @@
 #include <atomic>
 #include "imgui.h"
 #include "viewmodel.h"
+#include "fog_sky.h"
 
 // Шаг слайдера «Предикт» в миллисекундах (уровень 10 = 150 мс).
 constexpr float kAimPredictStepMs = 15.f;
@@ -80,6 +81,13 @@ struct AppState {
           a_fast_reload = 0.f, a_fake_lag = 0.f;
     SliderAnim sl_custom_fov, sl_hands_x, sl_hands_y, sl_hands_z, sl_fake_lag;
     bool  always_day = false;     // всегда день
+    // «Свой туман и своё небо» (fog_sky.h): параметры едут в игру структурой
+    // fog_sky, а цвета живут отдельно, в ImVec4 — поповер выбора цвета держит
+    // указатель через кадры, ему нужен стабильный адрес. Перед применением RGB
+    // копируется в fog_sky (menu.cpp, вкладка «Разное»).
+    fog_sky::Settings fog_sky;
+    ImVec4 fs_fog_color = {0.62f, 0.64f, 0.68f, 1.00f};
+    ImVec4 fs_sky_color = {0.36f, 0.55f, 1.00f, 1.00f};
     float marker_dist = 150.f;
     float esp_thick = 1.5f;
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
@@ -165,6 +173,12 @@ struct AppState {
     float a_esp_radar = 0;
     float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0;
     float a_always_day = 0;
+    float a_fog_on = 0, a_sky_on = 0, a_sky_time = 0;
+    // Анимации слайдеров «своего тумана и неба»: 0 плотность тумана, 1 сила его
+    // цвета, 2 час, 3 сила цвета неба, 4 облачность, 5 яркость облаков,
+    // 6 насыщенность облаков, 7 размер облаков, 8 синь неба, 9 дымка,
+    // 10 яркость неба, 11 контраст.
+    SliderAnim fs_sl[12];
     float a_ui_dark = 1;
     float a_farm_on = 0, a_farm_wood = 1, a_farm_stone = 0, a_farm_metal = 0, a_farm_sulfur = 0;
     float a_xray_on = 0;

@@ -238,6 +238,36 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
     return t.magic == kCfgUiMagic && t.version == 1;
 }
 
+// «Свой туман и своё небо» (fog_sky.h) — третий прицеп, сразу после
+// CfgUiTrailer: собственный magic/версия, поэтому конфиги без него читаются
+// как «фича выключена», а не как чужое состояние. Формат — fog_sky::Wire.
+static void WriteSkyTrailer(std::ostream& f) {
+    fog_sky::Wire w = fog_sky::encode(g_state.fog_sky);
+    uint8_t buf[sizeof(w)];
+    memcpy(buf, &w, sizeof(w));
+    XorBuf(buf, sizeof(buf));
+    f.write((char*)buf, sizeof(buf));
+}
+
+static bool ReadSkyTrailer(std::istream& f, fog_sky::Wire& w) {
+    uint8_t buf[sizeof(fog_sky::Wire)];
+    f.read((char*)buf, sizeof(buf));
+    const size_t got = (size_t)f.gcount();
+    if (got != sizeof(buf)) return false;
+    XorBuf(buf, got);
+    memcpy(&w, buf, sizeof(w));
+    return true;
+}
+
+// Из прицепа — в состояние меню: и сами настройки, и цвета (в прицепе они RGB,
+// в меню — ImVec4, потому что поповер выбора цвета держит указатель).
+static void FogSkyFromWire(const fog_sky::Wire& w) {
+    g_state.fog_sky = fog_sky::decode(&w, sizeof(w));
+    const fog_sky::Settings& s = g_state.fog_sky;
+    g_state.fs_fog_color = {s.fog_color[0], s.fog_color[1], s.fog_color[2], 1.f};
+    g_state.fs_sky_color = {s.sky_color[0], s.sky_color[1], s.sky_color[2], 1.f};
+}
+
 // Единственный источник «текущего» конфига: тот же селектор, что у ConfigLoadLast().
 static std::string NewestCfgPath() {
     std::string name;
@@ -284,6 +314,24 @@ void RestoreAccent() {
 void RestoreLayout() {
     CfgUiTrailer t;
     if (ReadNewestUi(t)) LayoutFromArray(t.layout);
+}
+
+// То же для «своего тумана/неба»: прицеп лежит после CfgUiTrailer. У конфигов,
+// записанных до появления фичи, его нет — там остаются выключенные дефолты.
+static bool ReadNewestSky(fog_sky::Wire& w) {
+    const std::string p = NewestCfgPath();
+    if (p.empty()) return false;
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    f.seekg(sizeof(CfgBlob) + sizeof(viewmodel::ConfigExtension));
+    CfgUiTrailer ui{};
+    if (!ReadUiTrailer(f, ui)) return false;
+    return ReadSkyTrailer(f, w);
+}
+
+void RestoreFogSky() {
+    fog_sky::Wire w{};
+    if (ReadNewestSky(w)) FogSkyFromWire(w);
 }
 
 // KERNEL.md §6: выбранный на экране режим сохраняется в
@@ -438,6 +486,7 @@ static void ConfigSaveToPath(const std::string& path) {
         XorBuf(extra, sizeof(extra));
         f.write((char*)extra, sizeof(extra));
         WriteUiTrailer(f);
+        WriteSkyTrailer(f);
         f.close();
         if (f.fail()) remove(tmp.c_str());
         else rename(tmp.c_str(), path.c_str());
@@ -482,6 +531,8 @@ static void LoadCfgByName(const char* name, bool announce) {
     size_t extraGot = (size_t)f.gcount();
     CfgUiTrailer ui{};
     const bool hasUi = ReadUiTrailer(f, ui);
+    fog_sky::Wire sky{};
+    const bool hasSky = ReadSkyTrailer(f, sky);
     f.close();
     if (got != sizeof(buf)) { if (announce) ShowToast(XS("Несовместимый конфиг")); return; }
     XorBuf(buf, sizeof(s));
@@ -514,6 +565,8 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.aim_predict = std::round(g_state.aim_lead_ms / kAimPredictStepMs);
         }
     }
+    // «Свой туман и своё небо» — прицеп CSK1; у старых конфигов его нет.
+    if (hasSky) FogSkyFromWire(sky);
     g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};
     g_state.sl_hands_y = {}; g_state.sl_hands_z = {};
     g_state.aim_touch   = s.aim_touch;

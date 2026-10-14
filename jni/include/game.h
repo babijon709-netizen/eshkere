@@ -3,6 +3,8 @@
 #include <sys/types.h>
 #include <vector>
 
+#include "fog_sky.h"   // настройки «свой туман и своё небо»
+
 // Skeleton ESP: bone slots and the lines connecting them.
 constexpr int ESP_BONE_COUNT      = 22;
 
@@ -182,6 +184,15 @@ void        esp_set_screen_stretch(float factor);
 void        esp_set_aim_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).
 void        esp_set_always_day(bool enabled);
+// «Свой туман и своё небо»: настройки из меню (см. fog_sky.h). Вызывается
+// каждый кадр из esp_draw.cpp рядом с esp_set_always_day; применение (писатель
+// «быстрых» полей + «долгие» патчи и цвет ключей Gradient-ов) — в game.cpp
+// (тик tod_env_tick, он же обслуживает «Всегда день»).
+void        esp_set_fog_sky(const fog_sky::Settings& settings);
+// Возврат «своего тумана/неба» на место при выходе (живое соединение) —
+// рядом с esp_viewmodel_reset(true): «долгие» поля и цвет ключей пишутся
+// обратно, писатель замолкает.
+void        esp_fog_sky_restore();
 // Markers further away than this (metres) are dropped. Keeps the screen clean
 // on open terrain, where the registry easily holds hundreds of nodes.
 void        esp_set_marker_max_distance(float metres);// Markers for the current frame, nearest first. Call after esp_get_boxes():

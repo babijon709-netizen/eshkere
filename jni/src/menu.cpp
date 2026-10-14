@@ -1202,6 +1202,7 @@ float TabContent(int tab, float dt, float cW) {
         SHdr(XS("Мир"));
         CardBg(Layout::RowH);
         ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, true, true);
+        ImGui::Dummy({1.f, 8.f});
         CardBg(Layout::RowH);
         ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, true, true);
 

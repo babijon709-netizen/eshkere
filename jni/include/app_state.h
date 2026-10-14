@@ -80,7 +80,7 @@ struct AppState {
           a_fast_reload = 0.f, a_fake_lag = 0.f;
     SliderAnim sl_custom_fov, sl_hands_x, sl_hands_y, sl_hands_z, sl_fake_lag;
     bool  always_day = false;     // всегда день
-    bool  no_grass = false;       // не создавать рендерер травы
+    bool  no_grass = false;       // не создавать рендереры травы и кустов
     float marker_dist = 150.f;
     float esp_thick = 1.5f;
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;

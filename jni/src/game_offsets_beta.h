@@ -107,6 +107,7 @@ inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xDE98AF0; // beta
 // CreateVegetationRenderer @ 0xD13F8E8: outer 0xDB770C0 -> RELATIVE addend.
 inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xDEA23B0;
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
+inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled / terrain bushes
 inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD = game_offsets::GAME_CONTROLLER_LOCAL_PLAYER_FIELD;
 inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = game_offsets::GAME_CONTROLLER_CAMERA_MANAGER_FIELD;
 inline constexpr std::uint64_t GAME_CONTROLLER_INPUT_HANDLER_FIELD = game_offsets::GAME_CONTROLLER_INPUT_HANDLER_FIELD;

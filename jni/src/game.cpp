@@ -197,17 +197,19 @@ static int      g_day_retry = 0;
 
 void esp_set_always_day(bool enabled) { g_day_enabled = enabled; }
 
-// No Grass modifies only the managed static flag; no executable bytes or game
-// library files are patched. The game checks it while creating its vegetation
-// renderer, so this prevents later creation but cannot destroy one already alive.
-// The saved value is restored when the toggle turns off.
+// No Grass modifies managed static flags only; no executable bytes or game
+// library files are patched. GrassEnabled gates the vegetation renderer and
+// TreesEnabled gates ChunkTreeRenderer (terrain bushes). These flags prevent
+// later renderer creation; they cannot destroy renderers already alive.
+// Saved values are restored when the toggle turns off.
 static bool     g_no_grass_enabled = false;
 static pid_t    g_no_grass_target_pid = -1;
 static uint64_t g_no_grass_target_base = 0;
 static uint64_t g_no_grass_target_typeinfo = 0;
 static uint64_t g_no_grass_class = 0;
 static uint64_t g_no_grass_static_fields = 0;
-static uint8_t  g_no_grass_original_value = 0;
+static uint8_t  g_no_grass_original_grass = 0;
+static uint8_t  g_no_grass_original_trees = 0;
 static bool     g_no_grass_original_valid = false;
 
 void esp_set_no_grass(bool enabled) { g_no_grass_enabled = enabled; }
@@ -215,7 +217,8 @@ void esp_set_no_grass(bool enabled) { g_no_grass_enabled = enabled; }
 static void no_grass_forget_saved_value() {
     g_no_grass_class = 0;
     g_no_grass_static_fields = 0;
-    g_no_grass_original_value = 0;
+    g_no_grass_original_grass = 0;
+    g_no_grass_original_trees = 0;
     g_no_grass_original_valid = false;
 }
 
@@ -247,21 +250,27 @@ static void no_grass_tick() {
         return;
     }
 
-    const uint64_t field = static_fields + WORLD_STREAMING_GRASS_ENABLED_FIELD;
-    uint8_t current = 0;
-    if (!rd_buf(field, &current, sizeof(current)) || current > 1) return;
+    const uint64_t grass_field = static_fields + WORLD_STREAMING_GRASS_ENABLED_FIELD;
+    const uint64_t trees_field = static_fields + WORLD_STREAMING_TREES_ENABLED_FIELD;
+    uint8_t current_grass = 0, current_trees = 0;
+    if (!rd_buf(grass_field, &current_grass, sizeof(current_grass)) || current_grass > 1 ||
+        !rd_buf(trees_field, &current_trees, sizeof(current_trees)) || current_trees > 1)
+        return;
 
     if (!g_no_grass_enabled) {
         if (!cached_class) {
             no_grass_forget_saved_value();
             return;
         }
-        // If the game re-enabled grass while the toggle was on, preserve that
-        // value instead of restoring a stale snapshot.
-        if (current) g_no_grass_original_value = current;
-        if (current != g_no_grass_original_value &&
-            !wr_buf(field, &g_no_grass_original_value, sizeof(g_no_grass_original_value)))
+        // Preserve either game-side re-enable instead of restoring a stale snapshot.
+        if (current_grass) g_no_grass_original_grass = current_grass;
+        if (current_trees) g_no_grass_original_trees = current_trees;
+        if (current_grass != g_no_grass_original_grass &&
+            !wr_buf(grass_field, &g_no_grass_original_grass, sizeof(g_no_grass_original_grass)))
             return; // keep the snapshot and retry next frame
+        if (current_trees != g_no_grass_original_trees &&
+            !wr_buf(trees_field, &g_no_grass_original_trees, sizeof(g_no_grass_original_trees)))
+            return;
         no_grass_forget_saved_value();
         return;
     }
@@ -269,17 +278,18 @@ static void no_grass_tick() {
     if (!cached_class) {
         g_no_grass_class = klass;
         g_no_grass_static_fields = static_fields;
-        g_no_grass_original_value = current;
+        g_no_grass_original_grass = current_grass;
+        g_no_grass_original_trees = current_trees;
         g_no_grass_original_valid = true;
-    } else if (current) {
-        // Remember a game-side re-enable before forcing the managed flag off.
-        g_no_grass_original_value = current;
+    } else {
+        // Remember game-side re-enables before forcing both managed flags off.
+        if (current_grass) g_no_grass_original_grass = current_grass;
+        if (current_trees) g_no_grass_original_trees = current_trees;
     }
 
-    if (current) {
-        const uint8_t disabled = 0;
-        wr_buf(field, &disabled, sizeof(disabled));
-    }
+    const uint8_t disabled = 0;
+    if (current_grass) wr_buf(grass_field, &disabled, sizeof(disabled));
+    if (current_trees) wr_buf(trees_field, &disabled, sizeof(disabled));
 }
 
 static void always_day_tick() {

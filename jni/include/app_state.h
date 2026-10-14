@@ -80,6 +80,7 @@ struct AppState {
           a_fast_reload = 0.f, a_fake_lag = 0.f;
     SliderAnim sl_custom_fov, sl_hands_x, sl_hands_y, sl_hands_z, sl_fake_lag;
     bool  always_day = false;     // всегда день
+    bool  no_grass = false;       // не создавать рендерер травы
     float marker_dist = 150.f;
     float esp_thick = 1.5f;
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
@@ -164,7 +165,7 @@ struct AppState {
     float a_esp_arrows = 0, a_esp_arrows_off = 0, a_esp_arrows_dist = 0;
     float a_esp_radar = 0;
     float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0;
-    float a_always_day = 0;
+    float a_always_day = 0, a_no_grass = 0;
     float a_ui_dark = 1;
     float a_farm_on = 0, a_farm_wood = 1, a_farm_stone = 0, a_farm_metal = 0, a_farm_sulfur = 0;
     float a_xray_on = 0;

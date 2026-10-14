@@ -24,6 +24,7 @@ static const LangPair kUiEn[] = {
     {"Без баллистики", "No ballistics"},
     {"Без отдачи", "No recoil"},
     {"Без разброса", "No spread"},
+    {"Без травы", "No grass"},
     {"Ближе к прицелу", "Closest to crosshair"},
     {"Ближе ко мне", "Closest to me"},
     {"Боксы", "Boxes"},

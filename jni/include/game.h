@@ -182,6 +182,8 @@ void        esp_set_screen_stretch(float factor);
 void        esp_set_aim_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).
 void        esp_set_always_day(bool enabled);
+// «Без травы»: управляет только WorldStreamingController.GrassEnabled.
+void        esp_set_no_grass(bool enabled);
 // Markers further away than this (metres) are dropped. Keeps the screen clean
 // on open terrain, where the registry easily holds hundreds of nodes.
 void        esp_set_marker_max_distance(float metres);// Markers for the current frame, nearest first. Call after esp_get_boxes():

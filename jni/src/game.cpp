@@ -197,6 +197,91 @@ static int      g_day_retry = 0;
 
 void esp_set_always_day(bool enabled) { g_day_enabled = enabled; }
 
+// No Grass modifies only the managed static flag; no executable bytes or game
+// library files are patched. The game checks it while creating its vegetation
+// renderer, so this prevents later creation but cannot destroy one already alive.
+// The saved value is restored when the toggle turns off.
+static bool     g_no_grass_enabled = false;
+static pid_t    g_no_grass_target_pid = -1;
+static uint64_t g_no_grass_target_base = 0;
+static uint64_t g_no_grass_target_typeinfo = 0;
+static uint64_t g_no_grass_class = 0;
+static uint64_t g_no_grass_static_fields = 0;
+static uint8_t  g_no_grass_original_value = 0;
+static bool     g_no_grass_original_valid = false;
+
+void esp_set_no_grass(bool enabled) { g_no_grass_enabled = enabled; }
+
+static void no_grass_forget_saved_value() {
+    g_no_grass_class = 0;
+    g_no_grass_static_fields = 0;
+    g_no_grass_original_value = 0;
+    g_no_grass_original_valid = false;
+}
+
+static void no_grass_tick() {
+    if (!g_no_grass_enabled && !g_no_grass_original_valid) return;
+    if (!g_mem.bound() || g_pid <= 0 || !g_il2cpp_base || g_mem.pid() != g_pid) return;
+
+    const uint64_t typeinfo_rva = WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA;
+    if (!typeinfo_rva) return;
+    if (g_no_grass_target_pid != g_pid || g_no_grass_target_base != g_il2cpp_base ||
+        g_no_grass_target_typeinfo != typeinfo_rva) {
+        no_grass_forget_saved_value();
+        g_no_grass_target_pid = g_pid;
+        g_no_grass_target_base = g_il2cpp_base;
+        g_no_grass_target_typeinfo = typeinfo_rva;
+    }
+
+    const uint64_t klass = rd_ptr(g_il2cpp_base + typeinfo_rva);
+    if (!klass) return; // IL2CPP has not resolved the class yet.
+    const uint64_t static_fields = get_class_static_fields(klass);
+    if (!static_fields) return;
+
+    const bool cached_class = g_no_grass_original_valid &&
+        klass == g_no_grass_class && static_fields == g_no_grass_static_fields;
+    if (!cached_class &&
+        class_identity(klass, "WorldStreamingController",
+                       "HyperHug.Games.Oxide.Features.WorldStreaming") == 0) {
+        no_grass_forget_saved_value();
+        return;
+    }
+
+    const uint64_t field = static_fields + WORLD_STREAMING_GRASS_ENABLED_FIELD;
+    uint8_t current = 0;
+    if (!rd_buf(field, &current, sizeof(current)) || current > 1) return;
+
+    if (!g_no_grass_enabled) {
+        if (!cached_class) {
+            no_grass_forget_saved_value();
+            return;
+        }
+        // If the game re-enabled grass while the toggle was on, preserve that
+        // value instead of restoring a stale snapshot.
+        if (current) g_no_grass_original_value = current;
+        if (current != g_no_grass_original_value &&
+            !wr_buf(field, &g_no_grass_original_value, sizeof(g_no_grass_original_value)))
+            return; // keep the snapshot and retry next frame
+        no_grass_forget_saved_value();
+        return;
+    }
+
+    if (!cached_class) {
+        g_no_grass_class = klass;
+        g_no_grass_static_fields = static_fields;
+        g_no_grass_original_value = current;
+        g_no_grass_original_valid = true;
+    } else if (current) {
+        // Remember a game-side re-enable before forcing the managed flag off.
+        g_no_grass_original_value = current;
+    }
+
+    if (current) {
+        const uint8_t disabled = 0;
+        wr_buf(field, &disabled, sizeof(disabled));
+    }
+}
+
 static void always_day_tick() {
     if (!g_day_enabled) {
         // Выключили: писатель замолкает (адрес в 0), часы игры идут сами.
@@ -9202,6 +9287,9 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     if (g_pid <= 0 || !g_il2cpp_base) {
             return result;
     }
+
+    // No Grass работает независимо от камеры и списка игроков.
+    no_grass_tick();
 
     // Фрикам — до всех ранних выходов: сводки и покадровая запись нужны и в
     // пустой местности (раньше тик стоял за выходом «нет игроков» и там не

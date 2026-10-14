@@ -175,6 +175,12 @@ inline constexpr std::uint64_t RECOILCONFIG_MIN_SIDE = 0x28;
 inline constexpr std::uint64_t RECOILCONFIG_MAX_SIDE = 0x2C;
 
 inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xDD753D8; // release 11949: Oxide.GameControllerBase TypeInfo slot
+// WorldStreamingController::CreateVegetationRenderer @ 0xD02786C reads
+// outer 0xDA58178; its R_AARCH64_RELATIVE addend is this inner TypeInfo slot.
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xDD80038;
+inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
+// Release and beta CreateVegetationRenderer both read klass->static_fields+0x18;
+// adjacent TreesEnabled (+0x19) is intentionally left alone.
 inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD   = 0x10; // <ukT>k__BackingField (PlayerManager)
 inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = 0x38; // <ukA>k__BackingField (CameraManager)
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD          = 0x20; // m_Camera

@@ -155,6 +155,7 @@ struct CfgBlob {
     //       bit 15 дистанция у стрелок, bit 17 радар 360°.
     //       Bit 16 belongs to the removed auto-fire option: never written and
     //       deliberately ignored on load, so it stays reserved like bit 9.
+    //       bit 18 No Grass (bit 17 remains the radar toggle).
     //   y = marker draw distance (m),
     //   z = aim priority + 1 (so an old config's 1.0 still means "default"),
     //   w = pickup colour packed as r*65536 + g*256 + b (exact in a float,
@@ -407,7 +408,8 @@ static void ConfigSaveToPath(const std::string& path) {
                           (g_state.esp_arrows ? 8192 : 0) |
                           (g_state.esp_arrows_offscreen ? 0 : 16384) |
                           (g_state.esp_arrows_dist ? 32768 : 0) |
-                          (g_state.esp_radar ? 131072 : 0);
+                          (g_state.esp_radar ? 131072 : 0) |
+                          (g_state.no_grass ? 262144 : 0);
         auto ch = [](float v) { int i = (int)(v * 255.f + 0.5f); return i < 0 ? 0 : (i > 255 ? 255 : i); };
         const float packed = (float)(ch(cfg::esp::pickup_col.x) * 65536
                                    + ch(cfg::esp::pickup_col.y) * 256
@@ -543,7 +545,7 @@ static void LoadCfgByName(const char* name, bool announce) {
     // Packed scalars. A config written before these existed holds the old ping
     // colour here, so each value is range-checked and falls back to its default.
     {
-        const int flags = (s.esp_extra.x >= 0.f && s.esp_extra.x < 262144.f) ? (int)(s.esp_extra.x + 0.5f) : 0;
+        const int flags = (s.esp_extra.x >= 0.f && s.esp_extra.x < 524288.f) ? (int)(s.esp_extra.x + 0.5f) : 0;
         g_state.esp_loot   = (flags & 1) != 0;
         g_state.esp_pickup = (flags & 2) != 0;
         g_state.esp_bots     = (flags & 4) != 0;
@@ -555,7 +557,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.esp_house_boxes = (flags & 256) == 0;
         g_state.fakelag_btn_show = (flags & 1024) == 0;
         g_state.xray_btn_show = (flags & 2048) == 0;
-        // Биты 12..17 — тумблеры новых фич (16 вырезан, см. шапку). Конфиги,
+        // Биты 12..18 — тумблеры новых фич (16 вырезан, см. шапку). Конфиги,
         // написанные до них, держат тут нули, то есть получают дефолты фич
         // (всё выкл, стрелки — только вне экрана, потому что этот бит
         // инвертирован).
@@ -564,6 +566,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.esp_arrows_offscreen = (flags & 16384) == 0;
         g_state.esp_arrows_dist = (flags & 32768) != 0;
         g_state.esp_radar = (flags & 131072) != 0;
+        g_state.no_grass = (flags & 262144) != 0;
         cfg::aim::fire_only = g_state.aim_fire_only;
         g_state.marker_dist = (s.esp_extra.y >= 25.f && s.esp_extra.y <= 300.f) ? s.esp_extra.y : 150.f;
         int pr = (int)(s.esp_extra.z + 0.5f) - 1;

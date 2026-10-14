@@ -1198,10 +1198,12 @@ float TabContent(int tab, float dt, float cW) {
         // Keep the next section below all three custom freecam button rows.
         ImGui::Dummy({1.f, 16.f});
 
-        // Всегда день: время суток каждую секунду возвращается в полдень.
+        // Клиентские визуалы мира.
         SHdr(XS("Мир"));
         CardBg(Layout::RowH);
         ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, true, true);
+        CardBg(Layout::RowH);
+        ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, true, true);
 
         ImGui::Dummy({1.f, 12.f});
     }
@@ -1844,6 +1846,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_sleepers, g_state.esp_sleepers,     dt);
     Tick(g_state.a_esp_cupboards, g_state.esp_cupboards,   dt);
     Tick(g_state.a_always_day,  g_state.always_day,         dt);
+    Tick(g_state.a_no_grass,    g_state.no_grass,            dt);
     Tick(g_state.a_esp_team,   g_state.esp_team,           dt);
     Tick(g_state.a_aim_pr0,    g_state.aim_priority == 0,  dt);
     Tick(g_state.a_aim_pr1,    g_state.aim_priority == 1,  dt);

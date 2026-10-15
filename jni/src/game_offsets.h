@@ -530,6 +530,10 @@ inline constexpr std::uint64_t RAYCASTMAN_RAY_LENGTH         = 0x38;
 inline constexpr std::uint64_t RAYCASTMAN_AIM_RAY_LENGTH     = 0x3C;
 inline constexpr std::uint64_t RAYCASTMAN_SPHERE_RADIUS      = 0x40;
 inline constexpr std::uint64_t RAYCASTMAN_TOO_CLOSE          = 0x44;
+inline constexpr std::uint64_t RAYCASTMAN_LAYER_MASK         = 0x48;  // RaycastManager.m_LayerMask (LayerMask, 0x6916204)
+inline constexpr std::uint64_t RAYCASTMAN_AIM_LAYER_MASK     = 0x4C;  // RaycastManager.m_AimLayerMask (LayerMask, 0x69165BC)
+inline constexpr std::uint64_t RAYCASTMAN_RAW_HIT            = 0x50;  // RaycastManager.uMP (RaycastHit 1.5m луча до фильтра Fox, 0x69161CC)
+inline constexpr std::uint64_t RAYCASTMAN_AIM_RAW_HIT        = 0xA8;  // RaycastManager.uMl (RaycastHit 300m SphereCast до фильтра Fox, 0x69165A0)
 // Что прямо сейчас видит прицел — результат лучей RaycastManager, разложенный
 // в активности PlayerEventHandler (класс Gum). FPMelee.ZkX берёт их ровно так
 // (дизассемблер 0x6533a20):

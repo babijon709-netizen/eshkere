@@ -12,7 +12,7 @@ inline constexpr float  kDesiredAimRayLength = 300.0f;
 inline constexpr float  kDesiredSphereRadius = 0.05f;
 inline constexpr float  kDesiredAssistDist   = 300.0f;
 inline constexpr double kProbeTimeoutSec     = 0.060;
-inline constexpr double kStateTtlSec         = 1.250;
+inline constexpr double kStateTtlSec         = 30.00;
 inline constexpr double kPriorityRefreshSec  = 0.080;
 inline constexpr double kHwrActiveWindowSec  = 0.250;
 
@@ -73,6 +73,7 @@ struct ProbeWrite {
 struct TargetVisState {
     bool   visible      = false;
     bool   has_sample   = false;
+    int    vis_streak   = 0;
     double updated_at   = -1.0e9;
 };
 
@@ -86,10 +87,10 @@ inline float vec3_len_sq(const float v[3]) {
 
 inline bool point_hits_target_cylinder(const float pt[3],
                                        const TargetGeometry& t,
-                                       float radius = 0.85f) {
+                                       float radius = 0.65f) {
     if (!vec3_finite(pt) || !vec3_finite(t.feet) || !vec3_finite(t.head)) return false;
-    const float min_y = (t.feet[1] < t.head[1] ? t.feet[1] : t.head[1]) - 0.35f;
-    const float max_y = (t.feet[1] > t.head[1] ? t.feet[1] : t.head[1]) + 0.35f;
+    const float min_y = (t.feet[1] < t.head[1] ? t.feet[1] : t.head[1]) - 0.25f;
+    const float max_y = (t.feet[1] > t.head[1] ? t.feet[1] : t.head[1]) + 0.25f;
     if (pt[1] < min_y || pt[1] > max_y) return false;
     const float cx = (t.feet[0] + t.head[0]) * 0.5f;
     const float cz = (t.feet[2] + t.head[2]) * 0.5f;
@@ -155,7 +156,15 @@ inline int evaluate_ray_for_target(const RaySample& primary,
         if (!s->valid) continue;
         if (t.id != 0 && s->hit_player == t.id) return +1;
         if (t.entity_id != 0 && s->hit_entity == t.entity_id) return +1;
-        if (s->point_valid && point_hits_target_cylinder(s->point, t)) return +1;
+        // Проверяем попадание в цилиндр ТОЛЬКО если луч попал в живую сущность
+        // (hit_player != 0 || hit_entity != 0). Если луч упёрся в тонкую стенку
+        // морского контейнера прямо перед игроком (hit_player == 0, hit_entity == 0),
+        // точка удара о контейнер тоже лежит рядом с игроком — её нельзя считать
+        // попаданием в цель.
+        if ((s->hit_player != 0 || s->hit_entity != 0) &&
+            s->point_valid && point_hits_target_cylinder(s->point, t)) {
+            return +1;
+        }
     }
 
     if (!cam_valid) return 0;
@@ -165,19 +174,15 @@ inline int evaluate_ray_for_target(const RaySample& primary,
         return 0;
     }
 
-    const RaySample& active = primary.valid ? primary : aim;
-    if (active.valid) {
-        if (active.distance > 0.05f) {
-            if (active.distance >= proj_dist - 0.65f) return +1;
-            if (active.hit_player == 0 && active.hit_entity == 0 &&
-                active.distance + 0.85f < proj_dist) {
-                return -1;
-            }
+    // Если любой из лучей упёрся в препятствие (стена, контейнер, рельеф) ближе
+    // цели — цель гарантированно перекрыта. Пустой GKo (когда RaycastManager::Fox
+    // отбросил морской контейнер без BaseEntity/Surface) НЕ означает видимость.
+    for (const RaySample* s : samples) {
+        if (!s->valid || s->distance <= 0.02f) continue;
+        if (s->hit_player == 0 && s->hit_entity == 0 &&
+            s->distance + 0.45f < proj_dist) {
+            return -1;
         }
-    } else if (aim_ray_configured && proj_dist <= max_len - 0.5f) {
-        // Neither primary nor 300m spherecast hit any obstacle along a ray
-        // aimed directly through the target.
-        return +1;
     }
     return 0;
 }
@@ -200,6 +205,7 @@ public:
         TargetVisState& st = states_[id];
         st.visible    = visible;
         st.has_sample = true;
+        st.vis_streak = visible ? 2 : 0;
         st.updated_at = now;
     }
 
@@ -267,41 +273,48 @@ public:
             const int r = evaluate_ray_for_target(
                 primary, aim, aim_ray_configured, aim_ray_len,
                 cam_valid, cam_pos, cam_fwd, t);
+
+            // Прямое попадание луча камеры в саму цель.
             if (r > 0) {
                 record(t.id, true, now);
                 continue;
             }
+
+            // По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule.
             if (t.occlusion_known) {
-                if (t.occlusion_visible) {
-                    record(t.id, true, now);
+                if (!t.occlusion_visible || r < 0) {
+                    // Уход за укрытие (контейнер/стену) фиксируем мгновенно без задержки.
+                    record(t.id, false, now);
                 } else {
-                    auto it = states_.find(t.id);
-                    const bool recent_body_los =
-                        (it != states_.end()) &&
-                        it->second.has_sample &&
-                        it->second.visible &&
-                        (now - it->second.updated_at) <= 0.120;
-                    if (!recent_body_los) {
-                        record(t.id, false, now);
+                    // Выход из-за контейнера: если цель уже числилась за преградой,
+                    // требуем 2 подряд видимых сэмпла (~16 мс), чтобы одиночный
+                    // проскок луча через стык контейнеров на бегу не давал вспышку.
+                    TargetVisState& st = states_[t.id];
+                    if (!st.has_sample || st.visible) {
+                        record(t.id, true, now);
+                    } else {
+                        ++st.vis_streak;
+                        if (st.vis_streak >= 2) {
+                            record(t.id, true, now);
+                        }
                     }
                 }
                 continue;
             }
-            if (r < 0) record(t.id, false, now);
+
+            if (r < 0) {
+                record(t.id, false, now);
+            }
         }
     }
 
     bool is_visible(const TargetGeometry& t, double now) const {
-        if (t.occlusion_known && t.occlusion_visible) return true;
         auto it = states_.find(t.id);
         if (it != states_.end() && it->second.has_sample &&
             (now - it->second.updated_at) <= kStateTtlSec) {
             return it->second.visible;
         }
-        if (t.occlusion_known && !t.occlusion_visible) return false;
-        // When the off-axis AimAssist raycast oracle is actively ticking and
-        // the target has an AimTarget component waiting to be probed, stay
-        // conservative (false) until its first probe completes (~1 frame).
+        if (t.occlusion_known) return t.occlusion_visible;
         if (t.aim_target != 0 && t.aim_collider != 0 &&
             (now - last_hwr_tick_at_) <= kHwrActiveWindowSec) {
             return false;

@@ -47,6 +47,10 @@ void test_offsets_consistency() {
     assert(game_offsets::RAYCASTMAN_RAY_LENGTH == 0x38);
     assert(game_offsets::RAYCASTMAN_AIM_RAY_LENGTH == 0x3C);
     assert(game_offsets::RAYCASTMAN_SPHERE_RADIUS == 0x40);
+    assert(game_offsets::RAYCASTMAN_LAYER_MASK == 0x48);
+    assert(game_offsets::RAYCASTMAN_AIM_LAYER_MASK == 0x4C);
+    assert(game_offsets::RAYCASTMAN_RAW_HIT == 0x50);
+    assert(game_offsets::RAYCASTMAN_AIM_RAW_HIT == 0xA8);
     assert(game_offsets::GUM_RAYCAST_DATA == 0x160);
     assert(game_offsets::GUM_AIM_RAYCAST == 0x168);
     assert(game_offsets::GKO_HIT_OBJECT == 0x18);
@@ -138,6 +142,45 @@ void test_marker_occlusion_and_rays() {
 
     tracker.update_from_rays(empty_ray, wall_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.3);
     assert(!tracker.is_visible(targets[0], 1.3));
+
+    // Shipping container wall hit right in front of t1 (0.5m in front of player,
+    // hit_player == 0 && hit_entity == 0) must stay occluded (-1), never visible!
+    RaySample close_container_ray{};
+    close_container_ray.valid = true;
+    close_container_ray.hit_player = 0;
+    close_container_ray.hit_entity = 0;
+    close_container_ray.distance = 19.5f;
+    close_container_ray.point_valid = true;
+    close_container_ray.point[0] = 0.0f;
+    close_container_ray.point[1] = 1.2f;
+    close_container_ray.point[2] = 19.5f;
+    assert(evaluate_ray_for_target(empty_ray, close_container_ray, true, 300.0f, true, cam_pos, cam_fwd, targets[0]) == -1);
+
+    // Empty GKo when Fox rejects a shipping container must return 0 (inconclusive), never +1!
+    assert(evaluate_ray_for_target(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets[0]) == 0);
+
+    // 1-frame container seam blip (occlusion_visible=true for 1 frame while occluded)
+    // must NOT flash visible; 2 consecutive visible frames transition to visible.
+    targets[0].occlusion_known = true;
+    targets[0].occlusion_visible = true;
+    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.316);
+    assert(!tracker.is_visible(targets[0], 1.316)); // 1st frame blip suppressed!
+
+    targets[0].occlusion_visible = false;
+    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.332);
+    assert(!tracker.is_visible(targets[0], 1.332)); // back behind container
+
+    // Now genuinely peeks out for 2 consecutive frames -> becomes visible
+    targets[0].occlusion_visible = true;
+    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.348);
+    assert(!tracker.is_visible(targets[0], 1.348));
+    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.364);
+    assert(tracker.is_visible(targets[0], 1.364));
+
+    // And the instant he steps back behind the container, 0-frame lag -> occluded immediately
+    targets[0].occlusion_visible = false;
+    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.380);
+    assert(!tracker.is_visible(targets[0], 1.380));
 }
 
 void test_hwr_offaxis_probe() {

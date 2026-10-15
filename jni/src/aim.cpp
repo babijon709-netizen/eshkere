@@ -437,6 +437,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         // Мёртвых не берём: труп ещё несколько секунд остаётся в списке
         // игроков с корректным скелетом, и прицел уезжал на него (19.09).
         if (b.dead) { ++s_dead_skipped; continue; }
+        if (cfg::aim::vis_check && !b.visible) continue;
         AimTarget t;
         const int usedBone = aim_control::configured_bone_slot(wantBone, b.aim_valid);
         if (usedBone >= 0) {

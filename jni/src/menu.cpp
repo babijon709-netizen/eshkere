@@ -91,11 +91,12 @@ float TabContent(int tab, float dt, float cW) {
         cfg::aim::fire_only      = g_state.aim_fire_only;
 
         SHdr(XS("Аим"));
-        CardBg(Layout::RowH * 4);
+        CardBg(Layout::RowH * 5);
         const bool aimWasOn = g_state.aim_touch;
         ToggleRow("##ta1", XS("Аим"),          &g_state.aim_touch,   g_state.a_aim_touch, false, true);
         if (aimWasOn != g_state.aim_touch)
             ;
+        ToggleRow("##ta2", XS("Только видимых"), &g_state.aim_pos,   g_state.a_aim_pos,   false);
         ToggleRow("##ta6", XS("Только в прицеле"), &g_state.aim_scope_only, g_state.a_aim_scope, false);
         // Аим ведёт, пока держится кнопка огня: наведение начинается первым
         // кадром нажатия, а не тогда, когда пуля задела. Пара к предыдущему: тот смотрит на прицел, этот — на
@@ -388,6 +389,7 @@ float TabContent(int tab, float dt, float cW) {
             struct ERow { const char* id; const char* lbl; bool* v; float* a; ImVec4* col; };
             ERow rows[] = {
                 {"##vb",  XS("Боксы"),      &g_state.esp_box,          &g_state.a_esp_box,          &cfg::esp::box_col},
+                {"##vvs", XS("Проверка видимости"), &cfg::esp::vis_check, &g_state.a_esp_vis,       &cfg::esp::box_col_invis},
                 {"##v3",  XS("3D боксы"),   &g_state.esp_chams,        &g_state.a_esp_chams,        &cfg::esp::box_col_invis},
                 {"##vn",  XS("Ники"),       &g_state.esp_name,         &g_state.a_esp_name,         &cfg::esp::name_col},
                 {"##vd",  XS("Дистанция"),  &g_state.esp_wall,         &g_state.a_esp_wall,         &cfg::esp::distance_col},
@@ -398,7 +400,7 @@ float TabContent(int tab, float dt, float cW) {
                 // на них не рисуется ничего); цвет у них свой, чтобы отличать.
                 {"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
             };
-            constexpr int NP = 8;
+            constexpr int NP = 9;
             CardBg(rowH * NP);
             for (int i = 0; i < NP; i++)
                 EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == NP-1);
@@ -1813,9 +1815,11 @@ void RenderMenu() {
     if (g_menuFadeIn > 1.f) g_menuFadeIn = 1.f;
 
     CfgWatchTick();
+    cfg::aim::vis_check = g_state.aim_pos;
     Tick(g_themeT, g_darkTheme, dt, 6.f);
     Tick(g_state.a_aim_touch,  g_state.aim_touch,          dt);
     Tick(g_state.a_aim_pos,    g_state.aim_pos,            dt);
+    Tick(g_state.a_esp_vis,    cfg::esp::vis_check,        dt);
     Tick(g_state.a_aim_head,   g_state.aim_bone == 0,      dt);
     Tick(g_state.a_aim_chest,  g_state.aim_bone == 1,      dt);
     Tick(g_state.a_aim_pelvis, g_state.aim_bone == 2,      dt);

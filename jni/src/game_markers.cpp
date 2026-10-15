@@ -201,6 +201,9 @@ struct MarkerEntity {
     Vec3     head_position{};
     bool     head_valid = false;
     double   head_last_ok = 0.0;
+    uint64_t event_handler = 0; // hsN на NPCBrainHumanoid (+0x68)
+    uint64_t aim_target = 0;    // AimTarget MonoBehaviour
+    uint64_t aim_collider = 0;  // Collider для проверки видимости через hwR
     botlead::Track lead{};
     int      kind = ESP_MARKER_ORE;
     int      ore_type = -1;   // 0 камень, 1 железо, 2 сера, -1 = не руда
@@ -1484,6 +1487,19 @@ static MarkerScanResult rebuild_marker_entities() {
                     if (valid_obj(model_info))
                         entity.head_transform =
                             managed_object_native(rd_ptr(model_info + MODELINFO_HEAD));
+                    const uint64_t eh = rd_ptr(bot_brain + NPC_BRAIN_ENTITY);
+                    if (valid_obj(eh)) entity.event_handler = eh;
+                }
+                if (death_handler) {
+                    const uint64_t col_arr = rd_ptr(death_handler + NPC_DEATH_COLLIDERS);
+                    const int32_t col_cnt = valid_obj(col_arr)
+                        ? rd<int32_t>(col_arr + IL2CPP_ARRAY_LENGTH) : 0;
+                    if (col_cnt > 0 && col_cnt <= 32) {
+                        for (int32_t ci = 0; ci < col_cnt; ++ci) {
+                            const uint64_t c = rd_ptr(col_arr + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)ci * 8);
+                            if (valid_obj(c)) { entity.aim_collider = c; break; }
+                        }
+                    }
                 }
                 for (const MarkerEntity& old : g_marker_entities) {
                     if (old.id != component || old.identity != identity) continue;
@@ -1496,6 +1512,8 @@ static MarkerScanResult rebuild_marker_entities() {
                         entity.head_valid = old.head_valid;
                         entity.head_last_ok = old.head_last_ok;
                     }
+                    if (old.aim_target) entity.aim_target = old.aim_target;
+                    if (old.aim_collider && !entity.aim_collider) entity.aim_collider = old.aim_collider;
                     entity.lead = old.lead;
                     break;
                 }
@@ -1511,6 +1529,13 @@ static MarkerScanResult rebuild_marker_entities() {
             entity.transform = native_component_transform(managed_object_native(component));
             if (!entity.transform) // component without its own renderer: use the identity
                 entity.transform = native_component_transform(managed_object_native(identity));
+            if (entity.kind == ESP_MARKER_BOT && (!entity.aim_target || !entity.aim_collider)) {
+                uint64_t at = 0, ac = 0;
+                if (resolve_entity_aim_target_and_collider(entity.transform, entity.event_handler, at, ac)) {
+                    if (at) entity.aim_target = at;
+                    if (ac) entity.aim_collider = ac;
+                }
+            }
             Vec3 sampled{};
             if (marker_world_position(entity.transform, sampled)) {
                 entity.position = sampled;
@@ -2038,6 +2063,10 @@ std::vector<BotAimEnt> esp_bot_aim_list() {
         if (!std::isfinite(distance) || distance > g_marker_max_distance) continue;
         BotAimEnt bot;
         bot.id = entity.identity;
+        bot.component = entity.id;
+        bot.event_handler = entity.event_handler;
+        bot.aim_target = entity.aim_target;
+        bot.aim_collider = entity.aim_collider;
         bot.x = entity.position.x; bot.y = entity.position.y; bot.z = entity.position.z;
         const double age = now - entity.position_last_ok;
         bot.pos_age = (age > 0.0 && std::isfinite(age)) ? (float)age : 0.0F;

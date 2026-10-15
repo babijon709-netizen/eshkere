@@ -238,6 +238,11 @@ uint64_t local_event_handler_checked();
 // Компонент нативного GameObject с заданным именем класса (сверка обратной
 // ссылки на GameObject + имени класса). 0 — не найден.
 uint64_t gameobject_component_by_class(uint64_t native_gameobject, const char* class_name);
+uint64_t gameobject_collider_component(uint64_t native_gameobject);
+bool resolve_entity_aim_target_and_collider(uint64_t root_native_transform,
+                                            uint64_t expected_handler,
+                                            uint64_t& out_target,
+                                            uint64_t& out_collider);
 
 // ---- Подсистема маркеров (game_markers.cpp) --------------------------------
 // Сброс кэшей маркеров при esp_reset()/сбросе мира.

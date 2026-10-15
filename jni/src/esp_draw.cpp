@@ -369,12 +369,16 @@ void DrawEspOverlay() {
                     }
                 }
             }
+            const bool invis = cfg::esp::vis_check && !ally && !box.visible;
             CornerBox(bx1 - poff, by1 - poff, bx2 + poff, by2 + poff,
-                      ColU32(ally ? cfg::esp::ally_col : cfg::esp::box_col));
+                      ColU32(ally ? cfg::esp::ally_col
+                                  : (invis ? cfg::esp::box_col_invis : cfg::esp::box_col)));
         }
 
         if (g_state.esp_skeleton && box.has_skeleton) {
-            ImU32 skelCol = ColU32(cfg::esp::skeleton_col);
+            ImU32 skelCol = ColU32((cfg::esp::vis_check && !ally && !box.visible)
+                                   ? cfg::esp::box_col_invis
+                                   : cfg::esp::skeleton_col);
             auto validPt = [&](int b) {
                 return b >= 0 && box.bone_valid[b] &&
                        std::isfinite(box.bones[b][0]) && std::isfinite(box.bones[b][1]);

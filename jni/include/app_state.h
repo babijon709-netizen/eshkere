@@ -157,7 +157,7 @@ struct AppState {
     // шире (круги/прицелы — овалами, это нормальный вид фичи). 1.0 = выкл.
     // Сессионное: бинарный CfgBlob заморожен версией (config.cpp).
     float screen_stretch_x = 1.0f;
-    float a_esp_box = 0, a_esp_name = 0, a_esp_wall = 0, a_esp_chams = 0;
+    float a_esp_box = 0, a_esp_name = 0, a_esp_wall = 0, a_esp_chams = 0, a_esp_vis = 0;
     float a_esp_weapon = 0, a_esp_tracer = 0, a_esp_skeleton = 0;
     float a_esp_ore = 0, a_esp_animal = 0, a_esp_loot = 0, a_esp_team = 0, a_esp_pickup = 0;
     float a_esp_ore_stone = 1, a_esp_ore_iron = 1, a_esp_ore_sulfur = 1;

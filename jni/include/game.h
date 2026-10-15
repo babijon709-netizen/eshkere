@@ -73,6 +73,11 @@ struct EspBox {
     // данные для аима (точка = шея по росту от земли). Оверлей такие боксы
     // не рисует (ботов рисуют маркеры), аим берёт на общих основаниях.
     bool  is_bot = false;
+    // Видимость цели от камеры локального игрока (LOS): true = на прямой
+    // видимости (нет стены/террейна между камерой и целью), false = за
+    // укрытием. Заполняется в esp_get_boxes() через RaycastManager +
+    // офф-осевой лучевой зонд AimAssist (hwR.ohe).
+    bool  visible = true;
 
     // ---- Мировой якорь для перепроецирования -------------------------------
     // Кадр, у которого не перечитался список игроков (или сорвалось чтение
@@ -235,6 +240,10 @@ void        esp_set_aim_bones_enabled(bool enabled);
 // упреждения: до неё цель брала g_aim_lead, оставшийся от последнего игрока.
 struct BotAimEnt {
     uint64_t id = 0;
+    uint64_t component = 0;
+    uint64_t event_handler = 0;
+    uint64_t aim_target = 0;
+    uint64_t aim_collider = 0;
     float x = 0.f, y = 0.f, z = 0.f;
     bool  head_valid = false;
     float hx = 0.f, hy = 0.f, hz = 0.f;

@@ -1,6 +1,8 @@
 #include "game.h"
 #include "aim.h"
 #include "app_state.h"
+#include "cfg.h"
+#include "vis_check.h"
 #include "player_esp_watchdog.h"
 #include "silent_aim.h"
 #include "viewmodel.h"
@@ -1234,6 +1236,23 @@ uint64_t gameobject_component_by_class(uint64_t native_gameobject, const char* c
         if (component < 0x10000 || component == native_gameobject) continue;
         if (rd_ptr(component + COMPONENT_GAMEOBJECT) != native_gameobject) continue; // чужой слот
         if (object_class_name_is(component, class_name, false)) return component;
+        const uint64_t managed = rd_ptr(component + 0x18);
+        if (valid_obj(managed) && rd_ptr(managed + MANAGED_CACHED_PTR) == component &&
+            object_class_name_is(managed, class_name, false)) {
+            return managed;
+        }
+    }
+    return 0;
+}
+
+uint64_t gameobject_collider_component(uint64_t native_gameobject) {
+    static const char* const kColliderClasses[] = {
+        "CapsuleCollider", "BoxCollider", "SphereCollider",
+        "MeshCollider", "CharacterController", "Collider"
+    };
+    for (const char* cname : kColliderClasses) {
+        const uint64_t col = gameobject_component_by_class(native_gameobject, cname);
+        if (col) return col;
     }
     return 0;
 }
@@ -4430,6 +4449,9 @@ struct PlayerAux {
     bool     head_hitbox_valid = false;
     float    normal_height = 1.8F;
     float    crouch_height = 1.1F;
+    uint64_t event_handler = 0; // PlayerManager.playerEventHandler (+0x28, hsN)
+    uint64_t aim_target = 0;    // AimTarget MonoBehaviour
+    uint64_t aim_collider = 0;  // Collider для проверки видимости через hwR
     int      retry_cooldown = 0;
     int      revalidate = 0;
     // Held-weapon chain (resolved lazily, revalidated by their back-references).
@@ -4561,6 +4583,37 @@ static int read_transform_children(uint64_t transform, uint64_t* out, int max_ch
     if (!array) return 0;
     if (!rd_buf(array, out, (size_t)count * sizeof(uint64_t))) return 0;
     return count;
+}
+
+bool resolve_entity_aim_target_and_collider(uint64_t root_native_transform,
+                                            uint64_t expected_handler,
+                                            uint64_t& out_target,
+                                            uint64_t& out_collider) {
+    out_target = 0;
+    out_collider = 0;
+    if (!root_native_transform) return false;
+    uint64_t transforms[17] = {};
+    transforms[0] = root_native_transform;
+    const int child_count = read_transform_children(root_native_transform, transforms + 1, 16);
+    const int total = 1 + child_count;
+    for (int i = 0; i < total; ++i) {
+        const uint64_t tr = transforms[i];
+        if (!tr) continue;
+        const uint64_t go = rd_ptr(tr + COMPONENT_GAMEOBJECT);
+        if (go < 0x10000) continue;
+        if (!out_collider && i == 0) {
+            out_collider = gameobject_collider_component(go);
+        }
+        const uint64_t at = gameobject_component_by_class(go, "AimTarget");
+        if (!at) continue;
+        const uint64_t eh = rd_ptr(at + AIMTARGET_ENTITY_HANDLER);
+        if (expected_handler && valid_obj(eh) && eh != expected_handler) continue;
+        out_target = at;
+        const uint64_t col = gameobject_collider_component(go);
+        if (col) out_collider = col;
+        break;
+    }
+    return out_target != 0 || out_collider != 0;
 }
 
 void collect_transform_subtree(uint64_t root, std::vector<uint64_t>& nodes, size_t max_nodes) {
@@ -5522,6 +5575,27 @@ static PlayerAux& player_aux(uint64_t player) {
                 aux.head_hitbox_valid = true;
                 break;
             }
+        }
+        const uint64_t eh = rd_ptr(player + PLAYER_EVENT_HANDLER);
+        if (valid_obj(eh)) aux.event_handler = eh;
+        const uint64_t motor = rd_ptr(kcc + KCC_MOTOR_OFFSET);
+        if (valid_obj(motor)) {
+            const uint64_t cap = rd_ptr(motor + KCC_MOTOR_CAPSULE);
+            if (valid_obj(cap)) aux.aim_collider = cap;
+        }
+        if (!aux.aim_collider) {
+            const uint64_t tp = rd_ptr(player + PLAYER_TRIGGER_PROBE);
+            if (valid_obj(tp)) aux.aim_collider = tp;
+        }
+        if (!aux.aim_collider) {
+            const uint64_t vc = rd_ptr(player + PLAYER_VOICE_COLLIDER);
+            if (valid_obj(vc)) aux.aim_collider = vc;
+        }
+        const uint64_t player_tr = native_component_transform(managed_object_native(player));
+        uint64_t at = 0, ac = 0;
+        if (resolve_entity_aim_target_and_collider(player_tr, aux.event_handler, at, ac)) {
+            if (at) aux.aim_target = at;
+            if (ac) aux.aim_collider = ac;
         }
     }
     return aux;
@@ -8497,6 +8571,10 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         box.x1 = cx - w * 0.5F; box.x2 = cx + w * 0.5F;
         box.y1 = s_feet.y < s_top.y ? s_feet.y : s_top.y;
         box.y2 = s_feet.y < s_top.y ? s_top.y : s_feet.y;
+        box.anchor_valid = true;
+        box.anchor_feet[0] = feet.x; box.anchor_feet[1] = feet.y; box.anchor_feet[2] = feet.z;
+        box.anchor_bottom_y = feet.y;
+        box.anchor_top_y = top.y;
         if (bearing_index >= 0) g_frame_bearings[bearing_index].on_screen = true;
         out.push_back(box);
         ++g_frame_bot_count;
@@ -8504,6 +8582,428 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
     // Per-target velocity must not leak into the next frame's aim point.
     g_aim_lead = {};
     g_aim_velocity = {};
+}
+
+// ---- Проверка видимости (vis_check) ----------------------------------------
+// Три слоя внутриигровых рейкастов Unity Physics:
+//   1. NearbyPlayerScreenMarkerView -> OcclusionModule (+0x3C hasValue, +0x3D
+//      isOccluded): каждый кадр в ScreenMarkerPresenter::LateTick (0x5D14C30)
+//      игра стреляет Physics.Raycast(camPos, headPos - camPos, dist, obstacleMask)
+//      для каждого вражеского игрока в радиусе 200м на экране.
+//   2. RaycastManager (PlayerManager + 0x88): RaycastData (+0x160) и 300-метровый
+//      AimRaycast (+0x168) вдоль оси камеры.
+//   3. AimAssist (hwR / YuB, PlayerManager + 0x258): прямой рейкаст по коллайдеру
+//      цели с пропуском собственных коллайдеров игрока (hwR::ohb -> hwR::ohe),
+//      опрашивающий ботов и цели по кругу через tjb (+0x60) при обнулённых
+//      скоростях доводки в AimAssistConfig (+0x38..+0x44).
+static vis_check::Tracker s_vis_tracker;
+static uint64_t s_screen_marker_presenter = 0;
+static std::unordered_map<uint64_t, uint64_t> s_view_occlusion_mod;
+
+struct NearbyPlayerOccSample {
+    uint64_t model_tr = 0;
+    Vec3     world_pos{};
+    Vec3     head_pos{};
+    bool     visible = false;
+};
+
+static bool looks_like_screen_marker_presenter(uint64_t obj) {
+    if (!valid_obj(obj)) return false;
+    if (object_class_name_is(obj, "ScreenMarkerPresenter", false)) return true;
+    const uint64_t view_dict   = rd_ptr(obj + SCREEN_PRESENTER_VIEW_DICT);
+    const uint64_t marker_list = rd_ptr(obj + SCREEN_PRESENTER_MARKER_LIST);
+    const uint64_t inst_dict   = rd_ptr(obj + SCREEN_PRESENTER_INST_DICT);
+    if (!valid_obj(view_dict) || !valid_obj(marker_list) || !valid_obj(inst_dict)) return false;
+    const int32_t d_cnt = rd<int32_t>(view_dict + DICT_COUNT);
+    const int32_t l_cnt = rd<int32_t>(marker_list + IL2CPP_LIST_SIZE);
+    return d_cnt >= 0 && d_cnt <= 512 && l_cnt >= 0 && l_cnt <= 512;
+}
+
+static uint64_t resolve_screen_marker_presenter() {
+    if (s_screen_marker_presenter && looks_like_screen_marker_presenter(s_screen_marker_presenter)) {
+        return s_screen_marker_presenter;
+    }
+    s_screen_marker_presenter = 0;
+    const uint64_t statics = game_controller_statics();
+    if (!statics) return 0;
+    const uint64_t gc = rd_ptr(statics + GAME_CONTROLLER_STATIC_SELF_FIELD);
+    if (!valid_obj(gc)) return 0;
+    const uint64_t map_mgr = rd_ptr(gc + GAME_CONTROLLER_MAP_MANAGER);
+    if (!valid_obj(map_mgr)) return 0;
+
+    uint64_t marker_svc = rd_ptr(map_mgr + MAP_MANAGER_MARKER_SERVICE);
+    if (!valid_obj(marker_svc)) {
+        const uint64_t map_pres = rd_ptr(map_mgr + MAP_MANAGER_MAP_PRESENTER);
+        if (valid_obj(map_pres)) marker_svc = rd_ptr(map_pres + MAP_PRESENTER_MARKER_SERVICE);
+    }
+    if (!valid_obj(marker_svc)) {
+        const uint64_t map_view = rd_ptr(map_mgr + MAP_MANAGER_MAP_VIEW);
+        const uint64_t act      = valid_obj(map_view) ? rd_ptr(map_view + MAP_VIEW_ON_ENABLE_ACTION) : 0;
+        const uint64_t map_pres = valid_obj(act) ? rd_ptr(act + 0x20) : 0;
+        if (valid_obj(map_pres)) marker_svc = rd_ptr(map_pres + MAP_PRESENTER_MARKER_SERVICE);
+    }
+    if (!valid_obj(marker_svc)) return 0;
+
+    const uint64_t added_action = rd_ptr(marker_svc + MARKER_SERVICE_ADDED_ACTION);
+    if (!valid_obj(added_action)) return 0;
+
+    const uint64_t direct_target = rd_ptr(added_action + 0x20);
+    if (looks_like_screen_marker_presenter(direct_target)) {
+        s_screen_marker_presenter = direct_target;
+        return direct_target;
+    }
+    const uint64_t del_arr = rd_ptr(added_action + 0x78);
+    if (valid_obj(del_arr)) {
+        const int32_t d_len = rd<int32_t>(del_arr + IL2CPP_ARRAY_LENGTH);
+        if (d_len > 0 && d_len <= 16) {
+            for (int32_t k = 0; k < d_len; ++k) {
+                const uint64_t del = rd_ptr(del_arr + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)k * 8);
+                if (!valid_obj(del)) continue;
+                const uint64_t tgt = rd_ptr(del + 0x20);
+                if (looks_like_screen_marker_presenter(tgt)) {
+                    s_screen_marker_presenter = tgt;
+                    return tgt;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+static uint64_t resolve_view_occlusion_module(uint64_t view) {
+    if (!valid_obj(view)) return 0;
+    auto it = s_view_occlusion_mod.find(view);
+    if (it != s_view_occlusion_mod.end() && valid_obj(it->second)) {
+        return it->second;
+    }
+    const uint64_t mod_list = rd_ptr(view + SCREEN_MARKER_VIEW_MODULES);
+    if (!valid_obj(mod_list)) return 0;
+    const uint64_t items = rd_ptr(mod_list + IL2CPP_LIST_ITEMS);
+    const int32_t  count = rd<int32_t>(mod_list + IL2CPP_LIST_SIZE);
+    if (!valid_obj(items) || count <= 0 || count > 16) return 0;
+    const uint64_t ctx = rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT);
+    uint64_t fallback = 0;
+    for (int32_t i = 0; i < count; ++i) {
+        const uint64_t mod = rd_ptr(items + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8);
+        if (!valid_obj(mod)) continue;
+        if (object_class_name_is(mod, "OcclusionModule", false)) {
+            if (s_view_occlusion_mod.size() > 256) s_view_occlusion_mod.clear();
+            s_view_occlusion_mod[view] = mod;
+            return mod;
+        }
+        if (!fallback && valid_obj(ctx) && rd_ptr(mod + OCCLUSION_MOD_CTX) == ctx) {
+            const int32_t mask = rd<int32_t>(mod + OCCLUSION_MOD_MASK);
+            const float   iv   = rd<float>(mod + OCCLUSION_MOD_INTERVAL);
+            if (mask != 0 && std::isfinite(iv) && iv >= 0.0F && iv <= 2.0F) {
+                fallback = mod;
+            }
+        }
+    }
+    if (fallback) {
+        if (s_view_occlusion_mod.size() > 256) s_view_occlusion_mod.clear();
+        s_view_occlusion_mod[view] = fallback;
+    }
+    return fallback;
+}
+
+static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& out) {
+    out.clear();
+    const uint64_t presenter = resolve_screen_marker_presenter();
+    if (!presenter) return;
+    const uint64_t dict = rd_ptr(presenter + SCREEN_PRESENTER_VIEW_DICT);
+    if (!valid_obj(dict)) return;
+    int32_t count = rd<int32_t>(dict + DICT_COUNT);
+    if (count <= 0) return;
+    if (count > 128) count = 128;
+    const uint64_t entries = rd_ptr(dict + DICT_ENTRIES);
+    if (!valid_obj(entries)) return;
+
+    static std::vector<uint8_t> s_dict_buf;
+    s_dict_buf.resize((size_t)count * DICT_ENTRY_STRIDE);
+    if (!rd_buf(entries + IL2CPP_ARRAY_FIRST_ELEMENT, s_dict_buf.data(), s_dict_buf.size())) return;
+
+    for (int32_t i = 0; i < count; ++i) {
+        const uint8_t* slot = s_dict_buf.data() + (size_t)i * DICT_ENTRY_STRIDE;
+        int32_t hash = 0;
+        memcpy(&hash, slot, sizeof(hash));
+        if (hash < 0) continue;
+        uint64_t raw_marker = 0, raw_view = 0;
+        memcpy(&raw_marker, slot + 0x08, sizeof(raw_marker));
+        memcpy(&raw_view, slot + DICT_ENTRY_VALUE, sizeof(raw_view));
+        const uint64_t marker = memio::untag(raw_marker);
+        const uint64_t view   = memio::untag(raw_view);
+        if (!valid_obj(marker) || !valid_obj(view)) continue;
+
+        uint64_t data = rd_ptr(view + NEARBY_VIEW_DATA);
+        if (!valid_obj(data)) data = rd_ptr(marker + MARKER_DATA);
+        if (!valid_obj(data)) continue;
+        if (rd<int32_t>(data + MARKER_DATA_TYPE) != MARKER_TYPE_NEARBY_PLAYER) continue;
+
+        const uint64_t occ = resolve_view_occlusion_module(view);
+        if (!valid_obj(occ)) continue;
+
+        const uint64_t ctx = rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT);
+        if (valid_obj(occ)) {
+            const float cur_iv = rd<float>(occ + OCCLUSION_MOD_INTERVAL);
+            if (std::isfinite(cur_iv) && cur_iv > 0.001F) {
+                const float zero_iv = 0.0F;
+                wr_buf(occ + OCCLUSION_MOD_INTERVAL, &zero_iv, sizeof(zero_iv));
+            }
+        }
+        if (valid_obj(ctx)) {
+            if (rd<uint8_t>(ctx + MARKER_CTX_SKIP_OCCLUSION) != 0) {
+                const uint8_t zero_b = 0;
+                wr_buf(ctx + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
+            }
+        }
+
+        const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
+        const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
+        const uint8_t clamped = valid_obj(ctx) ? rd<uint8_t>(ctx + MARKER_CTX_HIDDEN) : 0;
+        if (has_val == 0 || clamped != 0) continue;
+
+        NearbyPlayerOccSample sample{};
+        sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
+        sample.world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
+        sample.head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
+        sample.visible   = (is_occ == 0);
+        out.push_back(sample);
+    }
+}
+
+static void read_gko_ray_sample(uint64_t wrapper, vis_check::RaySample& out) {
+    out = vis_check::RaySample{};
+    if (!valid_obj(wrapper)) return;
+    const uint64_t gko = rd_ptr(wrapper + GUI_VALUE);
+    if (!valid_obj(gko)) return;
+    out.valid        = true;
+    out.hit_object   = rd_ptr(gko + GKO_HIT_OBJECT);
+    out.hit_entity   = rd_ptr(gko + GKO_HIT_ENTITY);
+    out.hit_player   = rd_ptr(gko + GKO_HIT_PLAYER);
+    out.hit_collider = rd_ptr(gko + GKO_RAYCAST_HIT + RAYCASTHIT_COLLIDER);
+    float dist = 0.0F;
+    if (rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_DISTANCE, dist) &&
+        std::isfinite(dist) && dist >= 0.0F && dist < 2000.0F) {
+        out.distance = dist;
+    }
+    Vec3 pt{};
+    if (rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_POINT, pt) &&
+        vec3_is_finite(pt) && position_looks_like_world_space(pt)) {
+        out.point_valid = true;
+        out.point[0] = pt.x; out.point[1] = pt.y; out.point[2] = pt.z;
+    }
+    Vec3 orig{};
+    if (rd_exact(gko + GKO_RAY_ORIGIN, orig) &&
+        vec3_is_finite(orig) && position_looks_like_world_space(orig)) {
+        out.origin_valid = true;
+        out.origin[0] = orig.x; out.origin[1] = orig.y; out.origin[2] = orig.z;
+    }
+}
+
+static bool weapon_is_melee_class(uint64_t weapon) {
+    if (!valid_obj(weapon)) return false;
+    return object_class_name_is(weapon, "FPMelee", false) ||
+           object_class_name_is(weapon, "FPTool", false) ||
+           object_class_name_is(weapon, "FPChainsaw", false) ||
+           object_class_name_is(weapon, "FPKnife", false);
+}
+
+static void evaluate_boxes_visibility(uint64_t local_player,
+                                      float sw,
+                                      float sh,
+                                      std::vector<EspBox>& boxes) {
+    const bool want_vis = cfg::esp::vis_check || cfg::aim::vis_check;
+    if (!want_vis || !valid_obj(local_player) || boxes.empty()) {
+        if (!want_vis) s_vis_tracker.reset();
+        for (EspBox& b : boxes) b.visible = true;
+        return;
+    }
+
+    const double now = mono_seconds();
+
+    // 1. Сбор по-игроковых рейкастов из NearbyPlayerScreenMarkerView -> OcclusionModule.
+    static std::vector<NearbyPlayerOccSample> s_occ_samples;
+    collect_nearby_player_occlusion(s_occ_samples);
+
+    // 2. Чтение и настройка RaycastManager (RaycastData + 300м AimRaycast).
+    const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
+    const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
+    const uint64_t cur_obj = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_OBJECT) : 0;
+    uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
+    if (!valid_obj(rm) && valid_obj(cur_wpn)) rm = rd_ptr(cur_wpn + FPOBJECT_RAYCAST_MANAGER);
+
+    bool  aim_ray_configured = false;
+    float aim_ray_len        = 1.5F;
+    if (valid_obj(rm) && rd_ptr(rm + RAYCASTMAN_PLAYER) == local_player) {
+        const bool is_melee = weapon_is_melee_class(cur_wpn);
+        float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
+        if (!is_melee && valid_obj(rm)) {
+            if (!std::isfinite(cur_aim_len) ||
+                fabsf(cur_aim_len - vis_check::kDesiredAimRayLength) > 1.0F) {
+                const float desired_len = vis_check::kDesiredAimRayLength;
+                const float desired_rad = vis_check::kDesiredSphereRadius;
+                wr_buf(rm + RAYCASTMAN_AIM_RAY_LENGTH, &desired_len, sizeof(desired_len));
+                wr_buf(rm + RAYCASTMAN_SPHERE_RADIUS, &desired_rad, sizeof(desired_rad));
+                cur_aim_len = desired_len;
+            }
+        }
+        if (std::isfinite(cur_aim_len) && cur_aim_len > 10.0F) {
+            aim_ray_configured = true;
+            aim_ray_len        = cur_aim_len;
+        }
+    }
+
+    vis_check::RaySample primary_ray{}, aim_ray{};
+    const uint64_t local_eh = rd_ptr(local_player + PLAYER_EVENT_HANDLER);
+    if (valid_obj(local_eh)) {
+        read_gko_ray_sample(rd_ptr(local_eh + GUM_RAYCAST_DATA), primary_ray);
+        read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), aim_ray);
+    }
+
+    // 3. Чтение и тихая активация AimAssist (hwR / YuB) для проверки ботов и
+    //    коллайдеров вне перекрестия.
+    vis_check::AimAssistSnapshot hwr_snap{};
+    uint64_t hwr = rd_ptr(local_player + PLAYER_AIM_ASSIST);
+    if (valid_obj(hwr) && rd_ptr(hwr + AIMASSIST_PLAYER) == local_player) {
+        const uint64_t cfg_obj = rd_ptr(hwr + AIMASSIST_CONFIG);
+        if (valid_obj(cfg_obj)) {
+            const float cur_dist = rd<float>(cfg_obj + AIMCONFIG_DISTANCE);
+            if (!std::isfinite(cur_dist) ||
+                fabsf(cur_dist - vis_check::kDesiredAssistDist) > 1.0F) {
+                const float d = vis_check::kDesiredAssistDist;
+                wr_buf(cfg_obj + AIMCONFIG_DISTANCE, &d, sizeof(d));
+            }
+            const float zero_speeds[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+            if (rd<float>(cfg_obj + AIMCONFIG_OUTER_SPEED) != 0.0F ||
+                rd<float>(cfg_obj + AIMCONFIG_INNER_SPEED) != 0.0F) {
+                wr_buf(cfg_obj + AIMCONFIG_OUTER_SPEED, zero_speeds, sizeof(zero_speeds));
+            }
+        }
+        if (valid_obj(hwr)) {
+            if (rd<uint8_t>(hwr + AIMASSIST_INIT_FLAG) == 0 ||
+                rd<uint8_t>(hwr + AIMASSIST_ENABLED) == 0) {
+                const uint8_t flags[2] = {1, 1};
+                wr_buf(hwr + AIMASSIST_INIT_FLAG, flags, sizeof(flags));
+            }
+        }
+        if (valid_obj(cur_obj)) {
+            if (rd<uint8_t>(cur_obj + FPOBJECT_ENABLE_AIM_ASSIST) == 0) {
+                const uint8_t one = 1;
+                wr_buf(cur_obj + FPOBJECT_ENABLE_AIM_ASSIST, &one, sizeof(one));
+            }
+        }
+
+        hwr_snap.valid        = true;
+        hwr_snap.cur_target   = rd_ptr(hwr + AIMASSIST_CUR_TARGET);
+        hwr_snap.cur_handler  = valid_obj(hwr_snap.cur_target)
+            ? rd_ptr(hwr_snap.cur_target + AIMTARGET_ENTITY_HANDLER) : 0;
+        hwr_snap.cur_collider = rd_ptr(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_COLLIDER);
+        hwr_snap.cur_last_seen_time = rd<float>(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_LAST_SEEN_TIME);
+        hwr_snap.cur_distance = rd<float>(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_DISTANCE);
+        const Vec3 cp = rd_v3(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_POSITION);
+        hwr_snap.cur_pos[0] = cp.x; hwr_snap.cur_pos[1] = cp.y; hwr_snap.cur_pos[2] = cp.z;
+        hwr_snap.prev_target   = rd_ptr(hwr + AIMASSIST_PREV_TARGET);
+        hwr_snap.prev_handler  = valid_obj(hwr_snap.prev_target)
+            ? rd_ptr(hwr_snap.prev_target + AIMTARGET_ENTITY_HANDLER) : 0;
+        hwr_snap.prev_collider = rd_ptr(hwr + AIMASSIST_PREV_SENSOR + AIMSENSOR_COLLIDER);
+        hwr_snap.prev_distance = rd<float>(hwr + AIMASSIST_PREV_SENSOR + AIMSENSOR_DISTANCE);
+        const Vec3 pp = rd_v3(hwr + AIMASSIST_PREV_SENSOR + AIMSENSOR_POSITION);
+        hwr_snap.prev_pos[0] = pp.x; hwr_snap.prev_pos[1] = pp.y; hwr_snap.prev_pos[2] = pp.z;
+        hwr_snap.hit_flag = rd<uint8_t>(hwr + AIMASSIST_HIT_FLAG) != 0;
+    } else {
+        hwr = 0;
+    }
+
+    // 4. Формирование геометрии всех целей кадра (игроки + боты).
+    const std::vector<BotAimEnt> bots = esp_bot_aim_list();
+    static std::vector<vis_check::TargetGeometry> s_targets;
+    s_targets.clear();
+    s_targets.reserve(boxes.size());
+    const float cx_scr = sw * 0.5F;
+    const float cy_scr = sh * 0.5F;
+
+    for (const EspBox& b : boxes) {
+        vis_check::TargetGeometry tg{};
+        tg.id       = b.id;
+        tg.distance = b.distance;
+        tg.is_bot   = b.is_bot;
+        tg.feet[0]  = b.anchor_feet[0];
+        tg.feet[1]  = b.anchor_feet[1];
+        tg.feet[2]  = b.anchor_feet[2];
+        if (b.aim_world_valid[0]) {
+            tg.head[0] = b.aim_world[0][0];
+            tg.head[1] = b.aim_world[0][1];
+            tg.head[2] = b.aim_world[0][2];
+        } else {
+            tg.head[0] = b.anchor_feet[0];
+            tg.head[1] = b.anchor_top_y > b.anchor_feet[1] ? b.anchor_top_y : (b.anchor_feet[1] + 1.65F);
+            tg.head[2] = b.anchor_feet[2];
+        }
+        const float bx = (b.x1 + b.x2) * 0.5F - cx_scr;
+        const float by = (b.y1 + b.y2) * 0.5F - cy_scr;
+        tg.screen_dist_px = sqrtf(bx * bx + by * by);
+
+        if (b.is_bot) {
+            for (const BotAimEnt& bot : bots) {
+                if (bot.id == b.id) {
+                    tg.entity_id     = bot.component;
+                    tg.event_handler = bot.event_handler;
+                    tg.aim_target    = bot.aim_target;
+                    tg.aim_collider  = bot.aim_collider;
+                    break;
+                }
+            }
+        } else {
+            const PlayerAux& aux = player_aux(b.id);
+            tg.event_handler = aux.event_handler;
+            tg.aim_target    = aux.aim_target;
+            tg.aim_collider  = aux.aim_collider;
+            const uint64_t model_tr = skeleton_model_root(b.id);
+            for (const NearbyPlayerOccSample& occ : s_occ_samples) {
+                bool match = (model_tr != 0 && occ.model_tr == model_tr);
+                if (!match && vec3_is_finite(occ.world_pos)) {
+                    const float dx = occ.world_pos.x - tg.feet[0];
+                    const float dy = occ.world_pos.y - tg.feet[1];
+                    const float dz = occ.world_pos.z - tg.feet[2];
+                    if (dx * dx + dy * dy + dz * dz <= 1.75F * 1.75F) match = true;
+                }
+                if (match) {
+                    tg.occlusion_known   = true;
+                    tg.occlusion_visible = occ.visible;
+                    break;
+                }
+            }
+        }
+        s_targets.push_back(tg);
+    }
+
+    // 5. Обновление трекера и запись следующего зонда в hwR.
+    const float cam_pos[3] = {g_frame_cam_pos.x, g_frame_cam_pos.y, g_frame_cam_pos.z};
+    const float cam_fwd[3] = {g_frame_cam_fwd.x, g_frame_cam_fwd.y, g_frame_cam_fwd.z};
+    s_vis_tracker.consume_hwr_snapshot(hwr_snap, s_targets, now);
+    s_vis_tracker.update_from_rays(
+        primary_ray, aim_ray, aim_ray_configured, aim_ray_len,
+        g_frame_cam_basis_valid, cam_pos, cam_fwd, s_targets, now);
+    s_vis_tracker.prune(s_targets, now);
+
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        boxes[i].visible = boxes[i].ally ? true : s_vis_tracker.is_visible(s_targets[i], now);
+    }
+
+    if (valid_obj(hwr)) {
+        const vis_check::ProbeWrite pw = s_vis_tracker.select_next_probe(s_targets, now);
+        if (pw.valid) {
+            wr_buf(hwr + AIMASSIST_CUR_TARGET, &pw.cur_target, sizeof(pw.cur_target));
+            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_COLLIDER,
+                   &pw.cur_collider, sizeof(pw.cur_collider));
+            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_LAST_SEEN_TIME,
+                   &pw.cur_last_seen_time, sizeof(pw.cur_last_seen_time));
+            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_DISTANCE,
+                   &pw.cur_distance, sizeof(pw.cur_distance));
+            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_POSITION,
+                   pw.cur_pos, sizeof(pw.cur_pos));
+        }
+    }
 }
 
 
@@ -9370,6 +9870,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             update_aim_ballistics(local_player);
         }
         append_bot_boxes(result); // боты — и без игроков
+        evaluate_boxes_visibility(resolve_local_player(), sw, sh, result);
         g_box_frame_transient = !player_list_ok;
         return transient_return(1);
     }
@@ -10195,6 +10696,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     }
 
     append_bot_boxes(result);
+    evaluate_boxes_visibility(g_local_player ? g_local_player : resolve_local_player(), sw, sh, result);
     g_box_frame_transient = false;
     watch_boxes(result, local_entity_index, &skip_reason, 0);
 

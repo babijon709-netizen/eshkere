@@ -542,9 +542,91 @@ inline constexpr std::uint64_t RAYCASTMAN_TOO_CLOSE          = 0x44;
 inline constexpr std::uint64_t GUM_RAYCAST_DATA              = 0x160; // GuI`1<GKo>
 inline constexpr std::uint64_t GUM_AIM_RAYCAST               = 0x168; // GuI`1<GKo>
 inline constexpr std::uint64_t GUI_VALUE                     = 0x20;  // значение внутри GuI`1<T>
-inline constexpr std::uint64_t GKO_HIT_OBJECT                = 0x18;  // GameObject попадания
+inline constexpr std::uint64_t GKO_HIT_OBJECT                = 0x18;  // GameObject попадания (uMU / xFg)
+inline constexpr std::uint64_t GKO_HIT_ENTITY                = 0x20;  // hkO / YXq BaseEntity попадания (uMB / xFl)
+inline constexpr std::uint64_t GKO_HIT_PLAYER                = 0x40;  // PlayerManager попадания (uMm / xFd)
 inline constexpr std::uint64_t GKO_RAYCAST_HIT               = 0x48;  // UnityEngine.RaycastHit (0x2C)
+inline constexpr std::uint64_t GKO_RAY_ORIGIN                = 0x74;  // Vector3 origin луча (uMN / xFD)
 inline constexpr std::uint64_t RAYCASTHIT_DISTANCE           = 0x1C;  // m_Distance внутри RaycastHit
+
+// ---- Проверка видимости (vis_check): RaycastManager + AimAssist (hwR / YuB) --
+// Сверка по дампам 11966 Release (TypeDefIndex 9814/9543/9541/7910/7912) и
+// 11959 Beta (TypeDefIndex 9811/9540/9538/7907/7909): все смещения совпадают.
+inline constexpr std::uint64_t PLAYER_RAYCAST_MANAGER        = 0x88;  // PlayerManager.raycastManager
+inline constexpr std::uint64_t PLAYER_VOICE_COLLIDER         = 0x168; // PlayerManager.voiceCollider
+inline constexpr std::uint64_t PLAYER_TRIGGER_PROBE          = 0x170; // PlayerManager.triggerProbe (CapsuleCollider)
+inline constexpr std::uint64_t PLAYER_AIM_ASSIST_CONFIG      = 0x180; // PlayerManager.aimAssistConfig
+inline constexpr std::uint64_t PLAYER_AIM_ASSIST             = 0x258; // PlayerManager.<qLM/xkd>k__BackingField (hwR/YuB)
+inline constexpr std::uint64_t FPOBJECT_ENABLE_AIM_ASSIST    = 0xF8;  // FPObject bool (проверяется в FPManager::Kxq)
+inline constexpr std::uint64_t KCC_MOTOR_OFFSET              = 0x20;  // BasePlayerKCC.<Motor>k__BackingField
+inline constexpr std::uint64_t KCC_MOTOR_CAPSULE             = 0x28;  // KinematicCharacterMotor.Capsule (CapsuleCollider)
+inline constexpr std::uint64_t NPC_BRAIN_ENTITY              = 0x68;  // hsY.Entity (hsN) на NPCBrainHumanoid
+inline constexpr std::uint64_t NPC_DEATH_COLLIDERS           = 0xC8;  // NPCHumanoidDeathHandler.m_CollidersToDisable (Collider[])
+inline constexpr std::uint64_t AIMTARGET_ENTITY_HANDLER      = 0x20;  // AimTarget.entityEventHandler (hsN)
+inline constexpr std::uint64_t AIMCONFIG_DISTANCE            = 0x18;  // AimAssistConfig.distance (float)
+inline constexpr std::uint64_t AIMCONFIG_OUTER_SPEED         = 0x38;  // AimAssistConfig.outerMaxSpeed (float)
+inline constexpr std::uint64_t AIMCONFIG_INNER_SPEED         = 0x3C;  // AimAssistConfig.innerMaxSpeed (float)
+inline constexpr std::uint64_t AIMCONFIG_OUTER_ABS_SPEED     = 0x40;  // AimAssistConfig.outerMaxAbsoluteSpeed (float)
+inline constexpr std::uint64_t AIMCONFIG_INNER_ABS_SPEED     = 0x44;  // AimAssistConfig.innerMaxAbsoluteSpeed (float)
+inline constexpr std::uint64_t AIMCONFIG_SWITCH_DELAY        = 0x48;  // AimAssistConfig.targetSwitchDelay (float)
+inline constexpr std::uint64_t AIMASSIST_PLAYER              = 0x10;  // hwR.tjs / YuB.EKi (PlayerManager)
+inline constexpr std::uint64_t AIMASSIST_CONFIG              = 0x18;  // hwR.tjk / YuB.EQW (AimAssistConfig)
+inline constexpr std::uint64_t AIMASSIST_INIT_FLAG           = 0x20;  // hwR.tjC (bool)
+inline constexpr std::uint64_t AIMASSIST_ENABLED             = 0x21;  // hwR.tjA (bool)
+inline constexpr std::uint64_t AIMASSIST_CAMERA              = 0x28;  // hwR.tjv (Camera)
+inline constexpr std::uint64_t AIMASSIST_RAYCAST_HIT         = 0x30;  // hwR.tjr (RaycastHit, 0x2C)
+inline constexpr std::uint64_t AIMASSIST_CUR_TARGET          = 0x60;  // hwR.tjb (AimTarget)
+inline constexpr std::uint64_t AIMASSIST_CUR_SENSOR          = 0x68;  // hwR.tjU (AimSensorData, 0x30)
+inline constexpr std::uint64_t AIMASSIST_PREV_TARGET         = 0x98;  // hwR.tjB (AimTarget)
+inline constexpr std::uint64_t AIMASSIST_PREV_SENSOR         = 0xA0;  // hwR.tje (AimSensorData, 0x30)
+inline constexpr std::uint64_t AIMASSIST_HIT_FLAG            = 0xDC;  // hwR.tjN (bool)
+inline constexpr std::uint64_t AIMSENSOR_COLLIDER            = 0x00;  // AimSensorData.Collider
+inline constexpr std::uint64_t AIMSENSOR_START_LOOK_TIME     = 0x08;  // AimSensorData.StartLookTime
+inline constexpr std::uint64_t AIMSENSOR_LAST_SEEN_TIME      = 0x0C;  // AimSensorData.LastSeenTime
+inline constexpr std::uint64_t AIMSENSOR_LAST_RECT_TIME      = 0x10;  // AimSensorData.LastRectTime
+inline constexpr std::uint64_t AIMSENSOR_DISTANCE            = 0x14;  // AimSensorData.DistanceFromCamera
+inline constexpr std::uint64_t AIMSENSOR_POSITION            = 0x18;  // AimSensorData.Position (Vector3)
+inline constexpr std::uint64_t AIMSENSOR_DIRECTION           = 0x24;  // AimSensorData.Direction (Vector3)
+
+// ---- Проверка видимости всех игроков в 200м: NearbyPlayerScreenMarkerView + OcclusionModule ----
+// Na::Tick (0x5CFD528) создаёт Marker (MarkerType.NearbyPlayer = 10, данные NV/Iu)
+// для каждого не-союзника/не-соклановца в радиусе 200м. ScreenMarkerPresenter::LateTick
+// (0x5D14C30) каждый кадр вызывает NearbyPlayerScreenMarkerView::Tick -> OcclusionModule::Tick
+// (0x5D097F4), который стреляет Physics.Raycast(camPos, headPos - camPos, dist, obstacleMask)
+// и пишет результат в OcclusionModule + 0x3C (Nullable<bool>: +0x3C hasValue, +0x3D isOccluded).
+inline constexpr std::uint64_t GAME_CONTROLLER_MAP_MANAGER   = 0x170; // GameControllerBase.mapManager (MapManager)
+inline constexpr std::uint64_t MAP_MANAGER_MAP_VIEW          = 0x28;  // MapManager.mapView (MapView)
+inline constexpr std::uint64_t MAP_MANAGER_MARKER_SERVICE    = 0x60;  // MapManager.uke / xjl (NQ/IB MarkerService)
+inline constexpr std::uint64_t MAP_MANAGER_MAP_PRESENTER     = 0x68;  // MapManager.ukE / xjr (xd/pf MapMarkerPresenter)
+inline constexpr std::uint64_t MARKER_INSTALLER_MAP_VIEW     = 0x30;  // MarkerSystemInstaller.mapView
+inline constexpr std::uint64_t MAP_VIEW_ON_ENABLE_ACTION     = 0x60;  // MapView.OwV/JuA (Action, m_target = xd/pf)
+inline constexpr std::uint64_t MAP_PRESENTER_MARKER_SERVICE  = 0x10;  // xd.RTj / pf.ncm (NQ/IB MarkerService)
+inline constexpr std::uint64_t MARKER_SERVICE_ADDED_ACTION   = 0x20;  // NQ.RWt / IB.nPW (Action<Marker>)
+inline constexpr std::uint64_t SCREEN_WINDOW_RECT_TRANSFORM  = 0x30;  // ScreenMarkerWindowView.Rka (RectTransform родитель всех ScreenMarkerView)
+inline constexpr std::uint64_t SCREEN_PRESENTER_VIEW_DICT    = 0x48;  // ScreenMarkerPresenter.RkV (Dictionary<Marker, ScreenMarkerView>)
+inline constexpr std::uint64_t SCREEN_PRESENTER_MARKER_LIST  = 0x50;  // ScreenMarkerPresenter.Rkw (List<Marker>)
+inline constexpr std::uint64_t SCREEN_PRESENTER_INST_DICT    = 0x60;  // ScreenMarkerPresenter.RkQ (Dictionary<ScreenMarkerView, ScreenMarkerView>)
+inline constexpr std::uint64_t MARKER_DATA                   = 0x10;  // Marker.<Rqu>k__BackingField (NX/Ig)
+inline constexpr std::uint64_t MARKER_ACTIVE                 = 0x18;  // Marker.<RqT>k__BackingField (bool)
+inline constexpr std::uint64_t MARKER_DATA_TYPE              = 0x18;  // NX.RqW (int32 MarkerType, 10 = NearbyPlayer)
+inline constexpr std::uint64_t MARKER_DATA_WORLD_POS         = 0x1C;  // NX.Rqc (Vector3)
+inline constexpr std::uint64_t MARKER_DATA_HEAD_POS          = 0x28;  // NX.Rqs (Vector3, headTransform.pos + (0,0.25,0))
+inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // NX.Rqv (Transform ThirdPersonModel)
+inline constexpr std::uint64_t MARKER_DATA_USER_ID           = 0x58;  // NV.Rqd / Iu.nmj (string userId)
+inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT    = 0x28;  // ScreenMarkerView.context (ScreenMarkerModuleContext)
+inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES    = 0x30;  // ScreenMarkerView.modules (List<Nk/IH>)
+inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MARKER     = 0x40;  // ScreenMarkerView.<Rse>k__BackingField (Marker)
+inline constexpr std::uint64_t NEARBY_VIEW_DATA              = 0xA8;  // NearbyPlayerScreenMarkerView.Rsq (NV/Iu)
+inline constexpr std::uint64_t MARKER_CTX_RAY_TARGET         = 0x44;  // ScreenMarkerModuleContext.RsF (Vector3)
+inline constexpr std::uint64_t MARKER_CTX_SKIP_OCCLUSION     = 0x50;  // ScreenMarkerModuleContext.Rsp (bool)
+inline constexpr std::uint64_t MARKER_CTX_HIDDEN             = 0x90;  // ScreenMarkerModuleContext.RsV (bool)
+inline constexpr std::uint64_t OCCLUSION_MOD_CTX             = 0x20;  // OcclusionModule.Rsh (ScreenMarkerModuleContext)
+inline constexpr std::uint64_t OCCLUSION_MOD_MASK            = 0x28;  // OcclusionModule.obstacleMask (LayerMask)
+inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL        = 0x2C;  // OcclusionModule.checkInterval (float)
+inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME       = 0x38;  // OcclusionModule.RcZ (float)
+inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL         = 0x3C;  // OcclusionModule.RcS.hasValue (uint8)
+inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED     = 0x3D;  // OcclusionModule.RcS.value (uint8, 0=виден, 1=за стеной)
+inline constexpr std::int32_t  MARKER_TYPE_NEARBY_PLAYER     = 10;    // MarkerType.NearbyPlayer
 // Тот же struct UnityEngine.RaycastHit (dump.cs 62a8534, строка 642061):
 //   m_Point 0x0 (Vector3), m_Normal 0xC (Vector3), m_FaceID 0x18,
 //   m_Distance 0x1C, m_UV 0x20, m_Collider 0x28  — размер 0x2C.

@@ -8811,44 +8811,67 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 }
 
 // Поиск статического класса hMj (TypeDefIndex: 6280, RVA 0xDEA6BD8 в Release 11966)
-// и извлечение чистой маски твёрдых стен/рельефа ("Construction" | "Terrain").
+// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98) и извлечение маски твёрдых стен/рельефа
+// ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
+// ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
 // OcclusionModule::Tick (0x5D097F4) вызывает 4-аргументный Physics.Raycast с
 // QueryTriggerInteraction.UseGlobal = 0, из-за чего дефолтная obstacleMask (+0x28),
-// включающая слои "Deployed" (+0x10), "Trigger" (+0x60), "Vehicle" (+0x54),
-// "VehicleBox" (+0x58) и "Default" (+0x00), цепляет 1–4 метровые триггерные/буферные
-// зоны вокруг серверных кладок с ящиками/бочками и машин.
-static int32_t try_extract_hmj_from_klass(uint64_t klass) {
-    if (!valid_obj(klass) || (klass & 0x7) != 0) return 0;
+// включающая слои "Deployed" (+0x10), "Trigger" (+0x60), "Vehicle" (+0x54) и
+// "VehicleBox" (+0x58), цепляет 1–4 метровые триггерные/буферные зоны вокруг серверных
+// кладок с ящиками/бочками и машин, тогда как статические стены монументов находятся
+// на слое "Default" (1 << 0), постройки игроков — на "Construction", а рельеф/контейнеры —
+// на "Terrain".
+static bool try_extract_wall_masks_from_klass(uint64_t klass,
+                                              int32_t& out_solid_mask,
+                                              int32_t& out_strip_mask) {
+    out_solid_mask = 0;
+    out_strip_mask = 0;
+    if (!valid_obj(klass) || (klass & 0x7) != 0) return false;
     const uint64_t statics = rd_ptr(klass + IL2CPP_CLASS_STATIC_FIELDS_OFFSET);
-    if (!valid_obj(statics) || (statics & 0x3) != 0) return 0;
+    if (!valid_obj(statics) || (statics & 0x3) != 0) return false;
     int32_t fields[25]{};
-    if (!rd_buf(statics, fields, sizeof(fields))) return 0;
-    int32_t solid_mask = 0;
-    int32_t strip_mask = 0;
-    if (vis_check::extract_hmj_solid_wall_mask(fields, solid_mask, strip_mask)) {
-        return solid_mask;
+    if (rd_buf(statics, fields, sizeof(fields)) &&
+        vis_check::extract_hmj_solid_wall_mask(fields, out_solid_mask, out_strip_mask)) {
+        return true;
     }
-    return 0;
+    if (rd_buf(statics, fields, 18 * sizeof(int32_t)) &&
+        vis_check::extract_hmd_solid_wall_mask(fields, out_solid_mask, out_strip_mask)) {
+        return true;
+    }
+    return false;
 }
 
-static int32_t resolve_solid_wall_mask() {
-    if (!g_il2cpp_base || g_pid <= 0) return 0;
+static void resolve_solid_wall_masks(int32_t& out_solid_mask, int32_t& out_strip_mask) {
+    out_solid_mask = 0;
+    out_strip_mask = 0;
+    if (!g_il2cpp_base || g_pid <= 0) return;
     static uint64_t s_hmj_il2cpp_base = 0;
     static int32_t  s_solid_wall_mask = 0;
+    static int32_t  s_strip_prop_mask = 0;
     static uint64_t s_hmj_scan_rva    = 0;
     if (g_il2cpp_base != s_hmj_il2cpp_base) {
         s_hmj_il2cpp_base = g_il2cpp_base;
         s_solid_wall_mask = 0;
+        s_strip_prop_mask = 0;
         s_hmj_scan_rva    = 0;
     }
-    if (s_solid_wall_mask > 0) return s_solid_wall_mask;
+    if (s_solid_wall_mask > 0 && s_strip_prop_mask > 0) {
+        out_solid_mask = s_solid_wall_mask;
+        out_strip_mask = s_strip_prop_mask;
+        return;
+    }
 
     if (HMJ_TYPEINFO_RVA != 0) {
-        const uint64_t direct_klass = rd_ptr(g_il2cpp_base + HMJ_TYPEINFO_RVA);
-        const int32_t  mask         = try_extract_hmj_from_klass(direct_klass);
-        if (mask > 0) {
-            s_solid_wall_mask = mask;
-            return mask;
+        const uint64_t candidates[2] = {
+            rd_ptr(g_il2cpp_base + HMJ_TYPEINFO_RVA),
+            (HMJ_TYPEINFO_RVA >= 0x40) ? rd_ptr(g_il2cpp_base + HMJ_TYPEINFO_RVA - 0x40) : 0,
+        };
+        for (uint64_t klass : candidates) {
+            if (try_extract_wall_masks_from_klass(klass, out_solid_mask, out_strip_mask)) {
+                s_solid_wall_mask = out_solid_mask;
+                s_strip_prop_mask = out_strip_mask;
+                return;
+            }
         }
     }
 
@@ -8862,24 +8885,25 @@ static int32_t resolve_solid_wall_mask() {
     uint64_t slots[256];
     if (rd_buf(g_il2cpp_base + s_hmj_scan_rva, slots, sizeof(slots))) {
         for (int i = 0; i < 256; ++i) {
-            const int32_t mask = try_extract_hmj_from_klass(slots[i]);
-            if (mask > 0) {
-                s_solid_wall_mask = mask;
-                return mask;
+            if (try_extract_wall_masks_from_klass(slots[i], out_solid_mask, out_strip_mask)) {
+                s_solid_wall_mask = out_solid_mask;
+                s_strip_prop_mask = out_strip_mask;
+                return;
             }
         }
     }
     s_hmj_scan_rva += sizeof(slots);
     if (s_hmj_scan_rva >= kEnd) s_hmj_scan_rva = kBegin;
-    return 0;
 }
 
 static void collect_nearby_player_occlusion(uint64_t local_player,
                                             std::vector<NearbyPlayerOccSample>& out) {
     out.clear();
     expire_local_player_hit_timers(local_player);
-    const int32_t  solid_wall_mask = resolve_solid_wall_mask();
-    const uint64_t presenter       = resolve_screen_marker_presenter();
+    int32_t solid_wall_mask = 0;
+    int32_t strip_prop_mask = 0;
+    resolve_solid_wall_masks(solid_wall_mask, strip_prop_mask);
+    const uint64_t presenter = resolve_screen_marker_presenter();
     if (!presenter) return;
     const uint64_t dict = rd_ptr(presenter + SCREEN_PRESENTER_VIEW_DICT);
     if (!valid_obj(dict)) return;
@@ -8914,7 +8938,8 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         if (!valid_obj(occ)) continue;
 
         const int32_t cur_mask     = rd<int32_t>(occ + OCCLUSION_MOD_MASK);
-        const int32_t desired_mask = vis_check::sanitize_occlusion_obstacle_mask(cur_mask, solid_wall_mask);
+        const int32_t desired_mask = vis_check::sanitize_occlusion_obstacle_mask(
+            cur_mask, solid_wall_mask, strip_prop_mask);
         if (desired_mask > 0 && cur_mask != desired_mask) {
             wr_buf(occ + OCCLUSION_MOD_MASK, &desired_mask, sizeof(desired_mask));
         }
@@ -8934,33 +8959,24 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
             wr_buf(view + NEARBY_VIEW_CACHED_HIT, &zero_b, sizeof(zero_b));
         }
 
-        // Na::Tick (0x5CFD528) каждый кадр пишет в data + 0x1C (MARKER_DATA_WORLD_POS)
-        // точку PlayerModelInfo.head.position + (0, 0.25, 0), а в data + 0x28
-        // (MARKER_DATA_HEAD_POS) — точку PlayerModelInfo.body.position (живот/таз ~0.9м).
-        // В конце NearbyPlayerScreenMarkerView::Tick (0x5D0C63C) игра копирует data + 0x28
-        // в [view + 0x80] + 0x44 (MARKER_CTX_RAY_TARGET), из-за чего OcclusionModule::Tick
-        // стреляет лучом в живот (0.9м) и упирается в низкие ящики, бочки и капоты машин,
-        // даже когда голова и плечи врага полностью открыты. Поднимаем целевую точку луча
-        // до уровня головы (world_pos.y - 0.15f = head.position + 0.10м) и в data + 0x28,
-        // и в ctx + 0x44.
+        // Na::Tick (0x5CFDC60..0x5CFDCC8) каждый кадр обновляет data + 0x28
+        // (MARKER_DATA_HEAD_POS = PlayerModelInfo.body.position + (0, 1.0, 0)), а
+        // NearbyPlayerScreenMarkerView::Tick (0x5D0C63C) копирует data + 0x28 в
+        // [view + 0x80] + 0x44 (MARKER_CTX_RAY_TARGET). Не перезаписываем data + 0x28
+        // боном головы из внешнего потока (внутри PlayerModelInfo.headModel находится
+        // собственный BoxCollider головы, а кости SkinnedMeshRenderer могут отставать
+        // при куллинге аниматора), а только страхуем ctx + 0x44, если он ещё пуст,
+        // и сбрасываем Rsp (+0x50) во всех контекстах маркера.
         const Vec3 world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
         const Vec3 head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
-        Vec3 ray_tgt{};
-        bool have_ray_tgt  = false;
-        bool prefer_elevated = false;
-        if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
-            ray_tgt         = {world_pos.x, world_pos.y - 0.15F, world_pos.z};
-            have_ray_tgt    = true;
-            prefer_elevated = true;
-            if (!vec3_is_finite(head_pos) ||
-                fabsf(head_pos.y - ray_tgt.y) > 0.04F ||
-                fabsf(head_pos.x - ray_tgt.x) > 0.04F ||
-                fabsf(head_pos.z - ray_tgt.z) > 0.04F) {
-                wr_buf(data + MARKER_DATA_HEAD_POS, &ray_tgt, sizeof(ray_tgt));
-            }
-        } else if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
-            ray_tgt      = head_pos;
-            have_ray_tgt = true;
+        Vec3 fallback_tgt{};
+        bool have_fallback_tgt = false;
+        if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
+            fallback_tgt      = head_pos;
+            have_fallback_tgt = true;
+        } else if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
+            fallback_tgt      = {world_pos.x, world_pos.y - 0.25F, world_pos.z};
+            have_fallback_tgt = true;
         }
 
         const uint64_t ctxs[3] = {
@@ -8982,19 +8998,10 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
                 wr_buf(c + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
             }
             const Vec3 cur_ray_tgt = rd_v3(c + MARKER_CTX_RAY_TARGET);
-            if (have_ray_tgt && prefer_elevated) {
-                if (!vec3_is_finite(cur_ray_tgt) ||
-                    position_near_world_origin(cur_ray_tgt) ||
-                    fabsf(cur_ray_tgt.y - ray_tgt.y) > 0.04F ||
-                    fabsf(cur_ray_tgt.x - ray_tgt.x) > 0.04F ||
-                    fabsf(cur_ray_tgt.z - ray_tgt.z) > 0.04F) {
-                    wr_buf(c + MARKER_CTX_RAY_TARGET, &ray_tgt, sizeof(ray_tgt));
-                }
+            if (vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt)) {
                 any_ctx_ready = true;
-            } else if (vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt)) {
-                any_ctx_ready = true;
-            } else if (have_ray_tgt) {
-                wr_buf(c + MARKER_CTX_RAY_TARGET, &ray_tgt, sizeof(ray_tgt));
+            } else if (have_fallback_tgt) {
+                wr_buf(c + MARKER_CTX_RAY_TARGET, &fallback_tgt, sizeof(fallback_tgt));
                 any_ctx_ready = true;
             }
         }
@@ -9007,7 +9014,7 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         NearbyPlayerOccSample sample{};
         sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
         sample.world_pos = world_pos;
-        sample.head_pos  = have_ray_tgt ? ray_tgt : head_pos;
+        sample.head_pos  = have_fallback_tgt ? fallback_tgt : head_pos;
         sample.visible   = (is_occ == 0);
         out.push_back(sample);
     }

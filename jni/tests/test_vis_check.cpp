@@ -259,19 +259,19 @@ void test_hwr_offaxis_probe() {
 void test_hmj_solid_wall_mask_extraction() {
     using namespace vis_check;
     std::int32_t f[25]{};
-    f[0]  = 1 << 0;  // +0x00 Default
-    f[1]  = 1 << 14; // +0x04 Hitbox
-    f[2]  = 1 << 15; // +0x08 IgnoreCollision
-    f[3]  = 1 << 9;  // +0x0C Construction
-    f[4]  = 1 << 10; // +0x10 Deployed (crate/barrel junkpiles, deployables, 1-4m zones)
-    f[5]  = 1 << 11; // +0x14 Terrain (terrain, rocks, monument chunks, shipping containers)
+    f[0]  = 1 << 0;  // +0x00 Default (static monument walls/buildings)
+    f[1]  = 1 << 16; // +0x04 Hitbox
+    f[2]  = 1 << 17; // +0x08 IgnoreCollision
+    f[3]  = 1 << 8;  // +0x0C Construction (Unity user layer 8: player bases/walls)
+    f[4]  = 1 << 9;  // +0x10 Deployed (Unity user layer 9: crate/barrel junkpiles, 1-4m zones)
+    f[5]  = 1 << 10; // +0x14 Terrain (Unity user layer 10: terrain, rocks, shipping containers)
     f[6]  = 1 << 4;  // +0x18 Water
-    f[7]  = 1 << 12; // +0x1C ProxyEntity
-    f[8]  = 1 << 13; // +0x20 Entity
-    f[9]  = 1 << 8;  // +0x24 First Person
-    f[20] = 1 << 17; // +0x50 Doorway
-    f[21] = 1 << 18; // +0x54 Vehicle
-    f[22] = 1 << 19; // +0x58 VehicleBox
+    f[7]  = 1 << 14; // +0x1C ProxyEntity
+    f[8]  = 1 << 15; // +0x20 Entity
+    f[9]  = 1 << 11; // +0x24 First Person (Unity user layer 11)
+    f[20] = 1 << 19; // +0x50 Doorway
+    f[21] = 1 << 12; // +0x54 Vehicle
+    f[22] = 1 << 13; // +0x58 VehicleBox
     f[23] = 1 << 4;  // +0x5C Water
     f[24] = 1 << 21; // +0x60 Trigger
 
@@ -283,23 +283,52 @@ void test_hmj_solid_wall_mask_extraction() {
     std::int32_t solid = 0;
     std::int32_t strip = 0;
     assert(extract_hmj_solid_wall_mask(f, solid, strip));
-    assert(solid == ((1 << 9) | (1 << 11))); // Construction | Terrain only
-    assert((solid & f[4]) == 0);  // Deployed stripped
-    assert((solid & f[21]) == 0); // Vehicle stripped
-    assert((solid & f[22]) == 0); // VehicleBox stripped
-    assert((solid & f[24]) == 0); // Trigger stripped
-    assert((solid & f[0]) == 0);  // Default stripped
+    assert(solid == ((1 << 0) | (1 << 8) | (1 << 10))); // Default | Construction | Terrain
+    assert((solid & f[0]) != 0);  // Default preserved (monument walls)
+    assert((solid & f[3]) != 0);  // Construction preserved (player walls)
+    assert((solid & f[5]) != 0);  // Terrain preserved (terrain/containers)
+    assert((solid & f[4]) == 0);  // Deployed excluded
+    assert((solid & f[21]) == 0); // Vehicle excluded
+    assert((solid & f[22]) == 0); // VehicleBox excluded
+    assert((solid & f[24]) == 0); // Trigger excluded
 
     const std::int32_t raw_occ_mask = f[10] | f[21] | f[22] | f[24];
-    assert(sanitize_occlusion_obstacle_mask(raw_occ_mask, solid) == solid);
+    const std::int32_t sanitized = sanitize_occlusion_obstacle_mask(raw_occ_mask, solid, strip);
+    assert(sanitized == solid);
+    assert((sanitized & f[4]) == 0);
+    assert((sanitized & f[21]) == 0);
+    assert((sanitized & f[22]) == 0);
+    assert((sanitized & f[24]) == 0);
 
-    // Fallback when hMj is not yet resolved still strips Default/Water/FirstPerson:
-    const std::int32_t fb = sanitize_occlusion_obstacle_mask(raw_occ_mask, 0);
-    assert((fb & (1 << 0)) == 0);
-    assert((fb & (1 << 4)) == 0);
-    assert((fb & (1 << 8)) == 0);
-    assert((fb & (1 << 9)) != 0);
-    assert((fb & (1 << 11)) != 0);
+    // Also test hMD.static_fields (18 layer indices):
+    std::int32_t d[18] = {
+        0,  // Default
+        8,  // Construction
+        9,  // Deployed
+        10, // Terrain
+        5,  // UI
+        11, // First Person
+        12, // Vehicle
+        13, // VehicleBox
+        14, // ProxyEntity
+        15, // Entity
+        16, // Hitbox
+        17, // IgnoreCollision
+        18, // ItemPreview
+        4,  // Water
+        19, // Doorway
+        4,  // Water
+        20, // Sleeper
+        21  // Trigger
+    };
+    std::int32_t d_solid = 0;
+    std::int32_t d_strip = 0;
+    assert(extract_hmd_solid_wall_mask(d, d_solid, d_strip));
+    assert(d_solid == solid);
+    assert(sanitize_occlusion_obstacle_mask(raw_occ_mask, d_solid, d_strip) == solid);
+
+    // Before hMj/hMD is resolved (solid == 0), cur_mask must remain untouched:
+    assert(sanitize_occlusion_obstacle_mask(raw_occ_mask, 0, 0) == raw_occ_mask);
 
     // Corrupted table must be rejected:
     f[12] ^= 1;

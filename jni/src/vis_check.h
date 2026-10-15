@@ -227,7 +227,9 @@ public:
                 prev_pos_written;
             if (unity_evaluated) {
                 const bool vis =
-                    (snap.cur_target == probe_aim_target_ && snap.cur_last_seen_time > 0.0f) ||
+                    (snap.cur_target == probe_aim_target_ &&
+                     snap.hit_flag &&
+                     snap.cur_last_seen_time > 0.0f) ||
                     (snap.prev_target == probe_aim_target_);
                 record(probe_target_id_, vis, now);
                 in_flight_        = false;
@@ -242,11 +244,17 @@ public:
             }
         }
 
-        // 2. Any target currently held in hwR.tjb (+0x60) with a valid
-        //    LastSeenTime (> 0) is verified visible this frame by hwR::ohr() -> hwR::ohe().
-        if (snap.cur_target != 0 &&
-            (!in_flight_ || snap.cur_target != probe_aim_target_ || snap.cur_last_seen_time > 0.0f)) {
+        // 2. Any target currently held in hwR.tjb (+0x60) is only confirmed visible
+        //    this frame when hwR.tjN (+0xDC, snap.hit_flag) is true: hwR::ohb (0x6500304)
+        //    clears tjN to 0 at the start of every frame and only sets tjN = 1 (0x65006BC)
+        //    when its obstacle-masked Physics.Raycast hits tjU.Collider. When blocked by a
+        //    wall (0x6500818), tjb (+0x60) and LastSeenTime (+0x74) stay populated until
+        //    targetSwitchDelay expires, while tjN is 0. Never override targets that already
+        //    have an authoritative OcclusionModule sample (t.occlusion_known).
+        if (snap.hit_flag && snap.cur_target != 0 && snap.cur_last_seen_time > 0.0f &&
+            (!in_flight_ || snap.cur_target != probe_aim_target_)) {
             for (const TargetGeometry& t : targets) {
+                if (t.occlusion_known) continue;
                 if ((t.aim_target != 0 && t.aim_target == snap.cur_target) ||
                     (t.event_handler != 0 && t.event_handler == snap.cur_handler)) {
                     record(t.id, true, now);
@@ -269,17 +277,11 @@ public:
                           double now) {
         for (const TargetGeometry& t : targets) {
             if (!t.id) continue;
-            const int r = evaluate_ray_for_target(
-                primary, aim, aim_ray_configured, aim_ray_len,
-                cam_valid, cam_pos, cam_fwd, t);
 
-            // Прямое попадание луча камеры в саму цель.
-            if (r > 0) {
-                record(t.id, true, now);
-                continue;
-            }
-
-            // По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule.
+            // 1. По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule
+            //    с маской препятствий (obstacleMask) имеет абсолютный приоритет над любыми
+            //    лучами прицела (AimRaycast использует m_AimLayerMask без стен и пробивает
+            //    преграды насквозь при наведении прицела на бокс врага за стеной).
             if (t.occlusion_known) {
                 if (!t.occlusion_visible) {
                     // Уход за укрытие (контейнер/стену) фиксируем мгновенно без задержки.
@@ -301,7 +303,14 @@ public:
                 continue;
             }
 
-            if (r < 0) {
+            // 2. Для целей без OcclusionModule (боты, объекты вплотную <= 1.5м) проверяем луч камеры.
+            const int r = evaluate_ray_for_target(
+                primary, aim, aim_ray_configured, aim_ray_len,
+                cam_valid, cam_pos, cam_fwd, t);
+
+            if (r > 0) {
+                record(t.id, true, now);
+            } else if (r < 0) {
                 record(t.id, false, now);
             }
         }
@@ -314,6 +323,9 @@ public:
             return it->second.visible;
         }
         if (t.occlusion_known) return t.occlusion_visible;
+        if (!t.is_bot && t.distance > 1.5f) {
+            return false;
+        }
         if (t.aim_target != 0 && t.aim_collider != 0 &&
             (now - last_hwr_tick_at_) <= kHwrActiveWindowSec) {
             return false;

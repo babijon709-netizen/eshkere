@@ -8848,68 +8848,67 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         const uint64_t occ = resolve_view_occlusion_module(view);
         if (!valid_obj(occ)) continue;
 
-        const uint64_t ctx = rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT);
-        if (valid_obj(occ)) {
-            const float cur_iv = rd<float>(occ + OCCLUSION_MOD_INTERVAL);
-            if (!std::isfinite(cur_iv) || cur_iv > 0.0001F) {
-                const float zero_f = 0.0F;
-                wr_buf(occ + OCCLUSION_MOD_INTERVAL, &zero_f, sizeof(zero_f));
-                wr_buf(occ + OCCLUSION_MOD_NEXT_TIME, &zero_f, sizeof(zero_f));
-            }
+        const float cur_iv = rd<float>(occ + OCCLUSION_MOD_INTERVAL);
+        if (!std::isfinite(cur_iv) || cur_iv > 0.0001F) {
+            const float zero_f = 0.0F;
+            wr_buf(occ + OCCLUSION_MOD_INTERVAL, &zero_f, sizeof(zero_f));
+            wr_buf(occ + OCCLUSION_MOD_NEXT_TIME, &zero_f, sizeof(zero_f));
         }
         if (rd<uint8_t>(data + MARKER_DATA_IS_HIT) != 0) {
             const uint8_t zero_b = 0;
             wr_buf(data + MARKER_DATA_IS_HIT, &zero_b, sizeof(zero_b));
         }
+        if (rd<uint8_t>(view + NEARBY_VIEW_CACHED_HIT) != 0) {
+            const uint8_t zero_b = 0;
+            wr_buf(view + NEARBY_VIEW_CACHED_HIT, &zero_b, sizeof(zero_b));
+        }
 
-        // ScreenMarkerView::Tick (0x5D05EB8..0x5D05EE4) каждый кадр обновляет
-        // data + 0x1C (MARKER_DATA_WORLD_POS) живой позицией головы (head.pos + (0,0.25,0)),
-        // тогда как Na::Tick обновляет data + 0x28 (MARKER_DATA_HEAD_POS) только
-        // раз в 2 секунды (RWc = 2.0f), а NearbyPlayerScreenMarkerView::Tick (0x5D0C628)
-        // копирует data + 0x28 в ctx + 0x44 (MARKER_CTX_RAY_TARGET) только при
-        // выполнении всех условий отображения точки выстрела. Записываем живую
-        // позицию головы текущего кадра и в data + 0x28, и в ctx + 0x44, чтобы
-        // OcclusionModule::Tick (0x5D098C0) каждый кадр стрелял лучом точно в
-        // актуальную голову игрока без 2-секундного отставания.
+        // Na::Tick (0x5CFDC60..0x5CFDCC8) каждый кадр обновляет data + 0x28
+        // (MARKER_DATA_HEAD_POS = PlayerModelInfo.body.position), а
+        // NearbyPlayerScreenMarkerView::Tick (0x5D0C63C) копирует data + 0x28 в
+        // [view + 0x80] + 0x44 (MARKER_CTX_RAY_TARGET). Не перезаписываем data + 0x28
+        // другим боном из внешнего потока (иначе точка луча прыгает между грудью и
+        // головой от кадра к кадру), а только страхуем ctx + 0x44, если он ещё пуст,
+        // и сбрасываем Rsp (+0x50) во всех контекстах маркера.
         const Vec3 world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
         const Vec3 head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
-        Vec3 live_ray_tgt{};
-        bool have_live_tgt = false;
-        if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
-            live_ray_tgt  = {world_pos.x, world_pos.y - 0.25F, world_pos.z};
-            have_live_tgt = true;
-        } else if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
-            live_ray_tgt  = head_pos;
-            have_live_tgt = true;
+        Vec3 fallback_tgt{};
+        bool have_fallback_tgt = false;
+        if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
+            fallback_tgt      = head_pos;
+            have_fallback_tgt = true;
+        } else if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
+            fallback_tgt      = {world_pos.x, world_pos.y - 0.25F, world_pos.z};
+            have_fallback_tgt = true;
         }
 
-        if (have_live_tgt) {
-            const float hdx = head_pos.x - live_ray_tgt.x;
-            const float hdy = head_pos.y - live_ray_tgt.y;
-            const float hdz = head_pos.z - live_ray_tgt.z;
-            if (!vec3_is_finite(head_pos) || (hdx * hdx + hdy * hdy + hdz * hdz) > 0.0025F) {
-                wr_buf(data + MARKER_DATA_HEAD_POS, &live_ray_tgt, sizeof(live_ray_tgt));
+        const uint64_t ctxs[3] = {
+            rd_ptr(occ + OCCLUSION_MOD_CTX),
+            rd_ptr(view + NEARBY_VIEW_MODULE_CTX),
+            rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT),
+        };
+        bool any_ctx_ready = false;
+        for (int ci = 0; ci < 3; ++ci) {
+            const uint64_t c = ctxs[ci];
+            if (!valid_obj(c)) continue;
+            bool dup = false;
+            for (int pj = 0; pj < ci; ++pj) {
+                if (ctxs[pj] == c) { dup = true; break; }
             }
-        }
-
-        if (valid_obj(ctx)) {
-            if (rd<uint8_t>(ctx + MARKER_CTX_SKIP_OCCLUSION) != 0) {
+            if (dup) continue;
+            if (rd<uint8_t>(c + MARKER_CTX_SKIP_OCCLUSION) != 0) {
                 const uint8_t zero_b = 0;
-                wr_buf(ctx + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
+                wr_buf(c + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
             }
-            const Vec3 cur_ray_tgt = rd_v3(ctx + MARKER_CTX_RAY_TARGET);
-            const bool cur_tgt_valid =
-                vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt);
-            if (have_live_tgt) {
-                const float rdx = cur_ray_tgt.x - live_ray_tgt.x;
-                const float rdy = cur_ray_tgt.y - live_ray_tgt.y;
-                const float rdz = cur_ray_tgt.z - live_ray_tgt.z;
-                if (!cur_tgt_valid || (rdx * rdx + rdy * rdy + rdz * rdz) > 0.0025F) {
-                    wr_buf(ctx + MARKER_CTX_RAY_TARGET, &live_ray_tgt, sizeof(live_ray_tgt));
-                }
+            const Vec3 cur_ray_tgt = rd_v3(c + MARKER_CTX_RAY_TARGET);
+            if (vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt)) {
+                any_ctx_ready = true;
+            } else if (have_fallback_tgt) {
+                wr_buf(c + MARKER_CTX_RAY_TARGET, &fallback_tgt, sizeof(fallback_tgt));
+                any_ctx_ready = true;
             }
-            if (!cur_tgt_valid) continue;
         }
+        if (!any_ctx_ready) continue;
 
         const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
         const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
@@ -8918,7 +8917,7 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         NearbyPlayerOccSample sample{};
         sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
         sample.world_pos = world_pos;
-        sample.head_pos  = have_live_tgt ? live_ray_tgt : head_pos;
+        sample.head_pos  = have_fallback_tgt ? fallback_tgt : head_pos;
         sample.visible   = (is_occ == 0);
         out.push_back(sample);
     }
@@ -9054,34 +9053,24 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     static std::vector<NearbyPlayerOccSample> s_occ_samples;
     collect_nearby_player_occlusion(local_player, s_occ_samples);
 
-    // 2. Чтение и настройка RaycastManager (RaycastData + 300м AimRaycast).
-    //    ВАЖНО: m_AimLayerMask (rm + 0x4C) менять НЕЛЬЗЯ — у AimRaycast (SphereCast)
-    //    в отличие от RaycastData нет проверки hkw.uMm != rm.player, поэтому
-    //    добавление m_LayerMask в m_AimLayerMask заставляет SphereCast попадать
-    //    в коллайдер самого локального игрока на дистанции ~0.2м.
+    // 2. Чтение RaycastManager (RaycastData +0x160 использует m_LayerMask со стенами).
+    //    ВАЖНО: AimRaycast (local_eh + 0x168) использует m_AimLayerMask (rm + 0x4C),
+    //    в которой НЕТ слоёв стен/построек/рельефа — поэтому растягивание
+    //    m_AimRayLength (+0x3C) до 300м заставляет SphereCast пробивать стены
+    //    насквозь и выставлять hit_player = враг при наведении прицела на бокс.
     const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
     const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
     uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
     if (!valid_obj(rm) && valid_obj(cur_wpn)) rm = rd_ptr(cur_wpn + FPOBJECT_RAYCAST_MANAGER);
 
-    bool  aim_ray_configured = false;
-    float aim_ray_len        = 1.5F;
+    const bool  aim_ray_configured = false;
+    const float aim_ray_len        = 1.5F;
     if (valid_obj(rm) && rd_ptr(rm + RAYCASTMAN_PLAYER) == local_player) {
         const bool is_melee = weapon_is_melee_class(cur_wpn);
-        float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
-        if (!is_melee && valid_obj(rm)) {
-            if (!std::isfinite(cur_aim_len) ||
-                fabsf(cur_aim_len - vis_check::kDesiredAimRayLength) > 1.0F) {
-                const float desired_len = vis_check::kDesiredAimRayLength;
-                const float desired_rad = vis_check::kDesiredSphereRadius;
-                wr_buf(rm + RAYCASTMAN_AIM_RAY_LENGTH, &desired_len, sizeof(desired_len));
-                wr_buf(rm + RAYCASTMAN_SPHERE_RADIUS, &desired_rad, sizeof(desired_rad));
-                cur_aim_len = desired_len;
-            }
-        }
-        if (std::isfinite(cur_aim_len) && cur_aim_len > 10.0F) {
-            aim_ray_configured = true;
-            aim_ray_len        = cur_aim_len;
+        const float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
+        if (!is_melee && std::isfinite(cur_aim_len) && cur_aim_len > 10.0F) {
+            const float zero_f = 0.0F;
+            wr_buf(rm + RAYCASTMAN_AIM_RAY_LENGTH, &zero_f, sizeof(zero_f));
         }
     }
 
@@ -9089,7 +9078,6 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     const uint64_t local_eh = rd_ptr(local_player + PLAYER_EVENT_HANDLER);
     if (valid_obj(local_eh)) {
         read_gko_ray_sample(rd_ptr(local_eh + GUM_RAYCAST_DATA), local_player, primary_ray);
-        read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), local_player, aim_ray);
     }
 
     // 3. Пассивное чтение AimAssist (hwR / YuB) без записи в его поля:

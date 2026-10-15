@@ -67,6 +67,9 @@ void test_offsets_consistency() {
     assert(game_offsets::MARKER_DATA_IS_HIT == 0x73);
     assert(game_offsets::PLAYER_HIT_TRACKER == 0x348);
     assert(game_offsets::HIT_TRACKER_HIT_DICT == 0x18);
+    assert(game_offsets::NEARBY_VIEW_MODULE_CTX == 0x80);
+    assert(game_offsets::NEARBY_VIEW_DATA == 0xA8);
+    assert(game_offsets::NEARBY_VIEW_CACHED_HIT == 0xB1);
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
@@ -81,6 +84,8 @@ void test_offsets_consistency() {
     assert(game_offsets_beta::MARKER_DATA_IS_HIT == game_offsets::MARKER_DATA_IS_HIT);
     assert(game_offsets_beta::PLAYER_HIT_TRACKER == game_offsets::PLAYER_HIT_TRACKER);
     assert(game_offsets_beta::HIT_TRACKER_HIT_DICT == game_offsets::HIT_TRACKER_HIT_DICT);
+    assert(game_offsets_beta::NEARBY_VIEW_MODULE_CTX == game_offsets::NEARBY_VIEW_MODULE_CTX);
+    assert(game_offsets_beta::NEARBY_VIEW_CACHED_HIT == game_offsets::NEARBY_VIEW_CACHED_HIT);
     assert(game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED == game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
 }
 
@@ -121,7 +126,9 @@ void test_marker_occlusion_and_rays() {
     assert(!tracker.is_visible(t1, 1.0));
     assert(tracker.is_visible(t2, 1.0));
 
-    // Direct camera AimRaycast hit on t1's PlayerManager overrides occlusion immediately
+    // When t1 has an authoritative OcclusionModule sample (occlusion_known = true,
+    // occlusion_visible = false), even a wall-piercing AimRaycast hit on t1.id
+    // or a lingering AimAssist cur_target with hit_flag = false MUST NOT flip t1 green!
     RaySample aim_ray{};
     aim_ray.valid = true;
     aim_ray.hit_player = t1.id;
@@ -129,6 +136,19 @@ void test_marker_occlusion_and_rays() {
     aim_ray.point_valid = true;
     aim_ray.point[0] = 0.0f; aim_ray.point[1] = 1.2f; aim_ray.point[2] = 20.0f;
 
+    AimAssistSnapshot snap_wall_linger{};
+    snap_wall_linger.valid = true;
+    snap_wall_linger.cur_target = t1.aim_target;
+    snap_wall_linger.cur_handler = t1.event_handler;
+    snap_wall_linger.cur_collider = t1.aim_collider;
+    snap_wall_linger.cur_last_seen_time = 120.0f;
+    snap_wall_linger.hit_flag = false; // hwR.tjN == 0 when blocked by wall in hwR::ohb
+
+    tracker.consume_hwr_snapshot(snap_wall_linger, targets, 1.05);
+    tracker.update_from_rays(empty_ray, aim_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.05);
+    assert(!tracker.is_visible(targets[0], 1.05));
+
+    // Direct camera ray hit on a target WITHOUT OcclusionModule (e.g., bot) marks it visible
     targets[0].occlusion_known = false;
     tracker.update_from_rays(empty_ray, aim_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.1);
     assert(tracker.is_visible(targets[0], 1.1));
@@ -220,7 +240,7 @@ void test_hwr_offaxis_probe() {
     assert(tracker.consume_hwr_snapshot(snap_blocked, targets, 2.016));
     assert(!tracker.is_visible(bot, 2.016));
 
-    // Re-probe and simulate visible hit (Unity sets LastSeenTime = Time.time > 0)
+    // Re-probe and simulate visible hit (Unity sets LastSeenTime = Time.time > 0 and hit_flag = true)
     const ProbeWrite pw2 = tracker.select_next_probe(targets, 2.15);
     assert(pw2.valid);
     AimAssistSnapshot snap_vis{};
@@ -229,6 +249,7 @@ void test_hwr_offaxis_probe() {
     snap_vis.cur_collider = bot.aim_collider;
     snap_vis.cur_last_seen_time = 154.25f;
     snap_vis.cur_distance = 41.8f;
+    snap_vis.hit_flag = true;
     assert(tracker.consume_hwr_snapshot(snap_vis, targets, 2.166));
     assert(tracker.is_visible(bot, 2.166));
 }

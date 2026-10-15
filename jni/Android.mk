@@ -1,46 +1,41 @@
-# jni/Android.mk — benzware (xvcen): arm64-v8a PIE-исполняемый файл.
-#
-# build.sh зовёт ndk-build так:
-#   NDK_PROJECT_PATH=. NDK_APPLICATION_MK=jni/Application.mk APP_BUILD_SCRIPT=jni/Android.mk
-# и ждёт на выходе libs/arm64-v8a/xvcen (потом копирует его в benzware.sh и
-# xvcen-arm64-v8a). Имя модуля ниже менять нельзя — build.sh ищет именно xvcen.
-#
-# Источники собираются wildcard-ом: когда в jni/src досыпаются остальные файлы
-# проекта (process.cpp, silent_aim.cpp и т.д.), этот mk править не нужно.
-
 LOCAL_PATH := $(call my-dir)
-
-# src/*.cpp и src/*/*.cpp — подкаталоги вроде Blur/ и Android_touch/ тоже.
-_xvcen_src := $(wildcard $(LOCAL_PATH)/src/*.cpp $(LOCAL_PATH)/src/*/*.cpp)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE    := xvcen
-LOCAL_SRC_FILES := $(_xvcen_src:$(LOCAL_PATH)/%=%)
+LOCAL_MODULE := xvcen
 
-# Инклюды в кавычках clang ищет сначала рядом с включающим файлом (то есть в
-# src/), остальное закрывают эти пути. game.h лежит в include/, внутренние
-# заголовки — в src/, «Blur/Blur.h» и «Android_touch/TouchHelperA.h» —
-# подкаталоги одного из двух; LOCAL_PATH добавлен, чтобы оба варианта работали.
-LOCAL_C_INCLUDES := $(LOCAL_PATH) \
-                    $(LOCAL_PATH)/src \
-                    $(LOCAL_PATH)/include
+_CF := -O3 -ffast-math -march=armv8-a+simd \
+       -fomit-frame-pointer -ffunction-sections -fdata-sections \
+       -fvisibility=hidden -fvisibility-inlines-hidden \
+       -DUSE_OPENGL -DIMGUI_IMPL_OPENGL_ES3 -DNDEBUG \
+       -fstack-protector-strong \
+       -fPIE \
+       -fno-unwind-tables \
+       -fno-asynchronous-unwind-tables \
+       -fstrict-aliasing
 
-# Только системные библиотеки bionic/NDK:
-#   log      — __android_log_print
-#   android  — ANativeWindow / AInputQueue / сенсоры (оверлей, тач)
-#   EGL, GLESv2 — контекст оверлея и Blur/esp_draw
-#   dl       — dlopen/dlsym
-# Недостающая вылезет как undefined reference на линковке, лишняя не мешает.
-LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv2 -ldl
+LOCAL_CPPFLAGS := $(_CF) -std=gnu++17 -fexceptions -fno-rtti
+LOCAL_CFLAGS   := $(_CF) -std=c11
 
-# Явно, а не «как ndk-build решит»: -fno-rtti ломает dynamic_cast, -fno-exceptions
-# ломает throw/catch в чужих TU. Цена — несколько килобайт бинарника.
-LOCAL_CPP_FEATURES += exceptions rtti
+LOCAL_LDFLAGS := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none -pie
 
-# Мёртвый код выкидываем по секциям; предупреждения не глушим и -Werror не
-# ставим: дерево досыпается частями, сборка не должна падать на ворнингах.
-LOCAL_CPPFLAGS += -ffunction-sections -fdata-sections
-LOCAL_LDFLAGS  += -Wl,--gc-sections
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/include $(LOCAL_PATH)/include/ImGui $(LOCAL_PATH)/include/ImGui/backends $(LOCAL_PATH)/src
+
+LOCAL_SRC_FILES := \
+    src/main.cpp \
+    src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
+    src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
+    src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp \
+    src/game.cpp src/game_viewmodel.cpp src/game_markers.cpp src/game_farm.cpp \
+    src/lang.cpp \
+    src/Android_draw/draw.cpp src/Android_touch/TouchHelperA.cpp \
+    src/VidAvatar.cpp \
+    src/third_party/tjpgd/tjpgd.c \
+    src/Blur/Blur.cpp \
+    src/ImGui/imgui.cpp src/ImGui/imgui_draw.cpp src/ImGui/imgui_tables.cpp \
+    src/ImGui/imgui_widgets.cpp src/ImGui/backends/imgui_impl_android.cpp \
+    src/ImGui/backends/imgui_impl_opengl3.cpp
+
+LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv3 -lOpenSLES -lz -ldl
 
 include $(BUILD_EXECUTABLE)

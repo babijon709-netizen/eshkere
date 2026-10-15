@@ -1,3 +1,11 @@
-# ndk-build output (build.sh делает rm -rf obj libs перед сборкой)
+# ndk-build outputs
 obj/
 libs/
+.cxx/
+*.o
+*.a
+*.so
+
+# one-shot CLI dumps from the device
+*.partial
+global-metadata.dat

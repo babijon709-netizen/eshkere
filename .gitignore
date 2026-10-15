@@ -1,0 +1,11 @@
+# ndk-build outputs
+obj/
+libs/
+.cxx/
+*.o
+*.a
+*.so
+
+# one-shot CLI dumps from the device
+*.partial
+global-metadata.dat

@@ -552,12 +552,15 @@ inline constexpr std::uint64_t RAYCASTHIT_DISTANCE           = 0x1C;  // m_Dista
 // ---- Проверка видимости (vis_check): RaycastManager + AimAssist (hwR / YuB) --
 // Сверка по дампам 11966 Release (TypeDefIndex 9814/9543/9541/7910/7912) и
 // 11959 Beta (TypeDefIndex 9811/9540/9538/7907/7909): все смещения совпадают.
+inline constexpr std::uint64_t PLAYER_MOUSE_LOOK             = 0x70;  // PlayerManager.mouseLook (Oxide.MouseLook)
+inline constexpr std::uint64_t MOUSELOOK_PITCH_YAW           = 0x4C;  // MouseLook.JZC (Vector2 pitch/yaw)
 inline constexpr std::uint64_t PLAYER_RAYCAST_MANAGER        = 0x88;  // PlayerManager.raycastManager
 inline constexpr std::uint64_t PLAYER_VOICE_COLLIDER         = 0x168; // PlayerManager.voiceCollider
 inline constexpr std::uint64_t PLAYER_TRIGGER_PROBE          = 0x170; // PlayerManager.triggerProbe (CapsuleCollider)
 inline constexpr std::uint64_t PLAYER_AIM_ASSIST_CONFIG      = 0x180; // PlayerManager.aimAssistConfig
 inline constexpr std::uint64_t PLAYER_AIM_ASSIST             = 0x258; // PlayerManager.<qLM/xkd>k__BackingField (hwR/YuB)
-inline constexpr std::uint64_t FPOBJECT_ENABLE_AIM_ASSIST    = 0xF8;  // FPObject bool (проверяется в FPManager::Kxq)
+inline constexpr std::uint64_t PLAYER_MODEL_INFO_REF         = 0x260; // PlayerManager.tjQ (RWk<PlayerModelInfo>, +0x10 = PlayerModelInfo)
+inline constexpr std::uint64_t FPOBJECT_ENABLE_AIM_ASSIST    = 0xF8;  // FPWeaponBase.useAimAssist (bool, проверяется в FPManager::Kxq)
 inline constexpr std::uint64_t KCC_MOTOR_OFFSET              = 0x20;  // BasePlayerKCC.<Motor>k__BackingField
 inline constexpr std::uint64_t KCC_MOTOR_CAPSULE             = 0x28;  // KinematicCharacterMotor.Capsule (CapsuleCollider)
 inline constexpr std::uint64_t NPC_BRAIN_ENTITY              = 0x68;  // hsY.Entity (hsN) на NPCBrainHumanoid
@@ -580,6 +583,7 @@ inline constexpr std::uint64_t AIMASSIST_CUR_SENSOR          = 0x68;  // hwR.tjU
 inline constexpr std::uint64_t AIMASSIST_PREV_TARGET         = 0x98;  // hwR.tjB (AimTarget)
 inline constexpr std::uint64_t AIMASSIST_PREV_SENSOR         = 0xA0;  // hwR.tje (AimSensorData, 0x30)
 inline constexpr std::uint64_t AIMASSIST_HIT_FLAG            = 0xDC;  // hwR.tjN (bool)
+inline constexpr std::uint64_t AIMASSIST_DELTA_ROT           = 0x108; // hwR.tjD (Vector2, добавляется к lookDelta в MouseLook::KrI)
 inline constexpr std::uint64_t AIMSENSOR_COLLIDER            = 0x00;  // AimSensorData.Collider
 inline constexpr std::uint64_t AIMSENSOR_START_LOOK_TIME     = 0x08;  // AimSensorData.StartLookTime
 inline constexpr std::uint64_t AIMSENSOR_LAST_SEEN_TIME      = 0x0C;  // AimSensorData.LastSeenTime
@@ -611,8 +615,9 @@ inline constexpr std::uint64_t MARKER_ACTIVE                 = 0x18;  // Marker.
 inline constexpr std::uint64_t MARKER_DATA_TYPE              = 0x18;  // NX.RqW (int32 MarkerType, 10 = NearbyPlayer)
 inline constexpr std::uint64_t MARKER_DATA_WORLD_POS         = 0x1C;  // NX.Rqc (Vector3)
 inline constexpr std::uint64_t MARKER_DATA_HEAD_POS          = 0x28;  // NX.Rqs (Vector3, headTransform.pos + (0,0.25,0))
-inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // NX.Rqv (Transform ThirdPersonModel)
+inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // NX.Rqv (Transform PlayerModelInfo.head)
 inline constexpr std::uint64_t MARKER_DATA_USER_ID           = 0x58;  // NV.Rqd / Iu.nmj (string userId)
+inline constexpr std::uint64_t MARKER_DATA_IS_HIT            = 0x73;  // NV.Rqb (bool, копируется в ctx+0x50 в NearbyPlayerScreenMarkerView::Tick)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT    = 0x28;  // ScreenMarkerView.context (ScreenMarkerModuleContext)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES    = 0x30;  // ScreenMarkerView.modules (List<Nk/IH>)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MARKER     = 0x40;  // ScreenMarkerView.<Rse>k__BackingField (Marker)

@@ -8750,6 +8750,10 @@ static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& 
                 wr_buf(occ + OCCLUSION_MOD_INTERVAL, &zero_iv, sizeof(zero_iv));
             }
         }
+        if (rd<uint8_t>(data + MARKER_DATA_IS_HIT) != 0) {
+            const uint8_t zero_b = 0;
+            wr_buf(data + MARKER_DATA_IS_HIT, &zero_b, sizeof(zero_b));
+        }
         if (valid_obj(ctx)) {
             if (rd<uint8_t>(ctx + MARKER_CTX_SKIP_OCCLUSION) != 0) {
                 const uint8_t zero_b = 0;
@@ -8759,8 +8763,7 @@ static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& 
 
         const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
         const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
-        const uint8_t clamped = valid_obj(ctx) ? rd<uint8_t>(ctx + MARKER_CTX_HIDDEN) : 0;
-        if (has_val == 0 || clamped != 0) continue;
+        if (has_val == 0) continue;
 
         NearbyPlayerOccSample sample{};
         sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
@@ -8780,7 +8783,10 @@ static void read_gko_ray_sample(uint64_t wrapper, vis_check::RaySample& out) {
     out.hit_object   = rd_ptr(gko + GKO_HIT_OBJECT);
     out.hit_entity   = rd_ptr(gko + GKO_HIT_ENTITY);
     out.hit_player   = rd_ptr(gko + GKO_HIT_PLAYER);
-    out.hit_collider = rd_ptr(gko + GKO_RAYCAST_HIT + RAYCASTHIT_COLLIDER);
+    // В Unity 2021+ поле RaycastHit.m_Collider (+0x28) — это 32-битный instanceID
+    // (см. RaycastHit::get_collider @ 0xCE0199C), а не указатель Collider*.
+    // Указатели на объект попадания GKo уже кладёт в uMU (+0x18), uMB (+0x20) и uMm (+0x40).
+    out.hit_collider = 0;
     float dist = 0.0F;
     if (rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_DISTANCE, dist) &&
         std::isfinite(dist) && dist >= 0.0F && dist < 2000.0F) {
@@ -8808,10 +8814,76 @@ static bool weapon_is_melee_class(uint64_t weapon) {
            object_class_name_is(weapon, "FPKnife", false);
 }
 
+// Защита MouseLook::KrI (0x688FFB0) от блокировки камеры:
+// MouseLook::KrI вызывает hwR::ohA(lookDelta) (0x68900CC) ДО обновления углов
+// MouseLook.JZC (+0x4C) и поворота m_LookRoot (+0x28). Если у hwR включён флаг
+// tjA (+0x21 = 1), но поле камеры tjv (+0x28) равно NULL (когда автонаводка
+// выключена в настройках игры, конструктор hwR оставляет tjv = 0), hwR::ohb
+// бросает NullReferenceException каждый кадр и обрывает MouseLook::KrI до
+// поворота камеры. Также лечим NaN в hwR.tjD (+0x108) и MouseLook.JZC (+0x4C).
+static void sanitize_camera_and_aim_assist(uint64_t local_player) {
+    if (!valid_obj(local_player)) return;
+
+    const uint64_t hwr = rd_ptr(local_player + PLAYER_AIM_ASSIST);
+    if (valid_obj(hwr) && rd_ptr(hwr + AIMASSIST_PLAYER) == local_player) {
+        const uint64_t hwr_cam = rd_ptr(hwr + AIMASSIST_CAMERA);
+        if (!valid_obj(hwr_cam) && rd<uint8_t>(hwr + AIMASSIST_ENABLED) != 0) {
+            const uint8_t zero_b = 0;
+            wr_buf(hwr + AIMASSIST_ENABLED, &zero_b, sizeof(zero_b));
+        }
+        float delta_rot[2] = {0.0F, 0.0F};
+        if (rd_buf(hwr + AIMASSIST_DELTA_ROT, delta_rot, sizeof(delta_rot))) {
+            if (!std::isfinite(delta_rot[0]) || !std::isfinite(delta_rot[1])) {
+                const float zero_v2[2] = {0.0F, 0.0F};
+                wr_buf(hwr + AIMASSIST_DELTA_ROT, zero_v2, sizeof(zero_v2));
+            }
+        }
+        const uint64_t cfg_obj = rd_ptr(hwr + AIMASSIST_CONFIG);
+        if (valid_obj(cfg_obj)) {
+            const float outer_spd = rd<float>(cfg_obj + AIMCONFIG_OUTER_SPEED);
+            const float inner_spd = rd<float>(cfg_obj + AIMCONFIG_INNER_SPEED);
+            if (outer_spd == 0.0F && inner_spd == 0.0F) {
+                const float def_speeds[4] = {1.8F, 0.7F, 0.1F, 0.2F};
+                wr_buf(cfg_obj + AIMCONFIG_OUTER_SPEED, def_speeds, sizeof(def_speeds));
+            }
+        }
+    }
+
+    const uint64_t mouse_look = rd_ptr(local_player + PLAYER_MOUSE_LOOK);
+    if (valid_obj(mouse_look)) {
+        float jzc[2] = {0.0F, 0.0F};
+        if (rd_buf(mouse_look + MOUSELOOK_PITCH_YAW, jzc, sizeof(jzc))) {
+            if (!std::isfinite(jzc[0]) || !std::isfinite(jzc[1])) {
+                const float zero_v2[2] = {0.0F, 0.0F};
+                wr_buf(mouse_look + MOUSELOOK_PITCH_YAW, zero_v2, sizeof(zero_v2));
+            }
+        }
+    }
+}
+
+// Na::Tick (0x5CFD850..0x5CFD8A8) кладёт в data + 0x40 (MARKER_DATA_TRANSFORM)
+// трансформ головы из PlayerModelInfo (+0x20, MODELINFO_HEAD), доставая сам
+// PlayerModelInfo через [PlayerManager + 0x260] -> [+0x10].
+static uint64_t player_marker_head_transform(uint64_t player, PlayerAux& aux) {
+    if (!valid_obj(player)) return 0;
+    const uint64_t mi_ref = rd_ptr(player + PLAYER_MODEL_INFO_REF);
+    uint64_t mi = valid_obj(mi_ref) ? rd_ptr(mi_ref + 0x10) : 0;
+    if (!valid_obj(mi)) {
+        if (!aux.model_info || !managed_object_native(aux.model_info)) {
+            aux.model_info = resolve_player_model_info(player, aux);
+        }
+        mi = aux.model_info;
+    }
+    if (!valid_obj(mi)) return 0;
+    return managed_object_native(rd_ptr(mi + MODELINFO_HEAD));
+}
+
 static void evaluate_boxes_visibility(uint64_t local_player,
                                       float sw,
                                       float sh,
                                       std::vector<EspBox>& boxes) {
+    sanitize_camera_and_aim_assist(local_player);
+
     const bool want_vis = cfg::esp::vis_check || cfg::aim::vis_check;
     if (!want_vis || !valid_obj(local_player) || boxes.empty()) {
         if (!want_vis) s_vis_tracker.reset();
@@ -8828,7 +8900,6 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     // 2. Чтение и настройка RaycastManager (RaycastData + 300м AimRaycast).
     const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
     const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
-    const uint64_t cur_obj = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_OBJECT) : 0;
     uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
     if (!valid_obj(rm) && valid_obj(cur_wpn)) rm = rd_ptr(cur_wpn + FPOBJECT_RAYCAST_MANAGER);
 
@@ -8860,39 +8931,15 @@ static void evaluate_boxes_visibility(uint64_t local_player,
         read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), aim_ray);
     }
 
-    // 3. Чтение и тихая активация AimAssist (hwR / YuB) для проверки ботов и
-    //    коллайдеров вне перекрестия.
+    // 3. Пассивное чтение AimAssist (hwR / YuB) без записи в его поля:
+    //    любая внешняя мутация hwR во время работы MouseLook::KrI ломает
+    //    обновление камеры (NullReferenceException при tjv == 0 или NaN в tjD).
     vis_check::AimAssistSnapshot hwr_snap{};
-    uint64_t hwr = rd_ptr(local_player + PLAYER_AIM_ASSIST);
-    if (valid_obj(hwr) && rd_ptr(hwr + AIMASSIST_PLAYER) == local_player) {
-        const uint64_t cfg_obj = rd_ptr(hwr + AIMASSIST_CONFIG);
-        if (valid_obj(cfg_obj)) {
-            const float cur_dist = rd<float>(cfg_obj + AIMCONFIG_DISTANCE);
-            if (!std::isfinite(cur_dist) ||
-                fabsf(cur_dist - vis_check::kDesiredAssistDist) > 1.0F) {
-                const float d = vis_check::kDesiredAssistDist;
-                wr_buf(cfg_obj + AIMCONFIG_DISTANCE, &d, sizeof(d));
-            }
-            const float zero_speeds[4] = {0.0F, 0.0F, 0.0F, 0.0F};
-            if (rd<float>(cfg_obj + AIMCONFIG_OUTER_SPEED) != 0.0F ||
-                rd<float>(cfg_obj + AIMCONFIG_INNER_SPEED) != 0.0F) {
-                wr_buf(cfg_obj + AIMCONFIG_OUTER_SPEED, zero_speeds, sizeof(zero_speeds));
-            }
-        }
-        if (valid_obj(hwr)) {
-            if (rd<uint8_t>(hwr + AIMASSIST_INIT_FLAG) == 0 ||
-                rd<uint8_t>(hwr + AIMASSIST_ENABLED) == 0) {
-                const uint8_t flags[2] = {1, 1};
-                wr_buf(hwr + AIMASSIST_INIT_FLAG, flags, sizeof(flags));
-            }
-        }
-        if (valid_obj(cur_obj)) {
-            if (rd<uint8_t>(cur_obj + FPOBJECT_ENABLE_AIM_ASSIST) == 0) {
-                const uint8_t one = 1;
-                wr_buf(cur_obj + FPOBJECT_ENABLE_AIM_ASSIST, &one, sizeof(one));
-            }
-        }
-
+    const uint64_t hwr = rd_ptr(local_player + PLAYER_AIM_ASSIST);
+    if (valid_obj(hwr) &&
+        rd_ptr(hwr + AIMASSIST_PLAYER) == local_player &&
+        valid_obj(rd_ptr(hwr + AIMASSIST_CAMERA)) &&
+        rd<uint8_t>(hwr + AIMASSIST_ENABLED) != 0) {
         hwr_snap.valid        = true;
         hwr_snap.cur_target   = rd_ptr(hwr + AIMASSIST_CUR_TARGET);
         hwr_snap.cur_handler  = valid_obj(hwr_snap.cur_target)
@@ -8910,8 +8957,6 @@ static void evaluate_boxes_visibility(uint64_t local_player,
         const Vec3 pp = rd_v3(hwr + AIMASSIST_PREV_SENSOR + AIMSENSOR_POSITION);
         hwr_snap.prev_pos[0] = pp.x; hwr_snap.prev_pos[1] = pp.y; hwr_snap.prev_pos[2] = pp.z;
         hwr_snap.hit_flag = rd<uint8_t>(hwr + AIMASSIST_HIT_FLAG) != 0;
-    } else {
-        hwr = 0;
     }
 
     // 4. Формирование геометрии всех целей кадра (игроки + боты).
@@ -8954,18 +8999,32 @@ static void evaluate_boxes_visibility(uint64_t local_player,
                 }
             }
         } else {
-            const PlayerAux& aux = player_aux(b.id);
+            PlayerAux& aux = player_aux(b.id);
             tg.event_handler = aux.event_handler;
             tg.aim_target    = aux.aim_target;
             tg.aim_collider  = aux.aim_collider;
+            const uint64_t head_tr  = player_marker_head_transform(b.id, aux);
             const uint64_t model_tr = skeleton_model_root(b.id);
             for (const NearbyPlayerOccSample& occ : s_occ_samples) {
-                bool match = (model_tr != 0 && occ.model_tr == model_tr);
+                bool match = (head_tr != 0 && occ.model_tr == head_tr) ||
+                             (model_tr != 0 && occ.model_tr == model_tr);
                 if (!match && vec3_is_finite(occ.world_pos)) {
                     const float dx = occ.world_pos.x - tg.feet[0];
-                    const float dy = occ.world_pos.y - tg.feet[1];
                     const float dz = occ.world_pos.z - tg.feet[2];
-                    if (dx * dx + dy * dy + dz * dz <= 1.75F * 1.75F) match = true;
+                    const float dy_feet = fabsf(occ.world_pos.y - tg.feet[1]);
+                    const float dy_head = fabsf(occ.world_pos.y - tg.head[1]);
+                    if (dx * dx + dz * dz <= 1.6F * 1.6F &&
+                        (dy_feet <= 2.8F || dy_head <= 1.4F)) {
+                        match = true;
+                    }
+                }
+                if (!match && vec3_is_finite(occ.head_pos)) {
+                    const float dx = occ.head_pos.x - tg.feet[0];
+                    const float dz = occ.head_pos.z - tg.feet[2];
+                    const float dy_feet = fabsf(occ.head_pos.y - tg.feet[1]);
+                    if (dx * dx + dz * dz <= 1.6F * 1.6F && dy_feet <= 2.6F) {
+                        match = true;
+                    }
                 }
                 if (match) {
                     tg.occlusion_known   = true;
@@ -8977,7 +9036,7 @@ static void evaluate_boxes_visibility(uint64_t local_player,
         s_targets.push_back(tg);
     }
 
-    // 5. Обновление трекера и запись следующего зонда в hwR.
+    // 5. Обновление трекера видимости.
     const float cam_pos[3] = {g_frame_cam_pos.x, g_frame_cam_pos.y, g_frame_cam_pos.z};
     const float cam_fwd[3] = {g_frame_cam_fwd.x, g_frame_cam_fwd.y, g_frame_cam_fwd.z};
     s_vis_tracker.consume_hwr_snapshot(hwr_snap, s_targets, now);
@@ -8988,21 +9047,6 @@ static void evaluate_boxes_visibility(uint64_t local_player,
 
     for (size_t i = 0; i < boxes.size(); ++i) {
         boxes[i].visible = boxes[i].ally ? true : s_vis_tracker.is_visible(s_targets[i], now);
-    }
-
-    if (valid_obj(hwr)) {
-        const vis_check::ProbeWrite pw = s_vis_tracker.select_next_probe(s_targets, now);
-        if (pw.valid) {
-            wr_buf(hwr + AIMASSIST_CUR_TARGET, &pw.cur_target, sizeof(pw.cur_target));
-            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_COLLIDER,
-                   &pw.cur_collider, sizeof(pw.cur_collider));
-            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_LAST_SEEN_TIME,
-                   &pw.cur_last_seen_time, sizeof(pw.cur_last_seen_time));
-            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_DISTANCE,
-                   &pw.cur_distance, sizeof(pw.cur_distance));
-            wr_buf(hwr + AIMASSIST_CUR_SENSOR + AIMSENSOR_POSITION,
-                   pw.cur_pos, sizeof(pw.cur_pos));
-        }
     }
 }
 

@@ -39,8 +39,11 @@ void test_lang_table_sorted() {
 }
 
 void test_offsets_consistency() {
+    assert(game_offsets::PLAYER_MOUSE_LOOK == 0x70);
+    assert(game_offsets::MOUSELOOK_PITCH_YAW == 0x4C);
     assert(game_offsets::PLAYER_RAYCAST_MANAGER == 0x88);
     assert(game_offsets::PLAYER_AIM_ASSIST == 0x258);
+    assert(game_offsets::PLAYER_MODEL_INFO_REF == 0x260);
     assert(game_offsets::RAYCASTMAN_RAY_LENGTH == 0x38);
     assert(game_offsets::RAYCASTMAN_AIM_RAY_LENGTH == 0x3C);
     assert(game_offsets::RAYCASTMAN_SPHERE_RADIUS == 0x40);
@@ -52,18 +55,26 @@ void test_offsets_consistency() {
     assert(game_offsets::GKO_RAYCAST_HIT == 0x48);
     assert(game_offsets::GKO_RAY_ORIGIN == 0x74);
     assert(game_offsets::AIMASSIST_CONFIG == 0x18);
+    assert(game_offsets::AIMASSIST_CAMERA == 0x28);
     assert(game_offsets::AIMASSIST_CUR_TARGET == 0x60);
     assert(game_offsets::AIMASSIST_CUR_SENSOR == 0x68);
+    assert(game_offsets::AIMASSIST_DELTA_ROT == 0x108);
     assert(game_offsets::AIMSENSOR_LAST_SEEN_TIME == 0x0C);
     assert(game_offsets::AIMSENSOR_DISTANCE == 0x14);
     assert(game_offsets::GAME_CONTROLLER_MAP_MANAGER == 0x170);
+    assert(game_offsets::MARKER_DATA_IS_HIT == 0x73);
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
 
+    assert(game_offsets_beta::PLAYER_MOUSE_LOOK == game_offsets::PLAYER_MOUSE_LOOK);
+    assert(game_offsets_beta::MOUSELOOK_PITCH_YAW == game_offsets::MOUSELOOK_PITCH_YAW);
     assert(game_offsets_beta::PLAYER_RAYCAST_MANAGER == game_offsets::PLAYER_RAYCAST_MANAGER);
+    assert(game_offsets_beta::PLAYER_MODEL_INFO_REF == game_offsets::PLAYER_MODEL_INFO_REF);
     assert(game_offsets_beta::GUM_AIM_RAYCAST == game_offsets::GUM_AIM_RAYCAST);
     assert(game_offsets_beta::AIMASSIST_CUR_TARGET == game_offsets::AIMASSIST_CUR_TARGET);
+    assert(game_offsets_beta::AIMASSIST_DELTA_ROT == game_offsets::AIMASSIST_DELTA_ROT);
+    assert(game_offsets_beta::MARKER_DATA_IS_HIT == game_offsets::MARKER_DATA_IS_HIT);
     assert(game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED == game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
 }
 

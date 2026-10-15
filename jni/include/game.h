@@ -1,6 +1,6 @@
 #pragma once
-#include <stdint.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <sys/types.h>
 #include <vector>
 
@@ -183,6 +183,8 @@ void        esp_set_screen_stretch(float factor);
 void        esp_set_aim_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).
 void        esp_set_always_day(bool enabled);
+// «Без травы»: отключает GrassEnabled и TreesEnabled (рендерер кустов).
+void        esp_set_no_grass(bool enabled);
 // Markers further away than this (metres) are dropped. Keeps the screen clean
 // on open terrain, where the registry easily holds hundreds of nodes.
 void        esp_set_marker_max_distance(float metres);// Markers for the current frame, nearest first. Call after esp_get_boxes():
@@ -286,21 +288,6 @@ void        esp_set_bearings_enabled(bool enabled);
 // скелета по первым max_players игрокам. Возврат: 0 — скелеты строятся,
 // 2 — ни у одного игрока, 1 — список игроков пуст, -1 — плохие аргументы.
 int         esp_skeleton_diag(char* out, size_t cap, int max_players);
-
-// Дамп мира для `xvcen world` (world_dump.h): сетевые объекты, их GameObject-ы
-// и компоненты (jsonl) + таблица отпечатков типов с hex-срезами (report).
-// 0 — снято, 1 — NetworkClient.spawned недоступен.
-int         esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identities, int max_nodes);
-
-// Wall-check (wall_check.h): LOS по BoxCollider-ам сетевых объектов. Покрывает только
-// не-trigger боксы; MeshCollider и terrain не учтены — для них «чисто».
-// esp_wall_set_enabled(true) включает порционный пересбор набора (esp_wall_tick зовётся
-// из esp_get_markers каждый кадр); esp_wall_los_clear: true — между точками нет блокера
-// (в т.ч. когда набор ещё пуст: проверять esp_wall_box_count() > 0, если нужен fail-closed).
-void        esp_wall_set_enabled(bool on);
-void        esp_wall_tick();
-size_t      esp_wall_box_count();
-bool        esp_wall_los_clear(const float from[3], const float to[3]);
 
 // True while the local player is aiming down sights (ADS) with the current
 // weapon. Returns false when the state cannot be read (not attached, no
@@ -640,3 +627,18 @@ bool esp_freecam_look(float yaw_delta, float pitch_delta);
 
 // Адрес, по которому загружен libil2cpp.so в процессы игры (0 — ещё не
 // привязались).
+
+// Дамп мира для `xvcen world` (world_dump.h): сетевые объекты, их GameObject-ы
+// и компоненты (jsonl) + таблица отпечатков типов с hex-срезами (report).
+// 0 — снято, 1 — NetworkClient.spawned недоступен.
+int         esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identities, int max_nodes);
+
+// Wall-check (wall_check.h): LOS по BoxCollider-ам сетевых объектов. Покрывает только
+// не-trigger боксы; MeshCollider и terrain не учтены — для них «чисто».
+// esp_wall_set_enabled(true) включает порционный пересбор набора (esp_wall_tick зовётся
+// из esp_get_markers каждый кадр); esp_wall_los_clear: true — между точками нет блокера
+// (в т.ч. когда набор ещё пуст: проверять esp_wall_box_count() > 0, если нужен fail-closed).
+void        esp_wall_set_enabled(bool on);
+void        esp_wall_tick();
+size_t      esp_wall_box_count();
+bool        esp_wall_los_clear(const float from[3], const float to[3]);

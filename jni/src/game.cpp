@@ -197,6 +197,101 @@ static int      g_day_retry = 0;
 
 void esp_set_always_day(bool enabled) { g_day_enabled = enabled; }
 
+// No Grass modifies managed static flags only; no executable bytes or game
+// library files are patched. GrassEnabled gates the vegetation renderer and
+// TreesEnabled gates ChunkTreeRenderer (terrain bushes). These flags prevent
+// later renderer creation; they cannot destroy renderers already alive.
+// Saved values are restored when the toggle turns off.
+static bool     g_no_grass_enabled = false;
+static pid_t    g_no_grass_target_pid = -1;
+static uint64_t g_no_grass_target_base = 0;
+static uint64_t g_no_grass_target_typeinfo = 0;
+static uint64_t g_no_grass_class = 0;
+static uint64_t g_no_grass_static_fields = 0;
+static uint8_t  g_no_grass_original_grass = 0;
+static uint8_t  g_no_grass_original_trees = 0;
+static bool     g_no_grass_original_valid = false;
+
+void esp_set_no_grass(bool enabled) { g_no_grass_enabled = enabled; }
+
+static void no_grass_forget_saved_value() {
+    g_no_grass_class = 0;
+    g_no_grass_static_fields = 0;
+    g_no_grass_original_grass = 0;
+    g_no_grass_original_trees = 0;
+    g_no_grass_original_valid = false;
+}
+
+static void no_grass_tick() {
+    if (!g_no_grass_enabled && !g_no_grass_original_valid) return;
+    if (!g_mem.bound() || g_pid <= 0 || !g_il2cpp_base || g_mem.pid() != g_pid) return;
+
+    const uint64_t typeinfo_rva = WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA;
+    if (!typeinfo_rva) return;
+    if (g_no_grass_target_pid != g_pid || g_no_grass_target_base != g_il2cpp_base ||
+        g_no_grass_target_typeinfo != typeinfo_rva) {
+        no_grass_forget_saved_value();
+        g_no_grass_target_pid = g_pid;
+        g_no_grass_target_base = g_il2cpp_base;
+        g_no_grass_target_typeinfo = typeinfo_rva;
+    }
+
+    const uint64_t klass = rd_ptr(g_il2cpp_base + typeinfo_rva);
+    if (!klass) return; // IL2CPP has not resolved the class yet.
+    const uint64_t static_fields = get_class_static_fields(klass);
+    if (!static_fields) return;
+
+    const bool cached_class = g_no_grass_original_valid &&
+        klass == g_no_grass_class && static_fields == g_no_grass_static_fields;
+    if (!cached_class &&
+        class_identity(klass, "WorldStreamingController",
+                       "HyperHug.Games.Oxide.Features.WorldStreaming") == 0) {
+        no_grass_forget_saved_value();
+        return;
+    }
+
+    const uint64_t grass_field = static_fields + WORLD_STREAMING_GRASS_ENABLED_FIELD;
+    const uint64_t trees_field = static_fields + WORLD_STREAMING_TREES_ENABLED_FIELD;
+    uint8_t current_grass = 0, current_trees = 0;
+    if (!rd_buf(grass_field, &current_grass, sizeof(current_grass)) || current_grass > 1 ||
+        !rd_buf(trees_field, &current_trees, sizeof(current_trees)) || current_trees > 1)
+        return;
+
+    if (!g_no_grass_enabled) {
+        if (!cached_class) {
+            no_grass_forget_saved_value();
+            return;
+        }
+        // Preserve either game-side re-enable instead of restoring a stale snapshot.
+        if (current_grass) g_no_grass_original_grass = current_grass;
+        if (current_trees) g_no_grass_original_trees = current_trees;
+        if (current_grass != g_no_grass_original_grass &&
+            !wr_buf(grass_field, &g_no_grass_original_grass, sizeof(g_no_grass_original_grass)))
+            return; // keep the snapshot and retry next frame
+        if (current_trees != g_no_grass_original_trees &&
+            !wr_buf(trees_field, &g_no_grass_original_trees, sizeof(g_no_grass_original_trees)))
+            return;
+        no_grass_forget_saved_value();
+        return;
+    }
+
+    if (!cached_class) {
+        g_no_grass_class = klass;
+        g_no_grass_static_fields = static_fields;
+        g_no_grass_original_grass = current_grass;
+        g_no_grass_original_trees = current_trees;
+        g_no_grass_original_valid = true;
+    } else {
+        // Remember game-side re-enables before forcing both managed flags off.
+        if (current_grass) g_no_grass_original_grass = current_grass;
+        if (current_trees) g_no_grass_original_trees = current_trees;
+    }
+
+    const uint8_t disabled = 0;
+    if (current_grass) wr_buf(grass_field, &disabled, sizeof(disabled));
+    if (current_trees) wr_buf(trees_field, &disabled, sizeof(disabled));
+}
+
 static void always_day_tick() {
     if (!g_day_enabled) {
         // Выключили: писатель замолкает (адрес в 0), часы игры идут сами.
@@ -9245,6 +9340,9 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     if (g_pid <= 0 || !g_il2cpp_base) {
             return result;
     }
+
+    // No Grass работает независимо от камеры и списка игроков.
+    no_grass_tick();
 
     // Фрикам — до всех ранних выходов: сводки и покадровая запись нужны и в
     // пустой местности (раньше тик стоял за выходом «нет игроков» и там не

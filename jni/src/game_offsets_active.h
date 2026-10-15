@@ -29,6 +29,11 @@ inline float MIN_PLAYER_DISTANCE = game_offsets::MIN_PLAYER_DISTANCE;
 inline float MAX_PLAYER_DISTANCE = game_offsets::MAX_PLAYER_DISTANCE;
 inline std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = game_offsets::PLAYER_MANAGER_TYPEINFO_RVA;
 inline std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA;
+// The supplied eshkere-world-dump.zip adds No Grass but omits verified offsets.
+// Zero is deliberately fail-closed: no_grass_tick() returns before any memory access.
+inline std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0;
+inline std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0;
+inline std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0;
 inline std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = game_offsets::PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST;
 inline std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = game_offsets::PLAYER_MANAGER_STATIC_FIELDS_LIST;
 inline std::uint64_t IL2CPP_CLASS_STATIC_FIELDS_OFFSET = game_offsets::IL2CPP_CLASS_STATIC_FIELDS_OFFSET;

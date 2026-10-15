@@ -532,8 +532,6 @@ inline constexpr std::uint64_t RAYCASTMAN_SPHERE_RADIUS      = 0x40;
 inline constexpr std::uint64_t RAYCASTMAN_TOO_CLOSE          = 0x44;
 inline constexpr std::uint64_t RAYCASTMAN_LAYER_MASK         = 0x48;  // RaycastManager.m_LayerMask (LayerMask, 0x6916204)
 inline constexpr std::uint64_t RAYCASTMAN_AIM_LAYER_MASK     = 0x4C;  // RaycastManager.m_AimLayerMask (LayerMask, 0x69165BC)
-inline constexpr std::uint64_t RAYCASTMAN_RAW_HIT            = 0x50;  // RaycastManager.uMP (RaycastHit 1.5m луча до фильтра Fox, 0x69161CC)
-inline constexpr std::uint64_t RAYCASTMAN_AIM_RAW_HIT        = 0xA8;  // RaycastManager.uMl (RaycastHit 300m SphereCast до фильтра Fox, 0x69165A0)
 // Что прямо сейчас видит прицел — результат лучей RaycastManager, разложенный
 // в активности PlayerEventHandler (класс Gum). FPMelee.ZkX берёт их ровно так
 // (дизассемблер 0x6533a20):
@@ -622,6 +620,8 @@ inline constexpr std::uint64_t MARKER_DATA_HEAD_POS          = 0x28;  // NX.Rqs 
 inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // NX.Rqv (Transform PlayerModelInfo.head)
 inline constexpr std::uint64_t MARKER_DATA_USER_ID           = 0x58;  // NV.Rqd / Iu.nmj (string userId)
 inline constexpr std::uint64_t MARKER_DATA_IS_HIT            = 0x73;  // NV.Rqb (bool, копируется в ctx+0x50 в NearbyPlayerScreenMarkerView::Tick)
+inline constexpr std::uint64_t PLAYER_HIT_TRACKER            = 0x348; // PlayerManager.uGa / xkd (Nt/Iz hit tracker)
+inline constexpr std::uint64_t HIT_TRACKER_HIT_DICT          = 0x18;  // Nt.RWf (Dictionary<uint, float> hit expire times)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT    = 0x28;  // ScreenMarkerView.context (ScreenMarkerModuleContext)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES    = 0x30;  // ScreenMarkerView.modules (List<Nk/IH>)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MARKER     = 0x40;  // ScreenMarkerView.<Rse>k__BackingField (Marker)

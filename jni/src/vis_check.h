@@ -12,7 +12,7 @@ inline constexpr float  kDesiredAimRayLength = 300.0f;
 inline constexpr float  kDesiredSphereRadius = 0.05f;
 inline constexpr float  kDesiredAssistDist   = 300.0f;
 inline constexpr double kProbeTimeoutSec     = 0.060;
-inline constexpr double kStateTtlSec         = 30.00;
+inline constexpr double kStateTtlSec         = 1.500;
 inline constexpr double kPriorityRefreshSec  = 0.080;
 inline constexpr double kHwrActiveWindowSec  = 0.250;
 
@@ -156,12 +156,11 @@ inline int evaluate_ray_for_target(const RaySample& primary,
         if (!s->valid) continue;
         if (t.id != 0 && s->hit_player == t.id) return +1;
         if (t.entity_id != 0 && s->hit_entity == t.entity_id) return +1;
-        // Проверяем попадание в цилиндр ТОЛЬКО если луч попал в живую сущность
-        // (hit_player != 0 || hit_entity != 0). Если луч упёрся в тонкую стенку
-        // морского контейнера прямо перед игроком (hit_player == 0, hit_entity == 0),
-        // точка удара о контейнер тоже лежит рядом с игроком — её нельзя считать
-        // попаданием в цель.
-        if ((s->hit_player != 0 || s->hit_entity != 0) &&
+        // Для целей с работающим OcclusionModule (игроки <= 200м) проверяем
+        // только прямое попадание в хитбокс (hit_player == t.id). Для ботов и
+        // целей без OcclusionModule проверяем попадание точки луча в 3D-цилиндр
+        // цели (например, попадание AimRaycast в капсулу AimTarget).
+        if (!t.occlusion_known &&
             s->point_valid && point_hits_target_cylinder(s->point, t)) {
             return +1;
         }
@@ -174,13 +173,13 @@ inline int evaluate_ray_for_target(const RaySample& primary,
         return 0;
     }
 
-    // Если любой из лучей упёрся в препятствие (стена, контейнер, рельеф) ближе
-    // цели — цель гарантированно перекрыта. Пустой GKo (когда RaycastManager::Fox
-    // отбросил морской контейнер без BaseEntity/Surface) НЕ означает видимость.
+    // Если луч упёрся в препятствие заметно ближе цели (и точка удара лежит
+    // вне цилиндра самой цели) — цель перекрыта.
     for (const RaySample* s : samples) {
-        if (!s->valid || s->distance <= 0.02f) continue;
+        if (!s->valid || s->distance <= 0.35f) continue;
         if (s->hit_player == 0 && s->hit_entity == 0 &&
-            s->distance + 0.45f < proj_dist) {
+            s->distance + 0.85f < proj_dist &&
+            (!s->point_valid || !point_hits_target_cylinder(s->point, t))) {
             return -1;
         }
     }
@@ -282,7 +281,7 @@ public:
 
             // По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule.
             if (t.occlusion_known) {
-                if (!t.occlusion_visible || r < 0) {
+                if (!t.occlusion_visible) {
                     // Уход за укрытие (контейнер/стену) фиксируем мгновенно без задержки.
                     record(t.id, false, now);
                 } else {

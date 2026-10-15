@@ -8237,6 +8237,8 @@ static std::vector<uint64_t> g_population_snapshot;
 // считать «3 любых» сменой мира нельзя (лог 09-20: +0-9 прорывались).
 static std::vector<uint64_t> s_adopt_cand;
 static int s_adopt_ident_streak = 0;
+static void reset_vis_caches();
+
 // Everything derived from concrete objects in a world/session. Called when the
 // whole player population is replaced.  Structural choices (position field,
 // matrix convention and Transform hierarchy offsets) belong to the release
@@ -8266,6 +8268,7 @@ static void reset_world_caches() {
     g_mount_latch.clear();
     g_skeletons.clear();
     reset_marker_caches();
+    reset_vis_caches();
     // Камерный страж нового мира ничему не следит: прошлая планета тётушка
     // задержала бы новую камеру на 3 кадра подтверждения «телепорта».
     s_fv_guard = {};
@@ -8319,6 +8322,7 @@ void esp_reset() {
     g_skeleton_layout_seeds.clear();
     g_frame_vp_valid = false; g_frame_local_valid = false;
     reset_marker_caches();
+    reset_vis_caches();
 }
 
 
@@ -8598,7 +8602,21 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
 //      скоростях доводки в AimAssistConfig (+0x38..+0x44).
 static vis_check::Tracker s_vis_tracker;
 static uint64_t s_screen_marker_presenter = 0;
+static uint64_t s_presenter_gc            = 0;
+static uint64_t s_presenter_map_mgr       = 0;
+static uint64_t s_presenter_marker_svc    = 0;
+static uint64_t s_vis_local_player        = 0;
 static std::unordered_map<uint64_t, uint64_t> s_view_occlusion_mod;
+
+static void reset_vis_caches() {
+    s_vis_tracker.reset();
+    s_screen_marker_presenter = 0;
+    s_presenter_gc            = 0;
+    s_presenter_map_mgr       = 0;
+    s_presenter_marker_svc    = 0;
+    s_vis_local_player        = 0;
+    s_view_occlusion_mod.clear();
+}
 
 struct NearbyPlayerOccSample {
     uint64_t model_tr = 0;
@@ -8620,16 +8638,24 @@ static bool looks_like_screen_marker_presenter(uint64_t obj) {
 }
 
 static uint64_t resolve_screen_marker_presenter() {
-    if (s_screen_marker_presenter && looks_like_screen_marker_presenter(s_screen_marker_presenter)) {
-        return s_screen_marker_presenter;
-    }
-    s_screen_marker_presenter = 0;
     const uint64_t statics = game_controller_statics();
-    if (!statics) return 0;
+    if (!statics) {
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        return 0;
+    }
     const uint64_t gc = rd_ptr(statics + GAME_CONTROLLER_STATIC_SELF_FIELD);
-    if (!valid_obj(gc)) return 0;
+    if (!valid_obj(gc)) {
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        return 0;
+    }
     const uint64_t map_mgr = rd_ptr(gc + GAME_CONTROLLER_MAP_MANAGER);
-    if (!valid_obj(map_mgr)) return 0;
+    if (!valid_obj(map_mgr)) {
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        return 0;
+    }
 
     uint64_t marker_svc = rd_ptr(map_mgr + MAP_MANAGER_MARKER_SERVICE);
     if (!valid_obj(marker_svc)) {
@@ -8642,7 +8668,31 @@ static uint64_t resolve_screen_marker_presenter() {
         const uint64_t map_pres = valid_obj(act) ? rd_ptr(act + 0x20) : 0;
         if (valid_obj(map_pres)) marker_svc = rd_ptr(map_pres + MAP_PRESENTER_MARKER_SERVICE);
     }
-    if (!valid_obj(marker_svc)) return 0;
+    if (!valid_obj(marker_svc)) {
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        return 0;
+    }
+
+    // При переходе на другой сервер старый ScreenMarkerPresenter остаётся в куче
+    // Boehm GC с целым заголовком Il2CppClass*, но пустым словарём RkV (count == 0).
+    // Если сменился GameControllerBase, MapManager или MarkerService — сбрасываем
+    // кэш презентера, модулей и трекера, чтобы не залипать на мёртвом объекте.
+    if (gc != s_presenter_gc ||
+        map_mgr != s_presenter_map_mgr ||
+        marker_svc != s_presenter_marker_svc) {
+        s_presenter_gc            = gc;
+        s_presenter_map_mgr       = map_mgr;
+        s_presenter_marker_svc    = marker_svc;
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        s_vis_tracker.reset();
+    }
+
+    if (s_screen_marker_presenter && looks_like_screen_marker_presenter(s_screen_marker_presenter)) {
+        return s_screen_marker_presenter;
+    }
+    s_screen_marker_presenter = 0;
 
     const uint64_t added_action = rd_ptr(marker_svc + MARKER_SERVICE_ADDED_ACTION);
     if (!valid_obj(added_action)) return 0;
@@ -8672,15 +8722,20 @@ static uint64_t resolve_screen_marker_presenter() {
 
 static uint64_t resolve_view_occlusion_module(uint64_t view) {
     if (!valid_obj(view)) return 0;
+    const uint64_t ctx = rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT);
     auto it = s_view_occlusion_mod.find(view);
-    if (it != s_view_occlusion_mod.end() && valid_obj(it->second)) {
-        return it->second;
+    if (it != s_view_occlusion_mod.end()) {
+        const uint64_t cached_mod = it->second;
+        if (valid_obj(cached_mod) &&
+            (!valid_obj(ctx) || rd_ptr(cached_mod + OCCLUSION_MOD_CTX) == ctx)) {
+            return cached_mod;
+        }
+        s_view_occlusion_mod.erase(it);
     }
     const uint64_t mod_container = rd_ptr(view + SCREEN_MARKER_VIEW_MODULES);
     if (!valid_obj(mod_container)) return 0;
-    // В ScreenMarkerView::Tick (0x5D05FB8..0x5D05FD4) поле view + 0x30 — это
-    // массив Nk[] (Il2CppArray: bounds по +0x10 равен 0, длина по +0x18,
-    // элементы с +0x20). На случай обёртки List<Nk> поддерживаем оба варианта.
+    // ScreenMarkerView.modules (+0x30) — это List<Nk> (_items по +0x10, _size по +0x18).
+    // На случай прямого массива Nk[] поддерживаем оба варианта.
     uint64_t items = mod_container;
     int32_t  count = rd<int32_t>(mod_container + IL2CPP_ARRAY_LENGTH);
     const uint64_t maybe_items = rd_ptr(mod_container + IL2CPP_LIST_ITEMS);
@@ -8689,7 +8744,6 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
         count = rd<int32_t>(mod_container + IL2CPP_LIST_SIZE);
     }
     if (!valid_obj(items) || count <= 0 || count > 16) return 0;
-    const uint64_t ctx = rd_ptr(view + SCREEN_MARKER_VIEW_CONTEXT);
     uint64_t fallback = 0;
     for (int32_t i = 0; i < count; ++i) {
         const uint64_t mod = rd_ptr(items + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8);
@@ -8714,8 +8768,52 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
     return fallback;
 }
 
-static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& out) {
+// Сброс 2-секундных таймеров попадания в Nt.RWf ([local_player + 0x348] + 0x18):
+// при попадании по врагу Nt::lsM (0x5CFE33C) записывает в RWf[userId] время
+// Time.time + 2.0f, из-за чего Nt::lsh (0x5CFE3C8) возвращает true в течение 2с,
+// Na::Tick ставит NV.RWI (data + 0x73) = 1, NearbyPlayerScreenMarkerView::Tick
+// копирует его в ctx + 0x50 (Rsp), а OcclusionModule::Tick при Rsp != 0 пропускает
+// Physics.Raycast и форсирует RcS = Visible на 2 секунды даже за контейнером.
+static void expire_local_player_hit_timers(uint64_t local_player) {
+    if (!valid_obj(local_player)) return;
+    const uint64_t nt = rd_ptr(local_player + PLAYER_HIT_TRACKER);
+    if (!valid_obj(nt)) return;
+    const uint64_t hit_dict = rd_ptr(nt + HIT_TRACKER_HIT_DICT);
+    if (!valid_obj(hit_dict)) return;
+    int32_t count = rd<int32_t>(hit_dict + DICT_COUNT);
+    if (count <= 0) return;
+    if (count > 64) count = 64;
+    const uint64_t entries = rd_ptr(hit_dict + DICT_ENTRIES);
+    if (!valid_obj(entries)) return;
+
+    // Entry<uint, float> имеет шаг 0x10 (hashCode +0x00, next +0x04, key +0x08, value +0x0C).
+    static constexpr size_t kEntryStride = 0x10;
+    uint8_t buf[64 * kEntryStride];
+    const size_t bytes = (size_t)count * kEntryStride;
+    if (!rd_buf(entries + IL2CPP_ARRAY_FIRST_ELEMENT, buf, bytes)) return;
+    for (int32_t i = 0; i < count; ++i) {
+        const uint8_t* slot = buf + (size_t)i * kEntryStride;
+        int32_t  hash = 0;
+        int32_t  next = 0;
+        uint32_t key  = 0;
+        float    val  = 0.0F;
+        memcpy(&hash, slot + 0x00, sizeof(hash));
+        memcpy(&next, slot + 0x04, sizeof(next));
+        memcpy(&key,  slot + 0x08, sizeof(key));
+        memcpy(&val,  slot + 0x0C, sizeof(val));
+        if (hash >= 0 && next >= -1 && next < 256 && key != 0 &&
+            std::isfinite(val) && val > 0.0F && val < 1.0e7F) {
+            const float zero_f = 0.0F;
+            wr_buf(entries + IL2CPP_ARRAY_FIRST_ELEMENT + (size_t)i * kEntryStride + 0x0C,
+                   &zero_f, sizeof(zero_f));
+        }
+    }
+}
+
+static void collect_nearby_player_occlusion(uint64_t local_player,
+                                            std::vector<NearbyPlayerOccSample>& out) {
     out.clear();
+    expire_local_player_hit_timers(local_player);
     const uint64_t presenter = resolve_screen_marker_presenter();
     if (!presenter) return;
     const uint64_t dict = rd_ptr(presenter + SCREEN_PRESENTER_VIEW_DICT);
@@ -8763,16 +8861,54 @@ static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& 
             const uint8_t zero_b = 0;
             wr_buf(data + MARKER_DATA_IS_HIT, &zero_b, sizeof(zero_b));
         }
+
+        // ScreenMarkerView::Tick (0x5D05EB8..0x5D05EE4) каждый кадр обновляет
+        // data + 0x1C (MARKER_DATA_WORLD_POS) живой позицией головы (head.pos + (0,0.25,0)),
+        // тогда как Na::Tick обновляет data + 0x28 (MARKER_DATA_HEAD_POS) только
+        // раз в 2 секунды (RWc = 2.0f), а NearbyPlayerScreenMarkerView::Tick (0x5D0C628)
+        // копирует data + 0x28 в ctx + 0x44 (MARKER_CTX_RAY_TARGET) только при
+        // выполнении всех условий отображения точки выстрела. Записываем живую
+        // позицию головы текущего кадра и в data + 0x28, и в ctx + 0x44, чтобы
+        // OcclusionModule::Tick (0x5D098C0) каждый кадр стрелял лучом точно в
+        // актуальную голову игрока без 2-секундного отставания.
+        const Vec3 world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
+        const Vec3 head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
+        Vec3 live_ray_tgt{};
+        bool have_live_tgt = false;
+        if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
+            live_ray_tgt  = {world_pos.x, world_pos.y - 0.25F, world_pos.z};
+            have_live_tgt = true;
+        } else if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
+            live_ray_tgt  = head_pos;
+            have_live_tgt = true;
+        }
+
+        if (have_live_tgt) {
+            const float hdx = head_pos.x - live_ray_tgt.x;
+            const float hdy = head_pos.y - live_ray_tgt.y;
+            const float hdz = head_pos.z - live_ray_tgt.z;
+            if (!vec3_is_finite(head_pos) || (hdx * hdx + hdy * hdy + hdz * hdz) > 0.0025F) {
+                wr_buf(data + MARKER_DATA_HEAD_POS, &live_ray_tgt, sizeof(live_ray_tgt));
+            }
+        }
+
         if (valid_obj(ctx)) {
             if (rd<uint8_t>(ctx + MARKER_CTX_SKIP_OCCLUSION) != 0) {
                 const uint8_t zero_b = 0;
                 wr_buf(ctx + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
             }
-            // На самом первом тике после спавна маркера ctx + 0x44 (точка луча)
-            // ещё равна {0,0,0}, т.к. NearbyPlayerScreenMarkerView::Tick копирует
-            // туда headPos только в конце своего Tick (0x5D0C63C).
-            const Vec3 ray_tgt = rd_v3(ctx + MARKER_CTX_RAY_TARGET);
-            if (!vec3_is_finite(ray_tgt) || position_near_world_origin(ray_tgt)) continue;
+            const Vec3 cur_ray_tgt = rd_v3(ctx + MARKER_CTX_RAY_TARGET);
+            const bool cur_tgt_valid =
+                vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt);
+            if (have_live_tgt) {
+                const float rdx = cur_ray_tgt.x - live_ray_tgt.x;
+                const float rdy = cur_ray_tgt.y - live_ray_tgt.y;
+                const float rdz = cur_ray_tgt.z - live_ray_tgt.z;
+                if (!cur_tgt_valid || (rdx * rdx + rdy * rdy + rdz * rdz) > 0.0025F) {
+                    wr_buf(ctx + MARKER_CTX_RAY_TARGET, &live_ray_tgt, sizeof(live_ray_tgt));
+                }
+            }
+            if (!cur_tgt_valid) continue;
         }
 
         const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
@@ -8781,31 +8917,31 @@ static void collect_nearby_player_occlusion(std::vector<NearbyPlayerOccSample>& 
 
         NearbyPlayerOccSample sample{};
         sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
-        sample.world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
-        sample.head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
+        sample.world_pos = world_pos;
+        sample.head_pos  = have_live_tgt ? live_ray_tgt : head_pos;
         sample.visible   = (is_occ == 0);
         out.push_back(sample);
     }
 }
 
-static void read_gko_ray_sample(uint64_t wrapper, vis_check::RaySample& out) {
+static void read_gko_ray_sample(uint64_t wrapper, uint64_t local_player, vis_check::RaySample& out) {
     out = vis_check::RaySample{};
     if (!valid_obj(wrapper)) return;
     const uint64_t gko = rd_ptr(wrapper + GUI_VALUE);
     if (!valid_obj(gko)) return;
+    const uint64_t hit_player = rd_ptr(gko + GKO_HIT_PLAYER);
+    if (local_player != 0 && hit_player == local_player) return;
+    float dist = 0.0F;
+    if (!rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_DISTANCE, dist) ||
+        !std::isfinite(dist) || dist < 0.35F || dist >= 2000.0F) {
+        return;
+    }
     out.valid        = true;
     out.hit_object   = rd_ptr(gko + GKO_HIT_OBJECT);
     out.hit_entity   = rd_ptr(gko + GKO_HIT_ENTITY);
-    out.hit_player   = rd_ptr(gko + GKO_HIT_PLAYER);
-    // В Unity 2021+ поле RaycastHit.m_Collider (+0x28) — это 32-битный instanceID
-    // (см. RaycastHit::get_collider @ 0xCE0199C), а не указатель Collider*.
-    // Указатели на объект попадания GKo уже кладёт в uMU (+0x18), uMB (+0x20) и uMm (+0x40).
+    out.hit_player   = hit_player;
     out.hit_collider = 0;
-    float dist = 0.0F;
-    if (rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_DISTANCE, dist) &&
-        std::isfinite(dist) && dist >= 0.0F && dist < 2000.0F) {
-        out.distance = dist;
-    }
+    out.distance     = dist;
     Vec3 pt{};
     if (rd_exact(gko + GKO_RAYCAST_HIT + RAYCASTHIT_POINT, pt) &&
         vec3_is_finite(pt) && position_looks_like_world_space(pt)) {
@@ -8818,35 +8954,6 @@ static void read_gko_ray_sample(uint64_t wrapper, vis_check::RaySample& out) {
         out.origin_valid = true;
         out.origin[0] = orig.x; out.origin[1] = orig.y; out.origin[2] = orig.z;
     }
-}
-
-// Когда луч RaycastManager попадает в статический объект мира без компонентов
-// BaseEntity (hkO) и Surface (idV) — например, морской контейнер на РТ/в порту —
-// фильтр RaycastManager::Fox (0x6916C2C) возвращает false и сбрасывает GKo в NULL,
-// но сам сырой UnityEngine.RaycastHit остаётся записанным в полях RaycastManager
-// (+0x50 для обычного луча и +0xA8 для 300м SphereCast).
-static void read_raw_raycast_hit(uint64_t hit_addr, float max_dist, vis_check::RaySample& out) {
-    if (out.valid || !valid_obj(hit_addr)) return;
-    const int32_t collider_id = rd<int32_t>(hit_addr + RAYCASTHIT_COLLIDER);
-    if (collider_id == 0) return;
-    float dist = 0.0F;
-    if (!rd_exact(hit_addr + RAYCASTHIT_DISTANCE, dist) ||
-        !std::isfinite(dist) || dist <= 0.02F || dist > max_dist) {
-        return;
-    }
-    Vec3 pt{};
-    if (!rd_exact(hit_addr + RAYCASTHIT_POINT, pt) ||
-        !vec3_is_finite(pt) || !position_looks_like_world_space(pt)) {
-        return;
-    }
-    out.valid       = true;
-    out.hit_player  = 0;
-    out.hit_entity  = 0;
-    out.distance    = dist;
-    out.point_valid = true;
-    out.point[0]    = pt.x;
-    out.point[1]    = pt.y;
-    out.point[2]    = pt.z;
 }
 
 static bool weapon_is_melee_class(uint64_t weapon) {
@@ -8925,6 +9032,13 @@ static void evaluate_boxes_visibility(uint64_t local_player,
                                       float sw,
                                       float sh,
                                       std::vector<EspBox>& boxes) {
+    if (local_player != s_vis_local_player) {
+        s_vis_local_player        = local_player;
+        s_screen_marker_presenter = 0;
+        s_view_occlusion_mod.clear();
+        s_vis_tracker.reset();
+    }
+
     sanitize_camera_and_aim_assist(local_player);
 
     const bool want_vis = cfg::esp::vis_check || cfg::aim::vis_check;
@@ -8938,9 +9052,13 @@ static void evaluate_boxes_visibility(uint64_t local_player,
 
     // 1. Сбор по-игроковых рейкастов из NearbyPlayerScreenMarkerView -> OcclusionModule.
     static std::vector<NearbyPlayerOccSample> s_occ_samples;
-    collect_nearby_player_occlusion(s_occ_samples);
+    collect_nearby_player_occlusion(local_player, s_occ_samples);
 
     // 2. Чтение и настройка RaycastManager (RaycastData + 300м AimRaycast).
+    //    ВАЖНО: m_AimLayerMask (rm + 0x4C) менять НЕЛЬЗЯ — у AimRaycast (SphereCast)
+    //    в отличие от RaycastData нет проверки hkw.uMm != rm.player, поэтому
+    //    добавление m_LayerMask в m_AimLayerMask заставляет SphereCast попадать
+    //    в коллайдер самого локального игрока на дистанции ~0.2м.
     const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
     const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
     uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
@@ -8950,12 +9068,6 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     float aim_ray_len        = 1.5F;
     if (valid_obj(rm) && rd_ptr(rm + RAYCASTMAN_PLAYER) == local_player) {
         const bool is_melee = weapon_is_melee_class(cur_wpn);
-        const int32_t base_mask = rd<int32_t>(rm + RAYCASTMAN_LAYER_MASK);
-        const int32_t aim_mask  = rd<int32_t>(rm + RAYCASTMAN_AIM_LAYER_MASK);
-        if (base_mask != 0 && (aim_mask & base_mask) != base_mask) {
-            const int32_t merged_mask = aim_mask | base_mask;
-            wr_buf(rm + RAYCASTMAN_AIM_LAYER_MASK, &merged_mask, sizeof(merged_mask));
-        }
         float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
         if (!is_melee && valid_obj(rm)) {
             if (!std::isfinite(cur_aim_len) ||
@@ -8976,14 +9088,8 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     vis_check::RaySample primary_ray{}, aim_ray{};
     const uint64_t local_eh = rd_ptr(local_player + PLAYER_EVENT_HANDLER);
     if (valid_obj(local_eh)) {
-        read_gko_ray_sample(rd_ptr(local_eh + GUM_RAYCAST_DATA), primary_ray);
-        read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), aim_ray);
-    }
-    if (valid_obj(rm) && rd_ptr(rm + RAYCASTMAN_PLAYER) == local_player) {
-        read_raw_raycast_hit(rm + RAYCASTMAN_RAW_HIT, 2.0F, primary_ray);
-        if (aim_ray_configured) {
-            read_raw_raycast_hit(rm + RAYCASTMAN_AIM_RAW_HIT, aim_ray_len + 1.0F, aim_ray);
-        }
+        read_gko_ray_sample(rd_ptr(local_eh + GUM_RAYCAST_DATA), local_player, primary_ray);
+        read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), local_player, aim_ray);
     }
 
     // 3. Пассивное чтение AimAssist (hwR / YuB) без записи в его поля:

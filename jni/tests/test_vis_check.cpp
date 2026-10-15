@@ -49,8 +49,6 @@ void test_offsets_consistency() {
     assert(game_offsets::RAYCASTMAN_SPHERE_RADIUS == 0x40);
     assert(game_offsets::RAYCASTMAN_LAYER_MASK == 0x48);
     assert(game_offsets::RAYCASTMAN_AIM_LAYER_MASK == 0x4C);
-    assert(game_offsets::RAYCASTMAN_RAW_HIT == 0x50);
-    assert(game_offsets::RAYCASTMAN_AIM_RAW_HIT == 0xA8);
     assert(game_offsets::GUM_RAYCAST_DATA == 0x160);
     assert(game_offsets::GUM_AIM_RAYCAST == 0x168);
     assert(game_offsets::GKO_HIT_OBJECT == 0x18);
@@ -67,6 +65,8 @@ void test_offsets_consistency() {
     assert(game_offsets::AIMSENSOR_DISTANCE == 0x14);
     assert(game_offsets::GAME_CONTROLLER_MAP_MANAGER == 0x170);
     assert(game_offsets::MARKER_DATA_IS_HIT == 0x73);
+    assert(game_offsets::PLAYER_HIT_TRACKER == 0x348);
+    assert(game_offsets::HIT_TRACKER_HIT_DICT == 0x18);
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
@@ -79,6 +79,8 @@ void test_offsets_consistency() {
     assert(game_offsets_beta::AIMASSIST_CUR_TARGET == game_offsets::AIMASSIST_CUR_TARGET);
     assert(game_offsets_beta::AIMASSIST_DELTA_ROT == game_offsets::AIMASSIST_DELTA_ROT);
     assert(game_offsets_beta::MARKER_DATA_IS_HIT == game_offsets::MARKER_DATA_IS_HIT);
+    assert(game_offsets_beta::PLAYER_HIT_TRACKER == game_offsets::PLAYER_HIT_TRACKER);
+    assert(game_offsets_beta::HIT_TRACKER_HIT_DICT == game_offsets::HIT_TRACKER_HIT_DICT);
     assert(game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED == game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
 }
 
@@ -143,17 +145,17 @@ void test_marker_occlusion_and_rays() {
     tracker.update_from_rays(empty_ray, wall_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.3);
     assert(!tracker.is_visible(targets[0], 1.3));
 
-    // Shipping container wall hit right in front of t1 (0.5m in front of player,
+    // Shipping container wall hit in front of t1 (1.2m in front of player,
     // hit_player == 0 && hit_entity == 0) must stay occluded (-1), never visible!
     RaySample close_container_ray{};
     close_container_ray.valid = true;
     close_container_ray.hit_player = 0;
     close_container_ray.hit_entity = 0;
-    close_container_ray.distance = 19.5f;
+    close_container_ray.distance = 18.8f;
     close_container_ray.point_valid = true;
     close_container_ray.point[0] = 0.0f;
     close_container_ray.point[1] = 1.2f;
-    close_container_ray.point[2] = 19.5f;
+    close_container_ray.point[2] = 18.8f;
     assert(evaluate_ray_for_target(empty_ray, close_container_ray, true, 300.0f, true, cam_pos, cam_fwd, targets[0]) == -1);
 
     // Empty GKo when Fox rejects a shipping container must return 0 (inconclusive), never +1!

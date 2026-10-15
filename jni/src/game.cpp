@@ -1353,6 +1353,23 @@ static bool read_transform_world_trs(uint64_t matrices, uint64_t indices, int32_
     return vec3_is_finite(pos) && std::isfinite(scale.x) && scale.x > 1e-6F;
 }
 
+// Мировая поза Transform (позиция, поворот, ЛОЖНЫЙ масштаб родителей включён) по
+// выученной раскладке иерархии. Для дампа мира (world_dump.h): коллайдеру нужен
+// его собственный масштаб, а не только позиция. false — раскладка ещё не выучена
+// или иерархия не читается.
+bool read_transform_world_pose(uint64_t native_transform, Vec3& pos, Vec4& rot, Vec3& scale) {
+    if (!native_transform || !g_transform_hierarchy_layout_valid) return false;
+    const TransformHierarchyLayout& L = g_transform_hierarchy_layout;
+    const uint64_t data = rd_ptr(native_transform + L.data_offset);
+    const int32_t index = rd<int32_t>(native_transform + L.index_offset);
+    if (!data || index < 0 || index > 100000) return false;
+    uint64_t matrices = rd_ptr(data + L.matrices_offset);
+    uint64_t indices = rd_ptr(data + L.indices_offset);
+    if (L.matrices_indirect) matrices = rd_ptr(matrices);
+    if (L.indices_indirect) indices = rd_ptr(indices);
+    return read_transform_world_trs(matrices, indices, index, pos, rot, scale);
+}
+
 // Мировую позицию -> локальную, с учётом родителя камеры.
 static bool transform_world_to_local(uint64_t matrices, uint64_t indices, int32_t index,
                                      const Vec3& world, Vec3& local) {
@@ -4557,6 +4574,32 @@ bool read_transform_name(uint64_t transform, char* out, size_t cap) {
     uint64_t native_go = rd_ptr(transform + COMPONENT_GAMEOBJECT);
     if (!native_go) return false;
     return read_gameobject_name_at(native_go, g_go_name_offset, g_go_name_plain_pointer, out, cap);
+}
+
+// Оффсет имени GameObject без игрока и без костей: перебираем поля нативного
+// GameObject и оба способа хранения (char* и инлайн-строка), выбираем тот, что
+// даёт читаемое ASCII-имя у большинства переданных объектов. Для CLI-дампа мира
+// (там нет ни локального игрока, ни модели). Ставит те же глобалы, что обычный
+// поиск, поэтому read_transform_name / managed_component_gameobject_name после
+// него работают как обычно. true — оффсет найден (>= 60% объектов).
+bool go_name_autodetect(const std::vector<uint64_t>& native_gameobjects) {
+    if (g_go_name_offset_valid) return true;
+    if (native_gameobjects.size() < 4) return false;
+    uint64_t best_offset = 0; int best_plain = 0; size_t best_hits = 0;
+    for (uint64_t offset = 0x10; offset <= 0xB0; offset += 8) {
+        for (int plain = 0; plain < 2; ++plain) {
+            size_t hits = 0;
+            char tmp[48];
+            for (uint64_t go : native_gameobjects)
+                if (read_gameobject_name_at(go, offset, plain != 0, tmp, sizeof(tmp))) ++hits;
+            if (hits > best_hits) { best_hits = hits; best_offset = offset; best_plain = plain; }
+        }
+    }
+    if (best_hits * 10 < native_gameobjects.size() * 6) return false;
+    g_go_name_offset = best_offset;
+    g_go_name_plain_pointer = best_plain != 0;
+    g_go_name_offset_valid = true;
+    return true;
 }
 
 // Find the GameObject name field offset by probing candidates against the

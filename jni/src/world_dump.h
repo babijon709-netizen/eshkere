@@ -7,8 +7,9 @@
 //     su -c /data/local/tmp/xvcen world ft               // режим аргументом
 //     su -c /data/local/tmp/xvcen world rt-dev 12345     // режим + pid
 //
-// Писать в: <CfgDir>/world.log (отчёт: таблица отпечатков типов + hex-срезы) и
-// <CfgDir>/world.jsonl (все GameObject-ы с позициями и компонентами).
+// Писать в: <CfgDir>/world.log (отчёт: итоги, типы коллайдеров, hex-срезы ссылок),
+// <CfgDir>/world.jsonl (все GameObject-ы: имя, поза, компоненты) и
+// <CfgDir>/world.colliders.jsonl (коллайдеры: тип, поза с масштабом, сырые байты).
 //
 // Как skel и dump — отдельный короткоживущий процесс без GUI и маскировки;
 // транспорт назначается один раз до bind (KERNEL.md §2), /proc/<pid>/mem в
@@ -70,6 +71,7 @@ static int Run(int argc, char* argv[]) {
     mkdir(CfgDir(), 0777);
     const std::string report_path = dir + "/world.log";
     const std::string jsonl_path = dir + "/world.jsonl";
+    const std::string colliders_path = dir + "/world.colliders.jsonl";
 
     metadump::Log log;
     log.open(report_path.c_str());
@@ -130,19 +132,23 @@ static int Run(int argc, char* argv[]) {
     }
 
     FILE* jsonl = fopen(jsonl_path.c_str(), "w");
-    if (!jsonl) log.say("!! не открылся %s (дамп пойдёт только в отчёт)", jsonl_path.c_str());
-    // Отчёт пишется в тот же файл, что и лог (Log держит его открытым).
-    // Запись в stdout — только итоговые строки ниже, hex-срезы в терминал не льём.
-    const int rc = esp_world_dump(log.f, jsonl, /*max_identities*/ 20000, /*max_nodes*/ 24);
+    FILE* colliders = fopen(colliders_path.c_str(), "w");
+    if (!jsonl || !colliders)
+        log.say("!! не открылись файлы дампа в %s (пишется только то, что открылось)", dir.c_str());
+    // Отчёт пишется в тот же файл, что и лог (Log держит его открытым): hex-срезы
+    // в терминал не льём, в stdout идут только итоговые строки.
+    const int rc = esp_world_dump(log.f, jsonl, colliders, /*max_identities*/ 20000, /*max_nodes*/ 24);
     if (jsonl) fclose(jsonl);
+    if (colliders) fclose(colliders);
     if (rc != 0) {
         log.say("!! дамп не снят: NetworkClient.spawned недоступен. Ты на сервере и карта прогружена?");
         return 4;
     }
     log.say("== готово ==");
-    log.say("отчёт : %s", report_path.c_str());
-    log.say("объекты: %s", jsonl_path.c_str());
-    log.say("отправь оба файла разработчику");
+    log.say("отчёт     : %s  (сверху итоги: раскладка/имена/число коллайдеров)", report_path.c_str());
+    log.say("объекты   : %s", jsonl_path.c_str());
+    log.say("коллайдеры: %s", colliders_path.c_str());
+    log.say("отправь все три файла разработчику");
     return 0;
 }
 

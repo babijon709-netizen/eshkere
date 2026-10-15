@@ -223,6 +223,8 @@ bool layout_scan_in_progress();
 bool publish_camera_only_frame(float sw, float sh);
 bool object_class_name_is(uint64_t obj, const char* expected, bool accept_when_unreadable = false);
 bool read_transform_name(uint64_t transform, char* out, size_t cap);
+bool read_transform_world_pose(uint64_t native_transform, Vec3& pos, Vec4& rot, Vec3& scale);
+bool go_name_autodetect(const std::vector<uint64_t>& native_gameobjects);
 bool read_local_melee_reach(MeleeReach& out);
 bool aim_angles_for(const Vec3& world, const Vec2& screen, float sw, float sh, float& yaw_deg, float& pitch_deg);
 bool farm_cam_source_ok(const Vec3& p);

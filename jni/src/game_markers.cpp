@@ -2060,26 +2060,39 @@ std::vector<BotAimEnt> esp_bot_aim_list() {
 
 // ==== Дамп мира для CLI-команды `xvcen world` (world_dump.h) ================
 //
-// Зачем: коллизии карты нужны для wall-check, а раскладка нативных
-// Collider/PhysX-шейпов в Unity 6000.3 в проекте не описана. Эта функция —
-// первый шаг: обходит все сетевые объекты (NetworkClient.spawned), для каждого
-// — поддерево трансформов, у каждого GameObject — массив компонентов, и пишет
-//   * jsonl (по строке на GameObject): имя, мировая позиция, пары
-//     (vtable, native ptr) всех компонентов — это и есть «что где стоит»;
-//   * отчёт: таблицу отпечатков типов (vtable + метка пары) со счётчиком и
-//     hex-срезами 0x100 байт двух образцов. Collider-типы узнаются по тому,
-//     какие отпечатки встречаются на рок/дом/стена-префабах, а их поля
-//     (центр/размер, указатель на шейп) — по срезу. Раскладку читаем с
-//     отчёта один раз и дальше пишем уже настоящий экспорт коллизий.
-// Только чтение через g_mem, /proc/<pid>/mem не открывается (KERNEL.md §1).
-//
-// Возврат: 0 — дамп снят, 1 — NetworkClient.spawned недоступен/пуст.
-int esp_world_dump(FILE* report, FILE* jsonl, int max_identities, int max_nodes) {
+// Цель — коллизии карты для wall-check. Раскладка нативных Collider в Unity
+// 6000.3 в проекте не описана, поэтому дамп берёт сырьё и сам же его размечает:
+//   * Collider-тип узнаётся по contactOffset: float 0.01 (Physics.defaultContactOffset)
+//     лежит у ВСЕХ Collider-ов по +0x48 (проверено по дампу v1: Box/Mesh/прочие).
+//   * Раскладка иерархии Transform в этой сборке учится по скелетам игроков, а в
+//     CLI игроков нет — поэтому учим её по корням сетевых объектов, тем же
+//     discover_layout_from_native_transforms, что и ESP.
+//   * Имя GameObject: оффсет ищется автодетектом по ASCII (go_name_autodetect).
+// Выходные файлы:
+//   jsonl      — по строке на GameObject: имя, мировая поза, компоненты;
+//   colliders  — по строке на Collider: тип, GameObject, мировая поза (с масштабом),
+//                11 float с +0x58 и сырые 0x100 байт — по ним раскладка читается offline;
+//   report     — итоги, гистограмма типов коллайдеров, hex-срезы объектов, на которые
+//                коллайдеры ссылаются (у MeshCollider там Mesh с локальным bounds).
+// Только чтение через g_mem (KERNEL.md §1). Возврат: 0 — снято, 1 — spawned недоступен.
+static void world_json_str(FILE* f, const char* s) {
+    fputc('"', f);
+    for (; *s; ++s) {
+        const unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') { fputc('\\', f); fputc((int)c, f); }
+        else if (c < 0x20 || c > 0x7E) fputc('?', f);
+        else fputc((int)c, f);
+    }
+    fputc('"', f);
+}
+
+int esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identities, int max_nodes) {
     if (!report) return 1;
     // Раскладка нативного GameObject (те же значения, что GAMEOBJECT_COMPONENT_* в game.cpp).
     constexpr uint64_t kCompArray  = 0x20;
     constexpr uint64_t kCompCount  = 0x30;
     constexpr uint64_t kCompStride = 0x10;
+    constexpr uint64_t kContactOffsetAt = 0x48;   // Collider.contactOffset == 0.01f
     constexpr int      kHexBytes   = 0x100;
 
     const uint64_t dictionary = resolve_network_client_spawned();
@@ -2087,19 +2100,14 @@ int esp_world_dump(FILE* report, FILE* jsonl, int max_identities, int max_nodes)
         fprintf(report, "!! NetworkClient.spawned недоступен (нужен вход на сервер)\n");
         return 1;
     }
-    if (!g_go_name_offset_valid && g_local_player) ensure_gameobject_name_offset(g_local_player);
     const uint64_t identity_class = resolve_network_identity_class();
-
     int32_t count = 0;
     if (!rd_exact(dictionary + DICT_COUNT, count) || count <= 0) {
         fprintf(report, "!! spawned пуст или не читается\n");
         return 1;
     }
     const uint64_t entries = rd_ptr(dictionary + DICT_ENTRIES);
-    if (!valid_obj(entries)) {
-        fprintf(report, "!! spawned.entries не читается\n");
-        return 1;
-    }
+    if (!valid_obj(entries)) { fprintf(report, "!! spawned.entries не читается\n"); return 1; }
     const int32_t total = count;
     if (count > kMarkerRegistryLimit) count = kMarkerRegistryLimit;
     std::vector<uint8_t> buffer((size_t)count * DICT_ENTRY_STRIDE);
@@ -2108,16 +2116,12 @@ int esp_world_dump(FILE* report, FILE* jsonl, int max_identities, int max_nodes)
         return 1;
     }
 
-    struct Fingerprint {
-        uint64_t vtable = 0;
-        uint64_t tag = 0;       // первые 8 байт пары (предположительно индекс типа)
-        int      count = 0;
-        uint64_t sample[2] = {};
-    };
-    std::vector<Fingerprint> fps;
+    // ---- проход 1: собрать все узлы (трансформы) сетевых объектов -----------
+    struct Node { uint64_t identity; uint64_t transform; bool root; };
+    std::vector<Node> all;
+    std::vector<uint64_t> roots;
     std::vector<uint64_t> nodes;
-    int identities = 0, skipped = 0, objects = 0, bad_components = 0;
-
+    int identities = 0, skipped = 0;
     for (int i = 0; i < count && identities < max_identities; ++i) {
         uint64_t identity = 0;
         memcpy(&identity, buffer.data() + (size_t)i * DICT_ENTRY_STRIDE + DICT_ENTRY_VALUE,
@@ -2128,97 +2132,167 @@ int esp_world_dump(FILE* report, FILE* jsonl, int max_identities, int max_nodes)
         const uint64_t root_transform = native_identity ? native_component_transform(native_identity) : 0;
         if (!root_transform) { ++skipped; continue; }
         ++identities;
-
-        char root_name[48] = {};
-        managed_component_gameobject_name(identity, root_name, sizeof(root_name));
+        roots.push_back(root_transform);
         collect_transform_subtree(root_transform, nodes, (size_t)(max_nodes > 0 ? max_nodes : 1));
-
-        for (size_t n = 0; n < nodes.size(); ++n) {
-            const uint64_t transform = nodes[n];
-            const uint64_t go = rd_ptr(transform + COMPONENT_GAMEOBJECT);
-            if (go < 0x10000) continue;
-            const uint64_t array = rd_ptr(go + kCompArray);
-            const int32_t  ccount = rd<int32_t>(go + kCompCount);
-            if (array < 0x10000 || ccount <= 0 || ccount > 64) continue;
-
-            char name[48] = {};
-            if (n == 0) snprintf(name, sizeof(name), "%s", root_name);
-            else read_transform_name(transform, name, sizeof(name));
-            Vec3 pos{};
-            const bool pos_ok = read_transform_hierarchy_position(transform, pos);
-            ++objects;
-
-            if (jsonl) {
-                fprintf(jsonl, "{\"id\":\"0x%llx\",\"root\":%s,\"go\":\"0x%llx\",\"name\":\"",
-                        (unsigned long long)identity, n == 0 ? "true" : "false",
-                        (unsigned long long)go);
-                for (const char* p = name; *p; ++p)   // имя — печатный ASCII, экранируем только " и \
-                    { if (*p == '"' || *p == '\\') fputc('\\', jsonl); fputc(*p, jsonl); }
-                fprintf(jsonl, "\",\"pos\":");
-                if (pos_ok) fprintf(jsonl, "[%.3f,%.3f,%.3f]", pos.x, pos.y, pos.z);
-                else fprintf(jsonl, "null");
-                fprintf(jsonl, ",\"comps\":[");
-            }
-            bool first = true;
-            for (int c = 0; c < ccount; ++c) {
-                const uint64_t pair = array + (uint64_t)c * kCompStride;
-                const uint64_t tag = rd<uint64_t>(pair);
-                const uint64_t comp = rd_ptr(pair + COMPONENT_PAIR_PTR);
-                if (comp < 0x10000 || comp == go ||
-                    rd_ptr(comp + COMPONENT_GAMEOBJECT) != go) { ++bad_components; continue; }
-                const uint64_t vtable = rd_ptr(comp);
-                if (jsonl) {
-                    fprintf(jsonl, "%s[\"0x%llx\",\"0x%llx\",\"0x%llx\"]", first ? "" : ",",
-                            (unsigned long long)vtable, (unsigned long long)tag,
-                            (unsigned long long)comp);
-                    first = false;
-                }
-                Fingerprint* fp = nullptr;
-                for (Fingerprint& f : fps)
-                    if (f.vtable == vtable && f.tag == tag) { fp = &f; break; }
-                if (!fp) { fps.push_back({}); fp = &fps.back(); fp->vtable = vtable; fp->tag = tag; }
-                if (fp->count < 2) fp->sample[fp->count] = comp;
-                ++fp->count;
-            }
-            if (jsonl) fprintf(jsonl, "]}\n");
-        }
+        for (size_t n = 0; n < nodes.size(); ++n) all.push_back({identity, nodes[n], n == 0});
     }
 
-    std::sort(fps.begin(), fps.end(),
-              [](const Fingerprint& a, const Fingerprint& b) { return a.count > b.count; });
+    // ---- раскладка иерархии: учим по корням, как ESP учит по игрокам ----------
+    bool layout_ok = false;
+    size_t best_positions = 0, candidates = 0;
+    int layout_iters = 0;
+    if (roots.size() >= 2) {
+        std::vector<uint64_t> seeds(roots.begin(), roots.begin() + (long)std::min<size_t>(roots.size(), 400));
+        for (; layout_iters < 800; ++layout_iters) {
+            if (discover_layout_from_native_transforms(seeds, best_positions, candidates)) { layout_ok = true; break; }
+            if (!layout_scan_in_progress()) break;
+        }
+    }
+    // ---- имя GameObject ------------------------------------------------------
+    std::vector<uint64_t> go_probe;
+    for (size_t k = 0; k < all.size() && go_probe.size() < 300; ++k) {
+        const uint64_t go = rd_ptr(all[k].transform + COMPONENT_GAMEOBJECT);
+        if (go >= 0x10000) go_probe.push_back(go);
+    }
+    const bool names_ok = go_name_autodetect(go_probe);
 
-    fprintf(report, "== world dump ==\n");
+    // ---- проход 2: GameObject-ы, компоненты, коллайдеры -----------------------
+    struct TypeStat {
+        uint32_t tag = 0; uint64_t vtable = 0; int count = 0; int collider = 0;
+        uint64_t sample[3] = {}; int samples = 0;
+    };
+    std::vector<TypeStat> types;
+    int objects = 0, bad_components = 0, collider_total = 0, pose_ok = 0, pos_only = 0;
+    std::vector<std::pair<uint32_t, uint64_t>> collider_samples;   // (tag, comp) для среза ссылок
+    std::vector<uint32_t> sample_types;
+
+    for (const Node& node : all) {
+        const uint64_t tf = node.transform;
+        const uint64_t go = rd_ptr(tf + COMPONENT_GAMEOBJECT);
+        if (go < 0x10000) continue;
+        const uint64_t array = rd_ptr(go + kCompArray);
+        const int32_t  ccount = rd<int32_t>(go + kCompCount);
+        if (array < 0x10000 || ccount <= 0 || ccount > 64) continue;
+
+        char name[48] = {};
+        if (!read_transform_name(tf, name, sizeof(name))) name[0] = '\0';
+        Vec3 pos{}, scale{1, 1, 1}; Vec4 rot{0, 0, 0, 1};
+        bool pose = layout_ok && read_transform_world_pose(tf, pos, rot, scale);
+        bool pos_valid = pose;
+        if (!pose) pos_valid = read_transform_hierarchy_position(tf, pos);
+        if (pose) ++pose_ok; else if (pos_valid) ++pos_only;
+        ++objects;
+
+        auto print_pose = [&](FILE* f) {
+            if (!pos_valid) { fprintf(f, "\"pos\":null,\"rot\":null,\"scale\":null"); return; }
+            fprintf(f, "\"pos\":[%.3f,%.3f,%.3f],", pos.x, pos.y, pos.z);
+            if (pose) fprintf(f, "\"rot\":[%.5f,%.5f,%.5f,%.5f],\"scale\":[%.4f,%.4f,%.4f]",
+                              rot.x, rot.y, rot.z, rot.w, scale.x, scale.y, scale.z);
+            else fprintf(f, "\"rot\":null,\"scale\":null");
+        };
+
+        if (jsonl) {
+            fprintf(jsonl, "{\"id\":\"0x%llx\",\"root\":%s,\"go\":\"0x%llx\",\"name\":",
+                    (unsigned long long)node.identity, node.root ? "true" : "false",
+                    (unsigned long long)go);
+            world_json_str(jsonl, name);
+            fprintf(jsonl, ",");
+            print_pose(jsonl);
+            fprintf(jsonl, ",\"comps\":[");
+        }
+        bool first = true;
+        for (int c = 0; c < ccount; ++c) {
+            const uint64_t pair = array + (uint64_t)c * kCompStride;
+            const uint32_t tag = (uint32_t)(rd<uint64_t>(pair) & 0xffffffffu);   // индекс типа
+            const uint64_t comp = rd_ptr(pair + COMPONENT_PAIR_PTR);
+            if (comp < 0x10000 || comp == go ||
+                rd_ptr(comp + COMPONENT_GAMEOBJECT) != go) { ++bad_components; continue; }
+            const uint64_t vtable = rd_ptr(comp);
+            if (jsonl) {
+                fprintf(jsonl, "%s[\"0x%llx\",%u,\"0x%llx\"]", first ? "" : ",",
+                        (unsigned long long)vtable, (unsigned)tag, (unsigned long long)comp);
+                first = false;
+            }
+            TypeStat* ts = nullptr;
+            for (TypeStat& t : types) if (t.tag == tag && t.vtable == vtable) { ts = &t; break; }
+            if (!ts) { types.push_back({}); ts = &types.back(); ts->tag = tag; ts->vtable = vtable; }
+            ++ts->count;
+            if (ts->samples < 3) ts->sample[ts->samples++] = comp;
+
+            // Collider: contactOffset (0.01f) по +0x48.
+            const float contact = rd<float>(comp + kContactOffsetAt);
+            if (!(std::fabs(contact - 0.01F) < 1e-6F)) continue;
+            ++ts->collider; ++collider_total;
+            if (!colliders) continue;
+            uint8_t bytes[kHexBytes] = {};
+            if (!rd_buf(comp, bytes, sizeof(bytes))) continue;
+            fprintf(colliders, "{\"id\":\"0x%llx\",\"go\":\"0x%llx\",\"name\":",
+                    (unsigned long long)node.identity, (unsigned long long)go);
+            world_json_str(colliders, name);
+            fprintf(colliders, ",\"type\":%u,\"vt\":\"0x%llx\",\"comp\":\"0x%llx\",", (unsigned)tag,
+                    (unsigned long long)vtable, (unsigned long long)comp);
+            print_pose(colliders);
+            fprintf(colliders, ",\"f\":[");
+            for (int k = 0; k < 11; ++k) {          // 11 float с +0x58 (центр/размер/радиус у примитивов)
+                float v; memcpy(&v, bytes + 0x58 + k * 4, sizeof(v));
+                if (std::isfinite(v)) fprintf(colliders, "%s%.5g", k ? "," : "", v);
+                else fprintf(colliders, "%snull", k ? "," : "");
+            }
+            fprintf(colliders, "],\"hex\":\"");
+            for (int k = 0; k < kHexBytes; ++k) fprintf(colliders, "%02x", bytes[k]);
+            fprintf(colliders, "\"}\n");
+            int per_type = 0;
+            for (uint32_t t : sample_types) per_type += (t == tag);
+            if (per_type < 3) { collider_samples.push_back({tag, comp}); sample_types.push_back(tag); }
+        }
+        if (jsonl) fprintf(jsonl, "]}\n");
+    }
+
+    std::sort(types.begin(), types.end(),
+              [](const TypeStat& a, const TypeStat& b) { return a.count > b.count; });
+
+    fprintf(report, "== world dump v2 ==\n");
     fprintf(report, "spawned всего      : %d (прочитано записей %d)\n", (int)total, (int)count);
     fprintf(report, "сетевых объектов   : %d (пропущено %d)\n", identities, skipped);
     fprintf(report, "GameObject в дампе : %d\n", objects);
+    fprintf(report, "раскладка иерархии : %s (итераций %d, кандидатов %d, лучшее число позиций %d)\n",
+            layout_ok ? "ВЫУЧЕНА" : "НЕ найдена", layout_iters, (int)candidates, (int)best_positions);
+    fprintf(report, "поза (pos+rot+scale): %d, только позиция: %d, без позы: %d\n",
+            pose_ok, pos_only, objects - pose_ok - pos_only);
+    fprintf(report, "имя GameObject     : %s\n", names_ok ? "найдено автодетектом" : "НЕ найдено");
     fprintf(report, "битых слотов       : %d\n", bad_components);
-    fprintf(report, "отпечатков типов   : %d\n\n", (int)fps.size());
-    fprintf(report, "# отпечаток = (vtable, метка пары). Одинаковый тип компонента даёт\n"
-                    "# одинаковый отпечаток; collider-типы ищи среди тех, что висят на\n"
-                    "# камнях/деревьях/постройках (сверь имена GameObject в world.jsonl).\n\n");
-    int shown = 0;
-    for (const Fingerprint& f : fps) {
-        if (shown++ >= 80) break;
-        fprintf(report, "--- vtable=0x%llx tag=0x%llx count=%d\n", (unsigned long long)f.vtable,
-                (unsigned long long)f.tag, f.count);
-        for (int s = 0; s < 2 && s < f.count; ++s) {
-            uint8_t bytes[kHexBytes] = {};
-            if (!rd_buf(f.sample[s], bytes, sizeof(bytes))) {
-                fprintf(report, "  sample %d @0x%llx: не читается\n", s, (unsigned long long)f.sample[s]);
-                continue;
-            }
-            fprintf(report, "  sample %d @0x%llx\n", s, (unsigned long long)f.sample[s]);
-            for (int off = 0; off < kHexBytes; off += 32) {
-                fprintf(report, "    +%03x:", off);
-                for (int b = 0; b < 32; ++b) {
-                    if (b % 8 == 0) fputc(' ', report);
-                    fprintf(report, "%02x", bytes[off + b]);
-                }
+    fprintf(report, "коллайдеров        : %d\n\n", collider_total);
+    fprintf(report, "# типы компонентов: tag = индекс типа (стабилен в пределах сборки), vtable = ASLR-адрес\n");
+    for (const TypeStat& t : types)
+        fprintf(report, "tag=%-3u vtable=0x%llx count=%-6d colliders=%d\n", (unsigned)t.tag,
+                (unsigned long long)t.vtable, t.count, t.collider);
+
+    // Срезы объектов, на которые ссылаются коллайдеры (Mesh у MeshCollider и т.п.).
+    fprintf(report, "\n# указатели из коллайдеров (+0x10..+0x88) -> hex-срез цели 0x80 байт\n");
+    std::vector<uint64_t> dumped;
+    for (const auto& sample : collider_samples) {
+        fprintf(report, "--- collider tag=%u @0x%llx\n", (unsigned)sample.first, (unsigned long long)sample.second);
+        int shown = 0;
+        for (uint64_t off = 0x10; off <= 0x88 && shown < 8; off += 8) {
+            const uint64_t ptr = rd_ptr(sample.second + off);
+            if (ptr < 0x10000 || ptr >= 0x0001000000000000ULL) continue;
+            if (ptr >= sample.second && ptr < sample.second + 0x200) continue;   // внутрь себя
+            bool seen = false;
+            for (uint64_t d : dumped) seen |= (d == ptr);
+            if (seen) continue;
+            uint8_t bytes[0x80] = {};
+            if (!rd_buf(ptr, bytes, sizeof(bytes))) continue;
+            dumped.push_back(ptr); ++shown;
+            fprintf(report, "  +0x%02llx -> 0x%llx\n", (unsigned long long)off, (unsigned long long)ptr);
+            for (int o = 0; o < (int)sizeof(bytes); o += 32) {
+                fprintf(report, "    +%02x:", o);
+                for (int b = 0; b < 32; ++b) { if (b % 8 == 0) fputc(' ', report); fprintf(report, "%02x", bytes[o + b]); }
                 fputc('\n', report);
             }
         }
     }
     fflush(report);
     if (jsonl) fflush(jsonl);
+    if (colliders) fflush(colliders);
     return 0;
 }

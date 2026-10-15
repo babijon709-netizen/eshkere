@@ -290,7 +290,7 @@ int         esp_skeleton_diag(char* out, size_t cap, int max_players);
 // Дамп мира для `xvcen world` (world_dump.h): сетевые объекты, их GameObject-ы
 // и компоненты (jsonl) + таблица отпечатков типов с hex-срезами (report).
 // 0 — снято, 1 — NetworkClient.spawned недоступен.
-int         esp_world_dump(FILE* report, FILE* jsonl, int max_identities, int max_nodes);
+int         esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identities, int max_nodes);
 
 // True while the local player is aiming down sights (ADS) with the current
 // weapon. Returns false when the state cannot be read (not attached, no

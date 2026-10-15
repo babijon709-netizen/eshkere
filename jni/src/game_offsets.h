@@ -637,6 +637,7 @@ inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL        = 0x2C;  // Occlusi
 inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME       = 0x38;  // OcclusionModule.RcZ (float)
 inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL         = 0x3C;  // OcclusionModule.RcS.hasValue (uint8)
 inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED     = 0x3D;  // OcclusionModule.RcS.value (uint8, 0=виден, 1=за стеной)
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xDEA6BD8; // release 11966: hMj TypeInfo slot (outer 0xDB4AE38)
 inline constexpr std::int32_t  MARKER_TYPE_NEARBY_PLAYER     = 10;    // MarkerType.NearbyPlayer
 // Тот же struct UnityEngine.RaycastHit (dump.cs 62a8534, строка 642061):
 //   m_Point 0x0 (Vector3), m_Normal 0xC (Vector3), m_FaceID 0x18,

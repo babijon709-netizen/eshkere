@@ -73,6 +73,7 @@ void test_offsets_consistency() {
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
+    assert(game_offsets::HMJ_TYPEINFO_RVA == 0xDEA6BD8);
 
     assert(game_offsets_beta::PLAYER_MOUSE_LOOK == game_offsets::PLAYER_MOUSE_LOOK);
     assert(game_offsets_beta::MOUSELOOK_PITCH_YAW == game_offsets::MOUSELOOK_PITCH_YAW);
@@ -87,6 +88,7 @@ void test_offsets_consistency() {
     assert(game_offsets_beta::NEARBY_VIEW_MODULE_CTX == game_offsets::NEARBY_VIEW_MODULE_CTX);
     assert(game_offsets_beta::NEARBY_VIEW_CACHED_HIT == game_offsets::NEARBY_VIEW_CACHED_HIT);
     assert(game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED == game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
+    assert(game_offsets_beta::HMJ_TYPEINFO_RVA != 0);
 }
 
 void test_marker_occlusion_and_rays() {
@@ -254,6 +256,56 @@ void test_hwr_offaxis_probe() {
     assert(tracker.is_visible(bot, 2.166));
 }
 
+void test_hmj_solid_wall_mask_extraction() {
+    using namespace vis_check;
+    std::int32_t f[25]{};
+    f[0]  = 1 << 0;  // +0x00 Default
+    f[1]  = 1 << 14; // +0x04 Hitbox
+    f[2]  = 1 << 15; // +0x08 IgnoreCollision
+    f[3]  = 1 << 9;  // +0x0C Construction
+    f[4]  = 1 << 10; // +0x10 Deployed (crate/barrel junkpiles, deployables, 1-4m zones)
+    f[5]  = 1 << 11; // +0x14 Terrain (terrain, rocks, monument chunks, shipping containers)
+    f[6]  = 1 << 4;  // +0x18 Water
+    f[7]  = 1 << 12; // +0x1C ProxyEntity
+    f[8]  = 1 << 13; // +0x20 Entity
+    f[9]  = 1 << 8;  // +0x24 First Person
+    f[20] = 1 << 17; // +0x50 Doorway
+    f[21] = 1 << 18; // +0x54 Vehicle
+    f[22] = 1 << 19; // +0x58 VehicleBox
+    f[23] = 1 << 4;  // +0x5C Water
+    f[24] = 1 << 21; // +0x60 Trigger
+
+    f[10] = f[0] | f[3] | f[4] | f[5] | f[6]; // +0x28 Default|Construction|Deployed|Terrain|Water
+    f[11] = f[0] | f[5] | f[6];               // +0x2C Default|Terrain|Water
+    f[12] = f[8] | f[21];                     // +0x30 Entity|Vehicle
+    f[15] = f[10];                            // +0x3C == +0x28
+
+    std::int32_t solid = 0;
+    std::int32_t strip = 0;
+    assert(extract_hmj_solid_wall_mask(f, solid, strip));
+    assert(solid == ((1 << 9) | (1 << 11))); // Construction | Terrain only
+    assert((solid & f[4]) == 0);  // Deployed stripped
+    assert((solid & f[21]) == 0); // Vehicle stripped
+    assert((solid & f[22]) == 0); // VehicleBox stripped
+    assert((solid & f[24]) == 0); // Trigger stripped
+    assert((solid & f[0]) == 0);  // Default stripped
+
+    const std::int32_t raw_occ_mask = f[10] | f[21] | f[22] | f[24];
+    assert(sanitize_occlusion_obstacle_mask(raw_occ_mask, solid) == solid);
+
+    // Fallback when hMj is not yet resolved still strips Default/Water/FirstPerson:
+    const std::int32_t fb = sanitize_occlusion_obstacle_mask(raw_occ_mask, 0);
+    assert((fb & (1 << 0)) == 0);
+    assert((fb & (1 << 4)) == 0);
+    assert((fb & (1 << 8)) == 0);
+    assert((fb & (1 << 9)) != 0);
+    assert((fb & (1 << 11)) != 0);
+
+    // Corrupted table must be rejected:
+    f[12] ^= 1;
+    assert(!extract_hmj_solid_wall_mask(f, solid, strip));
+}
+
 } // namespace
 
 int main() {
@@ -261,5 +313,6 @@ int main() {
     test_offsets_consistency();
     test_marker_occlusion_and_rays();
     test_hwr_offaxis_probe();
+    test_hmj_solid_wall_mask_extraction();
     return 0;
 }

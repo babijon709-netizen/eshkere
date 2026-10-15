@@ -301,6 +301,7 @@ inline std::uint64_t OCCLUSION_MOD_INTERVAL = game_offsets::OCCLUSION_MOD_INTERV
 inline std::uint64_t OCCLUSION_MOD_NEXT_TIME = game_offsets::OCCLUSION_MOD_NEXT_TIME;
 inline std::uint64_t OCCLUSION_MOD_HAS_VAL = game_offsets::OCCLUSION_MOD_HAS_VAL;
 inline std::uint64_t OCCLUSION_MOD_IS_OCCLUDED = game_offsets::OCCLUSION_MOD_IS_OCCLUDED;
+inline std::uint64_t HMJ_TYPEINFO_RVA = game_offsets::HMJ_TYPEINFO_RVA;
 inline std::int32_t MARKER_TYPE_NEARBY_PLAYER = game_offsets::MARKER_TYPE_NEARBY_PLAYER;
 inline std::uint64_t RAYCASTHIT_DISTANCE = game_offsets::RAYCASTHIT_DISTANCE;
 inline std::uint64_t RAYCASTHIT_POINT = game_offsets::RAYCASTHIT_POINT;
@@ -719,6 +720,7 @@ inline void Select(GameVersion version) {
         OCCLUSION_MOD_NEXT_TIME = game_offsets_beta::OCCLUSION_MOD_NEXT_TIME;
         OCCLUSION_MOD_HAS_VAL = game_offsets_beta::OCCLUSION_MOD_HAS_VAL;
         OCCLUSION_MOD_IS_OCCLUDED = game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED;
+        HMJ_TYPEINFO_RVA = game_offsets_beta::HMJ_TYPEINFO_RVA;
         MARKER_TYPE_NEARBY_PLAYER = game_offsets_beta::MARKER_TYPE_NEARBY_PLAYER;
         RAYCASTHIT_DISTANCE = game_offsets_beta::RAYCASTHIT_DISTANCE;
         RAYCASTHIT_POINT = game_offsets_beta::RAYCASTHIT_POINT;
@@ -1134,6 +1136,7 @@ inline void Select(GameVersion version) {
         OCCLUSION_MOD_NEXT_TIME = game_offsets::OCCLUSION_MOD_NEXT_TIME;
         OCCLUSION_MOD_HAS_VAL = game_offsets::OCCLUSION_MOD_HAS_VAL;
         OCCLUSION_MOD_IS_OCCLUDED = game_offsets::OCCLUSION_MOD_IS_OCCLUDED;
+        HMJ_TYPEINFO_RVA = game_offsets::HMJ_TYPEINFO_RVA;
         MARKER_TYPE_NEARBY_PLAYER = game_offsets::MARKER_TYPE_NEARBY_PLAYER;
         RAYCASTHIT_DISTANCE = game_offsets::RAYCASTHIT_DISTANCE;
         RAYCASTHIT_POINT = game_offsets::RAYCASTHIT_POINT;

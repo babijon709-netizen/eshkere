@@ -85,6 +85,82 @@ inline float vec3_len_sq(const float v[3]) {
     return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
 }
 
+inline bool is_single_layer_bit(std::int32_t m) {
+    return m > 0 && (m & (m - 1)) == 0;
+}
+
+// Structural validator for hMj.static_fields (TypeDefIndex: 6280, 25 int32 LayerMask fields):
+//   +0x00 Default (1<<0), +0x04 Hitbox, +0x08 IgnoreCollision, +0x0C Construction,
+//   +0x10 Deployed, +0x14 Terrain, +0x18 Water, +0x1C ProxyEntity, +0x20 Entity,
+//   +0x24 First Person (1<<8), +0x28 Default|Construction|Deployed|Terrain|Water,
+//   +0x2C Default|Terrain|Water, +0x30 Entity|Vehicle, +0x3C == +0x28,
+//   +0x50 Doorway, +0x54 Vehicle, +0x58 VehicleBox, +0x5C Water, +0x60 Trigger.
+// Extracts the pure solid wall/terrain mask (Construction | Terrain) so
+// OcclusionModule::Tick's 4-arg Physics.Raycast (QueryTriggerInteraction.UseGlobal)
+// ignores 1-4m Deployed / Trigger / VehicleBox / Default zone colliders around
+// server-spawned crate/barrel piles and cars.
+inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
+                                        std::int32_t& out_solid_mask,
+                                        std::int32_t& out_strip_mask) {
+    out_solid_mask = 0;
+    out_strip_mask = 0;
+    const std::int32_t m_default      = f[0];  // +0x00 "Default"
+    const std::int32_t m_hitbox       = f[1];  // +0x04 "Hitbox"
+    const std::int32_t m_ignore_col   = f[2];  // +0x08 "IgnoreCollision"
+    const std::int32_t m_construction = f[3];  // +0x0C "Construction"
+    const std::int32_t m_deployed     = f[4];  // +0x10 "Deployed"
+    const std::int32_t m_terrain      = f[5];  // +0x14 "Terrain"
+    const std::int32_t m_water        = f[6];  // +0x18 "Water"
+    const std::int32_t m_proxy_entity = f[7];  // +0x1C "ProxyEntity"
+    const std::int32_t m_entity       = f[8];  // +0x20 "Entity"
+    const std::int32_t m_first_person = f[9];  // +0x24 "First Person"
+    const std::int32_t m_comp_28      = f[10]; // +0x28
+    const std::int32_t m_comp_2c      = f[11]; // +0x2C
+    const std::int32_t m_comp_30      = f[12]; // +0x30
+    const std::int32_t m_comp_3c      = f[15]; // +0x3C
+    const std::int32_t m_doorway      = f[20]; // +0x50 "Doorway"
+    const std::int32_t m_vehicle      = f[21]; // +0x54 "Vehicle"
+    const std::int32_t m_vehicle_box  = f[22]; // +0x58 "VehicleBox"
+    const std::int32_t m_water2       = f[23]; // +0x5C "Water"
+    const std::int32_t m_trigger      = f[24]; // +0x60 "Trigger"
+
+    if (m_default != 0x1 || m_first_person != 0x100) return false;
+    if (!is_single_layer_bit(m_construction) ||
+        !is_single_layer_bit(m_deployed) ||
+        !is_single_layer_bit(m_terrain) ||
+        !is_single_layer_bit(m_water) ||
+        !is_single_layer_bit(m_entity) ||
+        !is_single_layer_bit(m_vehicle)) {
+        return false;
+    }
+    if (m_construction == m_deployed ||
+        m_construction == m_terrain ||
+        m_deployed == m_terrain) {
+        return false;
+    }
+    if (m_comp_28 != (m_default | m_construction | m_deployed | m_terrain | m_water)) return false;
+    if (m_comp_2c != (m_default | m_terrain | m_water)) return false;
+    if (m_comp_30 != (m_entity | m_vehicle)) return false;
+    if (m_comp_3c != m_comp_28) return false;
+
+    out_solid_mask = m_construction | m_terrain;
+    out_strip_mask = m_default | m_hitbox | m_ignore_col | m_deployed | m_water |
+                     m_proxy_entity | m_entity | m_first_person | m_doorway |
+                     m_vehicle | m_vehicle_box | m_water2 | m_trigger;
+    return out_solid_mask > 0;
+}
+
+inline std::int32_t sanitize_occlusion_obstacle_mask(std::int32_t cur_mask,
+                                                     std::int32_t hmj_solid_mask) {
+    if (hmj_solid_mask > 0) return hmj_solid_mask;
+    // Fallback before hMj is resolved: strip Unity built-in non-wall layers
+    // (0=Default, 1=TransparentFX, 2=IgnoreRaycast, 4=Water, 5=UI, 8=FirstPerson).
+    constexpr std::int32_t kBuiltinNonWall =
+        (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 8);
+    const std::int32_t stripped = cur_mask & ~kBuiltinNonWall;
+    return stripped > 0 ? stripped : cur_mask;
+}
+
 inline bool point_hits_target_cylinder(const float pt[3],
                                        const TargetGeometry& t,
                                        float radius = 0.65f) {

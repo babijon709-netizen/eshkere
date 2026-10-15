@@ -317,7 +317,15 @@ int main() {
         assert(go_active::FPROCKETLAUNCHER_PROJECTILE_PREFAB == 0x148);
         assert(go_active::FPEXPLOSIVECHARGE_PROJECTILE_PREFAB == 0x130);
         assert(go_active::FPSNOWBALL_PROJECTILE_PREFAB == 0x130);
-        assert(go_active::FPSPEAR_PROJECTILE_PREFAB == 0x170);
+        const bool beta = version == go_active::GameVersion::Beta;
+        assert(go_active::FPSPEAR_PROJECTILE_PREFAB == (beta ? 0x170 : 0x178));
+        assert(go_active::FPSPEAR_MIN_THROW_PERIOD == (beta ? 0x168 : 0x170));
+        assert(go_active::FPSPEAR_CACHED_THROW_PERIOD == (beta ? 0x1A8 : 0x1C0));
+        assert(go_active::FPMELEE_MAX_REACH == (beta ? 0x128 : 0x130));
+        assert(go_active::FPMELEE_HIT_RADIUS == (beta ? 0x12C : 0x134));
+        assert(go_active::FPMELEE_TIME_BETWEEN_ATTACKS == (beta ? 0x130 : 0x138));
+        assert(go_active::FPMELEE_PAUSE_AFTER_ATTACK == (beta ? 0x134 : 0x13C));
+        assert(go_active::FPTOOL_TOOL_PURPOSES == (beta ? 0x160 : 0x168));
         assert(go_active::HITSCANCONFIG_BALLISTIC_PROFILE == 0x60);
         assert(go_active::BALLISTICPROFILE_GRAVITY == 0x10);
         assert(go_active::SHAFTEDPROJECTILE_GRAVITY == 0xAC);

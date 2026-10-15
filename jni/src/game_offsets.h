@@ -1,10 +1,10 @@
 #pragma once
 #include <cstdint>
 
-// Release profile, build 11949.
-// Source: dump11949.7z (dump.cs + libil2cpp.so), 31802 types.
-// Managed fields are resolved from dump.cs; TypeInfo RVAs are inner slots from
-// AArch64 adrp/ldr references and R_AARCH64_RELATIVE addends.
+// Release profile, build 11966.
+// Source: dump11966.7z (dump.cs + libil2cpp.so + script.json), 31895 types.
+// Managed fields are resolved from dump.cs; TypeInfo RVAs are the inner
+// Il2CppClass* slots listed by script.json's TypeInfoPointers.
 
 namespace game_offsets {
 
@@ -51,12 +51,11 @@ inline constexpr float PLAYER_BOX_WIDTH_RATIO = 0.40F;
 inline constexpr float MIN_PLAYER_DISTANCE    = 0.0F;
 inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 
-// Il2CppClass* TypeInfo globals in libil2cpp.so (from dump.cs / libil2cpp GOT).
-// These are .data slots of the IL2CPP metadata-usage table and MOVE on every
-// game update. Re-derived for this build by disassembling the owning class's
-// own methods and following  adrp/ldr -> R_AARCH64_RELATIVE addend -> slot,
-// keeping only slots that are then dereferenced as  ldr x8,[klass,#0xB8]
-// (Il2CppClass::static_fields) - i.e. exactly the access our reader performs.
+// Il2CppClass* TypeInfo globals in libil2cpp.so (this build's script.json).
+// TypeInfoPointers[].Address is the inner .data slot that the reader dereferences
+// once to obtain Il2CppClass*; these addresses move on every game update.
+// GOT/RELATIVE references can identify this slot, but the outer address is not
+// the RVA consumed by this reader.
 //
 // МЕХАНИЗМ (ошибка 9e26509 была здесь): код игры читает класс ДВУМЯ шагами —
 // adrp/ldr берёт из .data ВНЕШНЮЮ GOT-запись (outer), чьё содержимое лоадер
@@ -65,11 +64,13 @@ inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 // делает ОДНО разыменование: rd_ptr(base + RVA) -> klass, значит RVA обязан
 // быть ВНУТРЕННИМ слотом (addend).
 //
+// Историческая диагностика сборки 337e891 (не build 11966): эти outer-адреса
+// не использовать в текущем профиле.
 // УРОК 337e891 (слоты были неверны — опечатка в одной hex-цифре outer):
-// правильные outer этого билда: PM 0xd9acc68 (не 0xd9a8c68!), GC 0xd9ab2f8
+// правильные outer в том билде: PM 0xd9acc68 (не 0xd9a8c68!), GC 0xd9ab2f8
 // (не 0xd9a72f8), NC 0xd9ab1a0 (не 0xd9a71a0) — «опечатанные» адреса тоже
 // существуют в .rela.dyn, но указывают на чужие слоты, поэтому ручная цепочка
-// «подтверждалась» против чужих ячеек. Надёжная методика (применена здесь):
+// «подтверждалась» против чужих ячеек. Надёжная методика, применённая тогда:
 // 1) dump.cs даёт RVA методов класса ПОИМЁННО; 2) дизассемблируем их и
 // голосуем: слот = addend того outer, на который ссылается большинство
 // собственных методов класса; 3) РАНТАЙМ-ПОДТВЕРЖДЕНИЕ по дампам benzhack
@@ -80,19 +81,19 @@ inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 // мусор 0xa000b409/0xa000b3fd (это «таблица типов v2» протектора S16 из
 // малых целых, НЕ слоты классов). Перекрёстное подтверждение: PM-PLH = 0x30,
 // как и в прошлом рабочем билде (0xD9C5310/0xD9C52E0).
-inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xDD7A0B0; // release 11949: Oxide.PlayerManager TypeInfo slot
-// Cysharp.Threading.Tasks.PlayerLoopHelper; re-derived from this release ELF.
-inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xDD7A078; // release 11949 TypeInfo slot
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xDEA09F8; // release 11966: Oxide.PlayerManager TypeInfo slot
+// Cysharp.Threading.Tasks.PlayerLoopHelper.
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xDEA09C0; // release 11966 TypeInfo slot
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = 0x08; // activePlayerList
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = 0x10; // clientPlayerList
 
 
-// Managed-object layouts verified for release 11949.
+// Managed-object layouts verified against release 11966.
 inline constexpr std::uint64_t IL2CPP_CLASS_STATIC_FIELDS_OFFSET = 0xB8;
 inline constexpr std::uint64_t PLAYERLOOPHELPER_RUNNERS = 0x30;
 inline constexpr std::uint64_t LOOPRUNNER_ITEMS = 0x38;
 inline constexpr std::uint64_t LOOPRUNNER_TAIL = 0x30;
-// Две раскладки промисов UniTask.Delay, обе сверены с дампами 11949/11943
+// Две раскладки промисов UniTask.Delay, сверены по dump11949 и dump11966
 // (поля в объекте: 0x10 nextNode, дальше тройка). Именование историческое:
 // «голый» набор полей — у DelayIgnoreTimeScalePromise (unscaled-таймер),
 // «SCALED» набор — у обычного DelayPromise (ждёт Time.deltaTime).
@@ -103,15 +104,16 @@ inline constexpr std::uint64_t DELAYPROMISE_SCALED_TIMESPAN = 0x1C;   // DelayPr
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_ELAPSED = 0x20;    // DelayPromise.elapsed
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = 0x18; // DelayPromise.initialFrame
 // TypeInfo-слоты классов промисов для быстрого подбора (см.
-// fast_loot_memory.h): release 11949, сверены с TypeInfoPointers дампера.
+// fast_loot_memory.h): release 11966, взяты из script.json TypeInfoPointers.
 // _ALT — запасной слот: в бете пара классов опознаётся по имени в рантайме
 // из двух кандидатов (см. game_offsets_beta.h), в релизе запасной не нужен.
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xDD893A8;     // Cysharp...UniTask.DelayPromise
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xDEAFE30;     // Cysharp...UniTask.DelayPromise
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0;
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xDD893A0;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xDEAFE28;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
 inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0;
 inline constexpr std::uint64_t FPHITSCAN_CONFIG = 0x130;
-// Ballistic sources shared by release 11949 and beta 11943.
+// Projectile/config offsets rechecked against release 11966. The beta profile
+// pins the pre-11966 values for the weapon fields that diverged.
 inline constexpr std::uint64_t FPBOW_PROJECTILE_PREFAB = 0x150;
 inline constexpr std::uint64_t FPCROSSBOW_CONFIG = 0x138;
 inline constexpr std::uint64_t FPCROSSBOW_PROJECTILE_PREFAB = 0x148;
@@ -119,7 +121,7 @@ inline constexpr std::uint64_t FPROCKETLAUNCHER_CONFIG = 0x128;
 inline constexpr std::uint64_t FPROCKETLAUNCHER_PROJECTILE_PREFAB = 0x148;
 inline constexpr std::uint64_t FPEXPLOSIVECHARGE_PROJECTILE_PREFAB = 0x130;
 inline constexpr std::uint64_t FPSNOWBALL_PROJECTILE_PREFAB = 0x130;
-inline constexpr std::uint64_t FPSPEAR_PROJECTILE_PREFAB = 0x170;
+inline constexpr std::uint64_t FPSPEAR_PROJECTILE_PREFAB = 0x178;
 // FPHitscan copies config values into these live fields during lMf/sPo. The
 // config alone is therefore not enough for a weapon which is already drawn.
 inline constexpr std::uint64_t FPWEAPON_EFFECTIVE_RELOAD_PERIOD = 0xE8;
@@ -137,8 +139,8 @@ inline constexpr std::uint64_t FPCROSSBOW_MIN_SHOT_PERIOD = 0x140;
 inline constexpr std::uint64_t FPROCKETLAUNCHER_MIN_SHOT_PERIOD = 0x140;
 inline constexpr std::uint64_t FPSNOWBALL_MIN_THROW_PERIOD = 0x12C;
 inline constexpr std::uint64_t FPEXPLOSIVECHARGE_MIN_THROW_PERIOD = 0x12C;
-inline constexpr std::uint64_t FPSPEAR_MIN_THROW_PERIOD = 0x168;
-inline constexpr std::uint64_t FPSPEAR_CACHED_THROW_PERIOD = 0x1A8;
+inline constexpr std::uint64_t FPSPEAR_MIN_THROW_PERIOD = 0x170;
+inline constexpr std::uint64_t FPSPEAR_CACHED_THROW_PERIOD = 0x1C0;
 inline constexpr std::uint64_t FPHITSCAN_EFFECTIVE_LOOP_RELOAD_PERIOD = 0x2A0;  // было 0x2E0; zrb: сеттер-инициализатор читает config[0x4C] (LoopReloadPeriod) и пишет в +0x2A0 — сверено дизассемблером
 inline constexpr std::uint64_t FPHITSCAN_CALCULATOR = 0x1F8;
 inline constexpr std::uint64_t CALCULATOR_DISPERSION_CONFIG = 0x10;
@@ -167,17 +169,16 @@ inline constexpr std::uint64_t DISPERSIONCONFIG_MAX_DISPERSION = 0x24;
 // HitscanWeaponConfig, рядом с dispersionConfig 0x68). Гасятся в ноль
 // вертикальные Мин/Макс (Vector2) и боковые дельты; оригиналы «нет отдачи»
 // хранит и возвращает при выключении/смене ствола (проверено по дампам
-// 11949 и 11943 — раскладка одна).
+// 11949 и 11966 — раскладка одна).
 inline constexpr std::uint64_t HITSCANCONFIG_RECOIL_CONFIG = 0x70;
 inline constexpr std::uint64_t RECOILCONFIG_MIN_RECOIL = 0x18;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MAX_RECOIL = 0x20;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MIN_SIDE = 0x28;
 inline constexpr std::uint64_t RECOILCONFIG_MAX_SIDE = 0x2C;
 
-inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xDD753D8; // release 11949: Oxide.GameControllerBase TypeInfo slot
-// WorldStreamingController::CreateVegetationRenderer @ 0xD02786C reads
-// outer 0xDA58178; its R_AARCH64_RELATIVE addend is this inner TypeInfo slot.
-inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xDD80038;
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xDE9BCB0; // release 11966: Oxide.GameControllerBase TypeInfo slot
+// Build 11966 TypeInfoPointers gives the inner slot directly.
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xDEA5540;
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
 inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled
 // CreateVegetationRenderer checks +0x18; StartStreaming checks +0x19 before
@@ -185,7 +186,7 @@ inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // st
 inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD   = 0x10; // <ukT>k__BackingField (PlayerManager)
 inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = 0x38; // <ukA>k__BackingField (CameraManager)
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD          = 0x20; // m_Camera
-// Статические поля GameControllerBase (dump 11949, OxIDE.GameControllerBase):
+// Статические поля GameControllerBase (dump11966, Oxide.GameControllerBase):
 // вход в UI-ветку ввода и в хендлер ввода — оба нужны «память-джойстику»
 // автофарма (стик вместо синтетического тача).
 //   +0x18 <qSp> = Vsh (playerEventHandler локального игрока)
@@ -494,9 +495,8 @@ inline constexpr std::uint64_t FPOBJECT_PLAYER_BACKREF       = 0xC0;
 inline constexpr std::uint64_t FPWEAPON_IS_AIMING            = 0x120;
 
 // Максимальная дальность удара ближним орудием (топор/кирка/пила/копьё).
-// Из дампа 62a8534, класс Oxide.FPMelee (наследники: FPTool -> FPChainsaw,
-// FPSpear, FPBuildingHammer, FPTorch — имена читаемые, не ротируют):
-//   FPMelee.m_MaxReach (0x128) + FPMelee.hitRadius (0x12C)
+// В dump11966 у Oxide.FPMelee добавлены два int-поля по 0x128/0x12C,
+// поэтому m_MaxReach и hitRadius сдвинулись на +8: 0x130 и 0x134.
 // Игра засчитывает удар в FPMelee.ZkX() ровно так:
 //   GKo data = handler.RaycastData (0x160), если невалиден — handler.AimRaycast (0x168)
 //   if (data.RaycastHit.distance < m_MaxReach + hitRadius) On_Hit(data); else On_Woosh();
@@ -512,19 +512,19 @@ inline constexpr std::uint64_t FPWEAPON_IS_AIMING            = 0x120;
 //   сфера -> AimRaycast; m_TooCloseThreeshold (0x44, default 1.0).
 inline constexpr std::uint64_t FPOBJECT_RAYCAST_MANAGER      = 0x90;
 inline constexpr std::uint64_t FPOBJECT_EVENT_HANDLER        = 0xC8; // Gum (PlayerEventHandler)
-inline constexpr std::uint64_t FPMELEE_MAX_REACH             = 0x128;
-inline constexpr std::uint64_t FPMELEE_HIT_RADIUS            = 0x12C;
+inline constexpr std::uint64_t FPMELEE_MAX_REACH             = 0x130;
+inline constexpr std::uint64_t FPMELEE_HIT_RADIUS            = 0x134;
 // Ритм ударов самого орудия (секунды, сериализованы в префабе; в конструкторе
 // FPMelee стоят 0.85 и 0.15). Тап быстрее m_TimeBetweenAttacks игра ставит в
 // очередь и часть ударов съедает, медленнее — простой; поэтому такт бота берём
 // отсюда, а не из подобранных на глаз миллисекунд.
-inline constexpr std::uint64_t FPMELEE_TIME_BETWEEN_ATTACKS  = 0x130;
-inline constexpr std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK    = 0x134;
-// Oxide.FPTool : Oxide.FPMelee — поля есть только у FPTool и FPChainsaw
-// (прочие FPMelee: FPSpear, FPBuildingHammer, FPTorch — там на 0x160 своё).
-inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES          = 0x160; // enum ToolPurpose, флаги
-// Рядом (не читаем): 0x164 m_Efficiency (множитель урона), 0x168 alwaysCrit,
-// 0x169 useAmmo, 0x16C attacksPerAmmo.
+inline constexpr std::uint64_t FPMELEE_TIME_BETWEEN_ATTACKS  = 0x138;
+inline constexpr std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK    = 0x13C;
+// Oxide.FPTool : Oxide.FPMelee. The expanded release 11966 base shifts these
+// FPTool-specific fields by +8; beta keeps its previous profile values.
+inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES          = 0x168; // enum ToolPurpose, флаги
+// Рядом (не читаем): 0x16C m_Efficiency, 0x170 alwaysCrit, 0x171 useAmmo,
+// 0x174 attacksPerAmmo.
 inline constexpr std::uint64_t RAYCASTMAN_PLAYER             = 0x20;
 inline constexpr std::uint64_t RAYCASTMAN_RAY_LENGTH         = 0x38;
 inline constexpr std::uint64_t RAYCASTMAN_AIM_RAY_LENGTH     = 0x3C;
@@ -627,12 +627,11 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 // MineableTree / MineableObjectWithRandomSpawn), each a Mirror.NetworkBehaviour,
 // so the client-side Mirror registry lists all of them:
 //   Mirror.NetworkClient.spawned : Dictionary<uint, NetworkIdentity>
-// The NetworkClient TypeInfo slot was taken from libil2cpp.so: the code does
-//   adrp x19,#<page> ; ldr x19,[x19,#<off>]   (GOT entry)
-// and the R_AARCH64_RELATIVE addend of that entry is the .data slot below.
-// Verified by the static-field access pattern in NetworkClient's own methods:
+// The NetworkClient TypeInfo slot is from release 11966 script.json's
+// TypeInfoPointers; its static-field access pattern is also checked against the
+// owning class's methods:
 //   ldr x0,[x19] ; ldr x8,[x0,#0xb8] (static_fields) ; ldr x0,[x8,#0x28] (spawned)
-inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xDD79368; // release 11949: Mirror.NetworkClient TypeInfo slot
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xDE9FC60; // release 11966: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // было 0x28; перед spawned вставлен handlers(+0x28)
 
 // System.Collections.Generic.Dictionary<uint, NetworkIdentity> (this BCL has no
@@ -688,41 +687,16 @@ inline constexpr std::uint64_t HEALTH_VALUE          = 0x20;
 inline constexpr std::uint64_t VITALS_MAX_HEALTH     = 0x88; // GenericVitals.m_MaxHealth
 
 // ---- Время суток: TOD_Sky (ассет Time Of Day) ------------------------------
-// Oxide.TimeOfDay в боевых сценах не живёт: его ленивые метадата-слоты не
-// инициализированы (Awake ни разу не вызывается), поэтому day/night читается
-// из TOD_Sky. Имя его класса ОБФУСЦИРОВАНО И РОТИРУЕТ КАЖДЫЙ БИЛД: в дампе
-// 89e0b63 это `IY`, в этом (62a8534) — `UV`. Структура же стабильна:
-//   * единственный статик — List<Self> (первое статик-поле, offset 0x0);
-//   * у инстанса `TOD_CycleParameters_o* Cycle` на 0x40;
-//   * у TOD_CycleParameters: Hour(float)@0x10, Day@0x14, Month@0x18, Year@0x1C.
-// Имя TOD_CycleParameters не обфусцировано — по нему класс и находится:
-//   grep -n 'TOD_CycleParameters_o\* Cycle' il2cpp.h   # -> 0x40 = TOD_Sky
-//
-// TOD_SCAN_RVA_* — окно в .data.rel.ro, где лежат глобальные Il2CppClass*-слоты;
-// day_tod_scan() в game.cpp перебирает его по 1 КБ за кадр и валидирует каждый
-// кандидат по структуре выше. Это НЕ поля, но уезжают они КАЖДЫЙ билд вместе
-// со всеми *_TYPEINFO_RVA — проверить:
-//   python3 tools/offsets/typeinfo_rva.py --so <new>/libil2cpp.so
-//       --script <new>/script.json --methods 2000 UV
-// оба кандидата TOD_Sky обязаны попасть в окно. Класс TOD_Sky в этом билде
-// снова переименован (IY -> UV -> ak); структура цела: единственный
-// не-literal статик (List<Self>, offset 0x0) + TOD_CycleParameters Cycle
-// на 0x40. Прошлые окна: 0xD7A0000..0xD840000, затем 0xD9B0000..0xDA50000.
-// Окно = слотовый регион rw-сегмента этого билда: настоящие слоты классов
-// лежат на 0xdcf****-0xdd*****(PM 0xdcfd2a0, PLH 0xdcfd270, NC 0xdcfc518,
-// GC 0xdcf8530, ak 0xdd03e88); «таблица типов v2» протектора на 0xdd8d380+
-// (31696 записей S16) классов НЕ содержит (рантайм-проверка: там малые
-// целые/мусор). В 9e26509
-// окно ошибочно накрывало .data.rel.ro (внешние записи: в них лежат АДРЕСА
-// слотов, а не классы). Слот ak этого билда ВЕРИФИЦИРОВАН: outer 0xd9ab350 ->
-// addend 0xDD03E88 (геттер инстанса ak.IPB@0x684b1b0: [outer]->klass->
-// [+0xB8]->statics->[statics+0x0] = List<ak>; рантайм: [слот]=0x6dd2461360=
-// Il2CppClass{ak}); лежит на 0x3E88 от начала окна — сканер доходит до него
-// за ~16 шагов (~0.3 с @60fps). Остальное окно — запас на следующий билд:
-// сканер крутится циклично и валидирует кандидатов по полной структуре
-// (статик List<Self> + Cycle + sane-дата), так что ложных срабатываний нет.
-inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xDD70000;
-inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xDD90000; // release 11949 eN slot: 0xDD80FE8
+// In dump11966 TOD_Sky is the obfuscated class `lE` (TypeDefIndex 704): its
+// only static field is List<lE> at 0x0 and Cycle is at 0x40. The nested
+// TOD_CycleParameters fields are Hour 0x10, Day 0x14, Month 0x18, Year 0x1C.
+// script.json TypeInfoPointers lists `lE_TypeInfo` at 0xDEA7F10.
+// libil2cpp.so .data spans 0xDC21730..0xE262E70; the scan window below is
+// inside that section and contains the lE slot. day_tod_scan() checks 1 KiB
+// per frame and validates candidates against the list/Cycle/date signature;
+// re-check the range against the next dump's ELF before changing the profile.
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xDE90000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xDEB0000; // includes lE_TypeInfo at 0xDEA7F10
 inline constexpr std::uint64_t TOD_SKY_CYCLE      = 0x40; // TOD_Sky.Cycle
 inline constexpr std::uint64_t TOD_CYCLE_HOUR     = 0x10; // TOD_CycleParameters.Hour
 inline constexpr std::uint64_t TOD_CYCLE_DAY      = 0x14;

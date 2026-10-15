@@ -1,0 +1,3 @@
+# ndk-build output (build.sh делает rm -rf obj libs перед сборкой)
+obj/
+libs/

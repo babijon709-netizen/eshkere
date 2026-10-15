@@ -292,6 +292,16 @@ int         esp_skeleton_diag(char* out, size_t cap, int max_players);
 // 0 — снято, 1 — NetworkClient.spawned недоступен.
 int         esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identities, int max_nodes);
 
+// Wall-check (wall_check.h): LOS по BoxCollider-ам сетевых объектов. Покрывает только
+// не-trigger боксы; MeshCollider и terrain не учтены — для них «чисто».
+// esp_wall_set_enabled(true) включает порционный пересбор набора (esp_wall_tick зовётся
+// из esp_get_markers каждый кадр); esp_wall_los_clear: true — между точками нет блокера
+// (в т.ч. когда набор ещё пуст: проверять esp_wall_box_count() > 0, если нужен fail-closed).
+void        esp_wall_set_enabled(bool on);
+void        esp_wall_tick();
+size_t      esp_wall_box_count();
+bool        esp_wall_los_clear(const float from[3], const float to[3]);
+
 // True while the local player is aiming down sights (ADS) with the current
 // weapon. Returns false when the state cannot be read (not attached, no
 // weapon, menus, etc.), so "aim only while scoped" fails closed.

@@ -5,6 +5,7 @@
 #include "game_internal.h"
 #include "game_offsets_active.h"   // оффсеты (go_active)
 #include "manes_aim_source.h"
+#include "wall_check.h"
 #include "lang.h"
 #include <algorithm>
 #include <cstring>
@@ -1763,6 +1764,7 @@ static void marker_watch_finish(int visible_count) {
 std::vector<EspMarker> esp_get_markers() {
     ++s_marker_watch_frame;
     g_marker_frame_transient = false;
+    esp_wall_tick();   // wall-check: порционный пересбор набора BoxCollider-ов (выкл — ранний возврат)
     std::vector<EspMarker> result;
     if (!marker_visuals_enabled() && !g_bot_aim_enabled) {
         if (!g_marker_entities.empty()) g_marker_entities.clear();
@@ -2165,6 +2167,8 @@ int esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identitie
     int objects = 0, bad_components = 0, collider_total = 0, pose_ok = 0, pos_only = 0;
     std::vector<std::pair<uint32_t, uint64_t>> collider_samples;   // (tag, comp) для среза ссылок
     std::vector<uint32_t> sample_types;
+    struct MeshProbe { int32_t id; uint64_t comp; };
+    std::vector<MeshProbe> mesh_probe;   // по одному MeshCollider на уникальный mesh instance id
 
     for (const Node& node : all) {
         const uint64_t tf = node.transform;
@@ -2241,6 +2245,13 @@ int esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identitie
             fprintf(colliders, "],\"hex\":\"");
             for (int k = 0; k < kHexBytes; ++k) fprintf(colliders, "%02x", bytes[k]);
             fprintf(colliders, "\"}\n");
+            if (tag == wallchk::kMeshTag && mesh_probe.size() < 64) {   // зонд: один коллайдер на mesh id
+                int32_t mid = 0; memcpy(&mid, bytes + 0x64, 4);
+                if (mid == 0) memcpy(&mid, bytes + 0x68, 4);
+                bool have = false;
+                for (const MeshProbe& m : mesh_probe) have |= (m.id == mid);
+                if (!have) mesh_probe.push_back({mid, comp});
+            }
             int per_type = 0;
             for (uint32_t t : sample_types) per_type += (t == tag);
             if (per_type < 3) { collider_samples.push_back({tag, comp}); sample_types.push_back(tag); }
@@ -2291,8 +2302,148 @@ int esp_world_dump(FILE* report, FILE* jsonl, FILE* colliders, int max_identitie
             }
         }
     }
+    // ---- v3: зонд MeshCollider. Mesh instance id у коллайдера лежит по +0x64 (иначе +0x68);
+    // по одному коллайдеру на id, указатели глубины 1 (0x80 байт) и 2 (0x60 байт), чтобы
+    // offline найти локальный bounds меша / PhysX-геометрию.
+    fprintf(report, "\n# mesh-probe: коллайдеров %d (по одному на mesh id), глубина 2\n", (int)mesh_probe.size());
+    auto probe_ok = [](uint64_t ptr, uint64_t self) {
+        return ptr >= 0x10000 && ptr < 0x0001000000000000ULL && !(ptr >= self && ptr < self + 0x200);
+    };
+    auto hexline = [&](const uint8_t* b, int n) {
+        for (int i = 0; i < n; ++i) { if (i % 8 == 0) fputc(' ', report); fprintf(report, "%02x", b[i]); }
+        fputc('\n', report);
+    };
+    std::vector<uint64_t> probed;
+    for (const MeshProbe& mp : mesh_probe) {
+        fprintf(report, "--- mesh-probe id=0x%x comp=0x%llx\n", (unsigned)mp.id, (unsigned long long)mp.comp);
+        int l1 = 0;
+        for (uint64_t off = 0x10; off <= 0x88 && l1 < 6; off += 8) {
+            const uint64_t p1 = rd_ptr(mp.comp + off);
+            if (!probe_ok(p1, mp.comp)) continue;
+            bool seen = false;
+            for (uint64_t d : probed) seen |= (d == p1);
+            if (seen) continue;
+            uint8_t b1[0x80] = {};
+            if (!rd_buf(p1, b1, sizeof(b1))) continue;
+            probed.push_back(p1); ++l1;
+            fprintf(report, "  d1 +0x%02llx -> 0x%llx:", (unsigned long long)off, (unsigned long long)p1);
+            hexline(b1, sizeof(b1));
+            int l2 = 0;
+            for (int k = 0; k < 0x80 && l2 < 10; k += 8) {
+                uint64_t p2 = 0; memcpy(&p2, b1 + k, 8);
+                if (!probe_ok(p2, mp.comp)) continue;
+                bool seen2 = false;
+                for (uint64_t d : probed) seen2 |= (d == p2);
+                if (seen2) continue;
+                uint8_t b2[0x60] = {};
+                if (!rd_buf(p2, b2, sizeof(b2))) continue;
+                probed.push_back(p2); ++l2;
+                fprintf(report, "    d2 +0x%02x -> 0x%llx:", k, (unsigned long long)p2);
+                hexline(b2, sizeof(b2));
+            }
+        }
+    }
     fflush(report);
     if (jsonl) fflush(jsonl);
     if (colliders) fflush(colliders);
     return 0;
 }
+
+// ==== Wall-check: LOS по BoxCollider-ам сетевых объектов (wall_check.h) =======
+// Набор собирается порциями (как скан маркеров), живой набор подменяется целиком
+// по окончании прохода. Только чтение через g_mem. Покрыто: BoxCollider (не trigger).
+// НЕ покрыто: MeshCollider, terrain — esp_wall_los_clear() для них отвечает «чисто».
+// Для позы нужна выученная раскладка иерархии Transform (её учит ESP по скелетам
+// игроков): пока её нет, проход даёт 0 боксов и повторяется через секунду.
+static wallchk::WallSet g_wall_set;
+static bool   g_wall_enabled = false;
+static double g_wall_next_pass = 0.0;
+static struct WallScan {
+    bool active = false;
+    int cursor = 0, count = 0, pose_fail = 0;
+    std::vector<uint8_t> buffer;
+    uint64_t identity_class = 0;
+    std::vector<wallchk::Box> next;
+    std::vector<uint64_t> nodes;
+} g_wall_scan;
+static constexpr int    kWallIdentitiesPerTick = 24;   // ~одна порция за кадр, как у скана маркеров
+static constexpr size_t kWallMaxNodes = 24;            // = max_nodes дампа
+
+// false — у узла есть бокс-коллайдер, но поза не прочиталась.
+static bool wall_scan_node(uint64_t tf, std::vector<wallchk::Box>& out) {
+    constexpr uint64_t kCompArray = 0x20, kCompCount = 0x30, kCompStride = 0x10;   // как в esp_world_dump
+    const uint64_t go = rd_ptr(tf + COMPONENT_GAMEOBJECT);
+    if (go < 0x10000) return true;
+    const uint64_t array = rd_ptr(go + kCompArray);
+    const int32_t ccount = rd<int32_t>(go + kCompCount);
+    if (array < 0x10000 || ccount <= 0 || ccount > 64) return true;
+    bool pose_read = false, pose = false;
+    Vec3 pos{}, scale{1, 1, 1}; Vec4 rot{0, 0, 0, 1};
+    for (int c = 0; c < ccount; ++c) {
+        const uint64_t pair = array + (uint64_t)c * kCompStride;
+        const uint32_t tag = (uint32_t)(rd<uint64_t>(pair) & 0xffffffffu);
+        if (tag != wallchk::kBoxTag) continue;
+        const uint64_t comp = rd_ptr(pair + COMPONENT_PAIR_PTR);
+        if (comp < 0x10000 || comp == go || rd_ptr(comp + COMPONENT_GAMEOBJECT) != go) continue;
+        uint8_t raw[wallchk::off::kRawBytes] = {};
+        if (!rd_buf(comp, raw, sizeof(raw))) continue;
+        if (!pose_read) { pose_read = true; pose = read_transform_world_pose(tf, pos, rot, scale); }
+        if (!pose) return false;
+        const float p[3] = {pos.x, pos.y, pos.z}, q[4] = {rot.x, rot.y, rot.z, rot.w},
+                    s[3] = {scale.x, scale.y, scale.z};
+        wallchk::Box b;
+        if (wallchk::decode_box(raw, p, q, s, b) == wallchk::Reject::None) out.push_back(b);
+    }
+    return true;
+}
+
+void esp_wall_set_enabled(bool on) {
+    g_wall_enabled = on;
+    if (!on) { g_wall_scan.active = false; g_wall_scan.next.clear(); g_wall_set.clear(); g_wall_next_pass = 0.0; }
+}
+
+void esp_wall_tick() {
+    if (!g_wall_enabled || g_pid <= 0 || !g_il2cpp_base) return;
+    const double now = mono_seconds();
+    WallScan& s = g_wall_scan;
+    if (!s.active) {
+        if (now < g_wall_next_pass) return;
+        const uint64_t dictionary = resolve_network_client_spawned();
+        int32_t count = 0;
+        const uint64_t entries = dictionary ? rd_ptr(dictionary + DICT_ENTRIES) : 0;
+        if (!dictionary || !rd_exact(dictionary + DICT_COUNT, count) || count <= 0 || !valid_obj(entries)) {
+            g_wall_next_pass = now + 1.0; return;
+        }
+        if (count > kMarkerRegistryLimit) count = kMarkerRegistryLimit;
+        s.buffer.resize((size_t)count * DICT_ENTRY_STRIDE);
+        if (!rd_buf(entries + IL2CPP_ARRAY_FIRST_ELEMENT, s.buffer.data(), s.buffer.size())) {
+            g_wall_next_pass = now + 1.0; return;
+        }
+        s.count = count; s.cursor = 0; s.pose_fail = 0;
+        s.identity_class = resolve_network_identity_class();
+        s.next.clear(); s.active = true;
+    }
+    for (int n = 0; n < kWallIdentitiesPerTick && s.cursor < s.count; ++n, ++s.cursor) {
+        uint64_t identity = 0;
+        memcpy(&identity, s.buffer.data() + (size_t)s.cursor * DICT_ENTRY_STRIDE + DICT_ENTRY_VALUE,
+               sizeof(identity));
+        if (!valid_obj(identity)) continue;
+        if (s.identity_class && rd_ptr(identity) != s.identity_class) continue;
+        const uint64_t native_identity = managed_object_native(identity);
+        const uint64_t root = native_identity ? native_component_transform(native_identity) : 0;
+        if (!root) continue;
+        s.nodes.clear();
+        collect_transform_subtree(root, s.nodes, kWallMaxNodes);
+        for (uint64_t tf : s.nodes)
+            if (!wall_scan_node(tf, s.next)) ++s.pose_fail;
+    }
+    if (s.cursor < s.count) return;
+    s.active = false;
+    if (s.next.empty() && s.pose_fail > 0) { g_wall_next_pass = now + 1.0; return; }   // раскладка ещё не выучена
+    g_wall_set.swap(s.next);
+    s.next.clear();
+    g_wall_next_pass = now + 4.0;
+}
+
+size_t esp_wall_box_count() { return g_wall_set.size(); }
+bool esp_wall_los_clear(const float from[3], const float to[3]) { return !g_wall_set.blocked(from, to); }

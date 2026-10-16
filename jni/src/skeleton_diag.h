@@ -2,9 +2,9 @@
 // skeleton_diag.h — CLI-команда skel: прогон конвейера костей на живом
 // процессе игры и печать того, на каком шаге он рассыпается.
 //
-//     su -c /data/local/tmp/xvcen skel                  // режим из .mode
-//     su -c /data/local/tmp/xvcen skel external         // режим аргументом
-//     su -c /data/local/tmp/xvcen skel rt-dev 12345     // режим + конкретный pid
+//     su -c /data/local/tmp/benzware skel                  // режим из .mode
+//     su -c /data/local/tmp/benzware skel external         // режим аргументом
+//     su -c /data/local/tmp/benzware skel rt-dev 12345     // режим + конкретный pid
 //
 // Зачем: скелеты — самый офсетозависимый визуал. characterModel, имя
 // GameObject, раскладка массивов иерархии и слоты KCC/Ragdoll — всё это
@@ -60,7 +60,7 @@ static int Run(int argc, char* argv[]) {
             mode_arg = a;
         } else {
             printf("не понимаю аргумент: %s\n", a);
-            printf("использование: xvcen skel [external|ft|rt-dev|rt-hook] [pid]\n");
+            printf("использование: benzware skel [external|ft|rt-dev|rt-hook] [pid]\n");
             return 1;
         }
     }
@@ -80,11 +80,11 @@ static int Run(int argc, char* argv[]) {
 
     metadump::Log log;
     log.open((dir + "/skel.log").c_str());
-    log.say("== xvcen skel: диагностика скелетов ==");
+    log.say("== benzware skel: диагностика скелетов ==");
     log.say("uid/euid : %d / %d%s", (int)getuid(), (int)geteuid(),
             geteuid() == 0 ? " (root)" : "  <-- НЕ ROOT");
     if (geteuid() != 0)
-        log.say("!! нужен root: su -c <путь>/xvcen skel");
+        log.say("!! нужен root: su -c <путь>/benzware skel");
     log.say("режим    : %s%s", metadump::backend_name(backend),
             mode_arg ? " (аргументом)" : " (сохранённый)");
 
@@ -128,8 +128,8 @@ static int Run(int argc, char* argv[]) {
     }
     if (!bound) {
         log.say("!! транспорт не читает память игры: errno %d.", esp_mem_last_errno());
-        log.say("   Проверь драйвер:  xvcen --check-driver");
-        log.say("   Или задай режим явно:  xvcen skel external");
+        log.say("   Проверь драйвер:  benzware --check-driver");
+        log.say("   Или задай режим явно:  benzware skel external");
         return 1;
     }
     log.say("привязка : pid %d, %s", (int)used_pid, g_mem.backend_name());

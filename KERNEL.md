@@ -63,7 +63,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 
 | Режим | Класс драйвера | Механизм | Запрос | Коды |
 |---|---|---|---|---|
-| Прямое чтение | — | pread/pwrite `/proc/<pid>/mem` | — | — |
+| Прямое чтение | — | process_vm_readv/writev (raw syscall, fd НЕ открывается); EPERM → разовый липкий фолбэк pread/pwrite `/proc/<pid>/mem` | — | — |
 | FT | bing_rw / gongchuang (drivers.7z) | socket(сем.,4,0); команды getsockopt ИЛИ ioctl (поколение 5.10) | `DriverRwReq` 0x28: pid,pad,addr,size,user_buf,magic=0x1337 | auth 0x300, read 0x301, write 0x302; gong: attach 2, vm 4, pte 5/6 |
 | RT-Dev | RTkernel (`rt dev Драйвера root cheat.zip`) | char-устройство `/dev/[A-GNY]{1,6}` + ioctl | `RtDevCopyMem` 0x20: pid,pad,addr,buffer,size (не через границу 4К — транспорт чанкует сам) | read 0x801, write 0x802; base 0x803 |
 | RT-Hook | hookdd/gynhdd (`RT-hook.7z`) | перехват syscall `ioctl`, без сокета и `/dev`-узла | `RtHookCopyMem` 0x20: pid,pad,addr,buffer,size (transport чанкует по 4К) | read 0x259, write 0x25a |
@@ -123,8 +123,10 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
    (указатель может смениться между сессиями привязки).
 7. Порядок старта в main() не менять: экран выбора → `start_attach_thread()`.
    Всё, что читает память, — после этого.
-8. Аудит перед коммитом — единственная строка, которая должна найти
-   ТОЛЬКО `mem_io.h:161` (это сам ProcfsTransport) и комментарии:
+8. Аудит перед коммитом — grep ниже должен найти ТОЛЬКО mem_io.h
+   (ProcfsTransport: строка `"/proc/%d/mem"` и вызовы
+   SYS_process_vm_readv/SYS_process_vm_writev — это сам режим «Прямое чтение»)
+   и комментарии:
    ```
    grep -rn '"/proc/%d/mem"\|process_vm_readv\|process_vm_writev\|PTRACE_ATTACH\|PTRACE_TRACEME' jni/src jni/include
    ```
@@ -132,7 +134,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
    На устройстве: `ls -l /proc/<pid чита>/fd/*` — в кернел-режимах
    НЕ должно быть `-> /proc/<pid игры>/mem` (процесс скрыт: «vold»).
 9. Хост-проверка синтаксиса правленных файлов + CI (основной артефакт
-   `benzware.sh`, совместимый алиас `xvcen-arm64-v8a`). При изменении RT-Dev:
+   `benzware.sh`, совместимый алиас `benzware-arm64-v8a`). При изменении RT-Dev:
    `python3 scripts/verify_rt_dev_archive.py`
    должен подтвердить все модули архива. `--check-driver` из Termux — коды выхода:
    0 = драйвер работает, 1 = ничего не найдено, 2 = драйвер есть, коды
@@ -219,3 +221,32 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 - Архивные `Offsets` и `EspOffsets` по умолчанию нулевые, а scan/projection/visibility в нескольких местах помечены как `[RECONSTRUCTED]`. Не заменять ими рабочую привязку IL2CPP и текущие resolver-ы; точка входа ESP — `esp_get_boxes()` / `esp_get_markers()`.
 - `touch_input.cpp` создаёт второй uinput-путь и меняет SELinux/права устройств. Не импортировать его; тач-аим использует уже поднятый `TouchHelperA` (`Touch_Down/Move/Up`) с ориентацией и слотами текущего проекта.
 - Разрешённый перенос — чистые таблица имён и математика наведения в `manes_aim_source.h`; helper не открывает fd и не знает о транспорте.
+
+---
+
+## 7. Инжект payload (inject.h + inject_cli.h + payload/) — one-shot CLI
+
+`benzware inject [external|ft|rt-dev|rt-hook] [pid] [--payload файл] [--symbol strlen]
+[--patch ADDR VAL] [--site rwx|text|auto] [--no-wipe] [--wait MS]` — доставка кода
+внутрь игры без классических следов: без ptrace (TracerPid не трогается), без
+dlopen (solist чист), без новых именованных отображений и новых потоков. Вход в
+payload — разовый увод GOT-слота часто вызываемой функции, слот возвращается на
+место сразу же; payload исполняется НА ПОТОКЕ ИГРЫ и обязан вернуть управление в
+оригинал (`orig_fn` из заголовка, контракт в шапке inject.h).
+
+Правила для нового кода:
+1. Хост пишет в игру ТОЛЬКО выбранным транспортом через `g_mem` — стаб, кадр
+   payload, вайпы: всё это `m.write`/`m.read_quiet`, никаких отдельных fd.
+2. Payload собирается `payload/build_payload.sh` (NDK): flat blob, entry ровно
+   на +0x40, ноль релокаций, никакого .bss — сборщик это проверяет. Новый
+   payload повторяй по образцу `payload/inject_demo.c`: атомарная защита от
+   повторного входа + `br orig_fn` с исходными регистрами.
+3. После инжекта в fd-листе ИГРЫ ничего не появляется; fd payload-файла в
+   процессе чита живёт микросекунды. Проверка `ls -l /proc/<игра>/fd` —
+   чистый лист, как и в кернел-режимах.
+4. Чтение /proc/<pid>/maps — карта, разрешено всегда (§1); стаб ищет кэв в
+   нулевых хвостах R-X сегмента libil2cpp или anon-rwxp региона. Место записи
+   меняет видимость: текст ловится CRC по .text, rwx — риск столкнуться с
+   аллокацией JIT; по умолчанию auto = rwx → текст.
+5. Инжект — как dump/skel: строго до GUI и маскировки, один транспорт за
+   жизнь процесса, без фоллбэков. В игровом цикле его вызывать запрещено.

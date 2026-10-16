@@ -147,7 +147,7 @@ static const LangPair kUiEn[] = {
     {"Применено", "Applied"},
     {"Проверить снова", "Check again"},
     {"Проверка видимости", "Vis check"},
-    {"Проверка из терминала: xvcen --check-driver", "Terminal check: xvcen --check-driver"},
+    {"Проверка из терминала: benzware --check-driver", "Terminal check: benzware --check-driver"},
     {"Противники", "Enemies"},
     {"Прошлый запуск: %s", "Last launch: %s"},
     {"Радар 360°", "360° radar"},

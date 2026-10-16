@@ -9,3 +9,6 @@ libs/
 # one-shot CLI dumps from the device
 *.partial
 global-metadata.dat
+
+# payload blob is a build artifact (payload/build_payload.sh)
+payload/payload.bin

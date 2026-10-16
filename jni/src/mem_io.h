@@ -1,17 +1,24 @@
 // mem_io.h — доступ к памяти чужого процесса (игра) с хоста читателя.
 //
-// Чтение и запись идут ТОЛЬКО через /proc/<pid>/mem (pread/pwrite). Раньше здесь
-// было два способа (process_vm_readv и /proc/<pid>/mem) с пробой по ELF-заголовку
-// и переключением при отказах. Выбор способа убран: он не давал ничего, кроме
-// ветвлений на каждом обращении, а поведение на устройстве определялось пробой,
-// то есть одним из двух исходов, которые и так различимы по факту чтения.
-// Теперь исход один: не открылся/не читается /proc/<pid>/mem — привязка
-// отклоняется (ESP_ATTACH_NO_ACCESS), и поток привязки повторяет попытку.
+// «Прямое чтение» идёт сначала через process_vm_readv/process_vm_writev — у них
+// НЕТ дескриптора: в /proc/<self>/fd не появляется ссылки на /proc/<pid>/mem,
+// а fd-лист — первая поверхность видимости читателя (см. KERNEL.md §1/§5: в
+// кернел-режимах fd-лист обязан быть чистым, теперь он чист и в прямом режиме).
+// Право доступа в ядре проверяет тот же ptrace_may_access, частичные чтения у
+// границы отображения те же, что у pread, — кэш и логика отказов не изменились.
 //
-// Почему /proc/<pid>/mem, а не process_vm_readv: он работает и там, где syscall
-// запрещён политикой (SELinux, патчи ядра, «прятки» root-менеджеров), а
-// короткие чтения через pread не отличаются по числу обращений к ядру от
-// process_vm_readv.
+// Если политика устройства отвечает EPERM/EACCES (SELinux, патчи ядра, «прятки»
+// root-менеджеров — причина, по которой раньше выбирали procfs целиком),
+// транспорт РАЗОВО уходит в фолбэк: pread/pwrite поверх /proc/<pid>/mem, как
+// прежде, и живёт в нём до конца жизни процесса. Выбор провода делается один
+// раз, на горячем пути — один предсказуемый тест fd; никакого перебора на
+// каждом обращении (урок старой версии с пробой по ELF-заголовку на каждом
+// чтении учтён: решение принимает первый же вызов, дальше провод фиксирован).
+// Не открылся/не читается и фолбэк — привязка отклоняется (ESP_ATTACH_NO_ACCESS),
+// и поток привязки повторяет попытку.
+//
+// Побочный выигрыш process_vm_writev: запись не зависит от того, открылся ли
+// /proc/<pid>/mem на запись (фолбэк open(O_RDONLY) раньше молча ломал pwrite).
 //
 // Чтений очень много (ESP на каждого игрока, кости, автофарм): тысячи мелких
 // чтений по 4-8 байт за кадр. Кэш блоков подтягивает 128 байт одним чтением и
@@ -37,10 +44,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
 #include <atomic>
+
+#if !defined(SYS_process_vm_readv) || !defined(SYS_process_vm_writev)
+#error "syscalls process_vm_readv/writev недоступны на этой платформе"
+#endif
 
 namespace memio {
 
@@ -150,20 +163,28 @@ public:
     virtual const char* name() const = 0;
 };
 
-// Экстернал: /proc/<pid>/mem (историческое поведение, вынесено из Reader).
+// Экстернал: «Прямое чтение». Провода два (подробно — в шапке файла):
+//
+//   1. process_vm_readv / process_vm_writev — по умолчанию, без единого fd;
+//   2. pread / pwrite поверх /proc/<pid>/mem — липкий фолбэк: первый отказ
+//      EPERM/EACCES означает, что cross-process vm-доступ запрещён политикой
+//      (SELinux, патчи ядра, «прятки» root-менеджеров), — открываем /proc/<pid>/mem
+//      и живём в нём, как в прежней версии. Прочие errno (ESRCH, EIO — мусорный
+//      адрес, конец отображения) фолбэк не трогают: это обычные отказы чтения.
 class ProcfsTransport : public Transport {
 public:
-    const char* name() const override { return "/proc/<pid>/mem"; }
+    const char* name() const override {
+        return (fd_ >= 0 || procfs_mode_) ? "/proc/<pid>/mem (pread/pwrite)"
+                                          : "process_vm_readv/writev (без fd)";
+    }
 
     bool open(pid_t pid) override {
-        if (fd_ >= 0) return true;
-        char path[40];
-        snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid);
-        int fd = ::open(path, O_RDWR | O_CLOEXEC);
-        if (fd < 0) fd = ::open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) return false;
-        fd_ = fd;
-        return true;
+        if (pid <= 0) return false;
+        pid_ = (int)pid;
+        // Фолбэк выбран прошлой сессией привязки: политика за минуты не меняется,
+        // fd нужен сразу, без повторной пробы process_vm.
+        if (procfs_mode_) return ensure_procfs_fd();
+        return true;   // process_vm: открывать нечего — право проверит первая проба
     }
 
     void close() override {
@@ -171,16 +192,25 @@ public:
             ::close(fd_);
             fd_ = -1;
         }
+        pid_ = -1;
     }
 
     ssize_t read_once(uint64_t addr, void* out, size_t len) override {
-        return fd_ < 0 ? (errno = EBADF, (ssize_t)-1)
-                       : pread(fd_, out, len, (off_t)addr);
+        if (pid_ <= 0) { errno = EBADF; return -1; }
+        if (fd_ >= 0) return pread(fd_, out, len, (off_t)addr);
+        const ssize_t n = vm_once(true, addr, out, len);
+        if (n < 0 && policy_blocked() && ensure_procfs_fd())
+            return pread(fd_, out, len, (off_t)addr);
+        return n;
     }
 
     ssize_t write_once(uint64_t addr, const void* in, size_t len) override {
-        return fd_ < 0 ? (errno = EBADF, (ssize_t)-1)
-                       : pwrite(fd_, in, len, (off_t)addr);
+        if (pid_ <= 0) { errno = EBADF; return -1; }
+        if (fd_ >= 0) return pwrite(fd_, in, len, (off_t)addr);
+        const ssize_t n = vm_once(false, addr, const_cast<void*>(in), len);
+        if (n < 0 && policy_blocked() && ensure_procfs_fd())
+            return pwrite(fd_, in, len, (off_t)addr);
+        return n;
     }
 
     // Ошибка открытия — самая частая причина «работает только меню»
@@ -190,7 +220,40 @@ public:
     void note_open_failed() { open_failed_ = true; }
 
 private:
+    // Политика запрещает cross-process vm-доступ? Единственный повод для
+    // фолбэка: у процесса без прав на цель и pread дал бы EPERM — но тогда
+    // фолбэк просто не откроется, диагностика покажет open_failed_, и исход
+    // тот же, что в прежней версии.
+    static bool policy_blocked() { return errno == EPERM || errno == EACCES; }
+
+    // Один вызов process_vm_readv/writev через raw syscall (номера из
+    // <sys/syscall.h> — независимо от версии API и хост/устройство).
+    ssize_t vm_once(bool is_read, uint64_t addr, void* buf, size_t len) {
+        addr &= kAddressTagMask;   // TBI/MTE-метка — как у кернел-транспортов
+        iovec local  { buf, len };
+        iovec remote { (void*)(uintptr_t)addr, len };
+        return syscall(is_read ? SYS_process_vm_readv : SYS_process_vm_writev,
+                       (long)pid_, &local, (unsigned long)1,
+                       &remote, (unsigned long)1, (unsigned long)0);
+    }
+
+    // Разовый уход в фолбэк. open_failed_ — тот же признак «открытие не
+    // прошло», что и раньше: EPERM от process_vm при непустом fd не бывает.
+    bool ensure_procfs_fd() {
+        if (fd_ >= 0) return true;
+        procfs_mode_ = true;
+        char path[40];
+        snprintf(path, sizeof(path), "/proc/%d/mem", pid_);
+        int fd = ::open(path, O_RDWR | O_CLOEXEC);
+        if (fd < 0) fd = ::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) { open_failed_ = true; return false; }
+        fd_ = fd;
+        return true;
+    }
+
+    int  pid_ = -1;
     int  fd_ = -1;
+    bool procfs_mode_ = false;   // липкий выбор провода: на всю жизнь процесса
     bool open_failed_ = false;
 };
 

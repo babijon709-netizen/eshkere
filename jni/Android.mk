@@ -2,7 +2,7 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := xvcen
+LOCAL_MODULE := benzware
 
 _CF := -O3 -ffast-math -march=armv8-a+simd \
        -fomit-frame-pointer -ffunction-sections -fdata-sections \

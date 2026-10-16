@@ -267,14 +267,24 @@ void test_multi_point_railing_and_long_range() {
     assert(tracker.is_visible(targets[0], 5.016));
 
     // Distant enemy at 240m (> 200m Na::Tick marker limit, so occlusion_known == false):
-    // Visible by default unless the 350m wall-masked AimRaycast hits an obstacle in front of them.
+    // Must stay occluded (false, red) off-crosshair so players behind buildings/hills at 180+m
+    // are never highlighted green, and become visible (true, green) when confirmed by the
+    // 350m wall-masked AimRaycast.
     TargetGeometry far_enemy{};
     far_enemy.id = 0x6000;
     far_enemy.feet[0] = 10.0f; far_enemy.feet[1] = 0.0f; far_enemy.feet[2] = 240.0f;
     far_enemy.head[0] = 10.0f; far_enemy.head[1] = 1.6f; far_enemy.head[2] = 240.0f;
     far_enemy.distance = 240.0f;
     far_enemy.occlusion_known = false;
-    assert(tracker.is_visible(far_enemy, 5.016));
+    assert(!tracker.is_visible(far_enemy, 5.016));
+
+    std::vector<TargetGeometry> far_targets = {far_enemy};
+    RaySample far_hit{};
+    far_hit.valid = true;
+    far_hit.hit_player = far_enemy.id;
+    far_hit.distance = 240.0f;
+    tracker.update_from_rays(empty_ray, far_hit, true, 350.0f, true, cam, cam_fwd, far_targets, 5.032);
+    assert(tracker.is_visible(far_enemy, 5.032));
 }
 
 void test_hwr_offaxis_probe() {

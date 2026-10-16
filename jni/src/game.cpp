@@ -8621,11 +8621,13 @@ static void reset_vis_caches() {
 }
 
 struct NearbyPlayerOccSample {
-    uint64_t model_tr  = 0;
+    uint64_t model_tr    = 0;
+    uint64_t user_id_str = 0;
+    uint64_t name_str    = 0;
     Vec3     world_pos{};
     Vec3     head_pos{};
-    bool     visible   = false;
-    bool     alt_point = false;
+    bool     visible     = false;
+    bool     alt_point   = false;
 };
 
 static bool looks_like_screen_marker_presenter(uint64_t obj) {
@@ -9054,11 +9056,13 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         if (!any_ctx_ready || has_val == 0) continue;
 
         NearbyPlayerOccSample sample{};
-        sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
-        sample.world_pos = world_pos;
-        sample.head_pos  = have_base_torso ? base_torso : head_pos;
-        sample.visible   = (is_occ == 0);
-        sample.alt_point = (cur_slot != 0);
+        sample.model_tr    = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
+        sample.user_id_str = rd_ptr(data + 0x58); // NV.Rqd == [PlayerManager + 0x298] (userID)
+        sample.name_str    = rd_ptr(data + 0x60); // NV.RWz == [PlayerManager + 0x240] (uKU)
+        sample.world_pos   = world_pos;
+        sample.head_pos    = have_base_torso ? base_torso : head_pos;
+        sample.visible     = (is_occ == 0);
+        sample.alt_point   = (cur_slot != 0);
         out.push_back(sample);
     }
 }
@@ -9320,10 +9324,12 @@ static void evaluate_boxes_visibility(uint64_t local_player,
             tg.event_handler = aux.event_handler;
             tg.aim_target    = aux.aim_target;
             tg.aim_collider  = aux.aim_collider;
+            const uint64_t uid_str  = rd_ptr(b.id + PLAYER_USER_ID);
             const uint64_t head_tr  = player_marker_head_transform(b.id, aux);
             const uint64_t model_tr = skeleton_model_root(b.id);
             for (const NearbyPlayerOccSample& occ : s_occ_samples) {
-                bool match = (head_tr != 0 && occ.model_tr == head_tr) ||
+                bool match = (uid_str != 0 && occ.user_id_str == uid_str) ||
+                             (head_tr != 0 && occ.model_tr == head_tr) ||
                              (model_tr != 0 && occ.model_tr == model_tr);
                 if (!match && vec3_is_finite(occ.world_pos)) {
                     const float dx = occ.world_pos.x - tg.feet[0];

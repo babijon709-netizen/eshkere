@@ -539,7 +539,7 @@ public:
             return it->second.visible;
         }
         if (t.occlusion_known) return t.occlusion_visible;
-        if (!t.is_bot && t.distance > 2.5f && t.distance <= kNearbyMarkerMaxDist) {
+        if (!t.is_bot && t.distance > 2.5f) {
             return false;
         }
         if (t.aim_target != 0 && t.aim_collider != 0 &&

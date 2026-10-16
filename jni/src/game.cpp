@@ -6879,8 +6879,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     Vec3 origin{};
     const bool haveOrigin = aim_ballistic_origin(origin);
     bool ballisticSolved = false;
-    if (g_state.aim_touch && g_state.aim_mode != AIM_MODE_SILENT &&
-        g_aim_ballistic_params.valid && haveOrigin) {
+    if (g_state.aim_touch && g_aim_ballistic_params.valid && haveOrigin) {
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, g_aim_velocity,
                                   g_aim_inherited_velocity,
@@ -6895,13 +6894,6 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         }
     }
 
-    // Camera aim must stay on the selected bone when weapon data is missing;
-    // the legacy range-only drop has no velocity or weapon model to justify it.
-    if (!ballisticSolved && haveOrigin && g_state.aim_mode == AIM_MODE_SILENT) {
-        const float range = aim_ballistics::length(aim_ballistics::sub(world_in, origin));
-        if (aim_ballistics::finite(range) && range > 0.0f)
-            world.y -= 0.05F * (range / 20.0F);
-    }
     Vec2 screen{};
     if (!w2s(vp, world, sw, sh, screen, false)) return false;
     if (fabsf(screen.x) > sw * 4.0F || fabsf(screen.y) > sh * 4.0F) return false;
@@ -6911,11 +6903,19 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     box.aim_pts[slot][1] = screen.y;
     box.aim_yaw[slot] = yaw;
     box.aim_pitch[slot] = pitch;
-    // Silent must not inherit the range-drop/head-lift compensation applied
-    // above for camera-driving modes: publish the exact world-space bone.
-    box.aim_world[slot][0] = world_in.x;
-    box.aim_world[slot][1] = world_in.y;
-    box.aim_world[slot][2] = world_in.z;
+    // Silent publishes a world-space aim point, not camera angles. Preserve
+    // target motion lead; when weapon data exists, publish the solved launch
+    // ray endpoint so the silent writer steers along the ballistic solution.
+    const Vec3 silent_world = ballisticSolved
+        ? world
+        : Vec3{world_in.x + g_aim_lead.x,
+               world_in.y + g_aim_lead.y,
+               world_in.z + g_aim_lead.z};
+    const Vec3 aim_world = g_state.aim_mode == AIM_MODE_SILENT
+        ? silent_world : world_in;
+    box.aim_world[slot][0] = aim_world.x;
+    box.aim_world[slot][1] = aim_world.y;
+    box.aim_world[slot][2] = aim_world.z;
     box.aim_world_valid[slot] = true;
     box.aim_valid[slot] = true;
     return true;

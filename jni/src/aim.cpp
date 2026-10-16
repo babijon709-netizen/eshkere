@@ -870,8 +870,8 @@ static void UpdateAimSilent(float dt) {
         return;
     }
 
-    // Writer принимает только точную мировую координату кости: экранная точка
-    // и поправки touch/memory-режимов не должны менять направление выстрела.
+    // Writer получает мировую точку упреждения/баллистического решения;
+    // экранные поправки touch/memory-режимов не меняют направление выстрела.
     if (!esp_silent_publish(best.id, best.world)) {
         g_aimActive = false;
         silent_aim::clear();

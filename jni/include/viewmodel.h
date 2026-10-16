@@ -52,7 +52,7 @@ struct ConfigExtension {
     uint32_t size = 36;
     uint32_t flags = 0;
     float fov = 90.f, x = 0.f, y = 0.f, z = 0.f;
-    float aim_lead_ms = 0.f;   // v4: aim prediction lead, 0..150 ms (0 = off)
+    float aim_lead_ms = 0.f;   // legacy v4 field; retained for config binary compatibility, ignored
 };
 static_assert(sizeof(ConfigExtension) == 36, "stable config extension");
 inline ConfigExtension encode(ViewmodelSettings s) {
@@ -68,8 +68,8 @@ inline ConfigExtension encode(ViewmodelSettings s) {
 }
 inline ViewmodelSettings decode(const void* bytes, size_t size) {
     ViewmodelSettings s;
-    // 32 = v1–v3 layout (no aim lead); 36 = v4+. A short record memcpy's into
-    // the 36-byte struct and leaves aim_lead_ms at its default 0.
+    // 32 = v1–v3 layout; 36 = v4+. A short record memcpy's into the struct;
+    // the trailing legacy lead field is ignored by the automatic aim solver.
     if (size != 32 && size != sizeof(ConfigExtension)) return s;
     ConfigExtension e; std::memcpy(&e, bytes, size);
     // v1: discard retired flags 4..6. v2 keeps bit 5 as the UI-only recoil
@@ -89,8 +89,8 @@ inline ViewmodelSettings decode(const void* bytes, size_t size) {
     s.fov = e.fov; s.x = e.x; s.y = e.y; s.z = e.z;
     return sanitize(s);
 }
-// Aim prediction lead from a v4 trailer, in milliseconds. Old (v1–v3) or
-// malformed trailers read as 0 — prediction off, never a stale value.
+// Decode the legacy v4 prediction setting for compatibility tests/tools only.
+// Runtime aim ignores it and computes prediction from target motion + ballistics.
 inline float decode_aim_lead_ms(const void* bytes, size_t size) {
     if (size != sizeof(ConfigExtension)) return 0.f;
     ConfigExtension e; std::memcpy(&e, bytes, sizeof(e));

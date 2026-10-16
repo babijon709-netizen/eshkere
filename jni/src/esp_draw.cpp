@@ -97,13 +97,12 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         esp_set_always_day(g_state.always_day);
         esp_set_no_grass(g_state.no_grass);
         esp_set_marker_max_distance(g_state.marker_dist);
-        // Keep a control-latency floor for touch and memory; the slider can
-        // raise it. Projectile flight time is added separately from the active
-        // weapon's ballistic parameters in game.cpp.
+        // Automatic control latency for camera-driven modes; no user lead
+        // knob. Projectile flight time is solved independently from active
+        // weapon data and target distance in game.cpp.
         const float leadAuto = (g_state.aim_mode == AIM_MODE_MEMORY ||
                                 g_state.aim_mode == AIM_MODE_TOUCH) ? 0.05f : 0.0f;
-        const float leadUser = g_state.aim_lead_ms * 0.001f;
-        esp_set_aim_lead(leadUser > leadAuto ? leadUser : leadAuto);
+        esp_set_aim_lead(leadAuto);
         esp_set_screen_stretch(g_state.screen_stretch_x);
         esp_set_xray(g_state.xray_on ? g_state.xray_range : 0.f);
         std::vector<EspBox> next = esp_get_boxes(want_w, want_h);

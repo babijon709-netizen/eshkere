@@ -6,9 +6,6 @@
 #include "imgui.h"
 #include "viewmodel.h"
 
-// Шаг слайдера «Предикт» в миллисекундах (уровень 10 = 150 мс).
-constexpr float kAimPredictStepMs = 15.f;
-
 struct InputState {
     bool touchConsumed = false;
 };
@@ -84,12 +81,6 @@ struct AppState {
     float marker_dist = 150.f;
     float esp_thick = 1.5f;
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
-    // Упреждение аима: на сколько миллисекунд забегать вперёд по скорости
-    // цели (0 = вести ровно по кости, как сейчас). 50 мс ≈ прежняя
-    // константа 0.05 с. Живёт в конфиге (расширение v4).
-    float aim_lead_ms = 0.f;
-    // Предикт: уровень слайдера 0..10, в aim_lead_ms уходит как уровень × 15 мс.
-    float aim_predict = 0.f;
     // Автофарм: главный выключатель + какие ресурсы добывать.
     bool  farm_on = false;
     bool  farm_wood = true, farm_stone = false, farm_metal = false, farm_sulfur = false;
@@ -175,7 +166,7 @@ struct AppState {
     float a_fakelag_btn_show = 0;
     float a_fps_90 = 0, a_fps_120 = 0, a_fps_144 = 0, a_fps_rst = 0;
 
-    SliderAnim sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_aim_lead, sl_screen_stretch;
+    SliderAnim sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_screen_stretch;
     SliderAnim sl_esp_arrow_ring;
     SliderAnim sl_esp_radar_size, sl_esp_radar_range;
 };

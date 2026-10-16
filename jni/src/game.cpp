@@ -6862,9 +6862,8 @@ void esp_set_screen_stretch(float factor) {
     g_screen_stretch_x = factor;
 }
 void esp_set_aim_lead(float seconds) {
-    // Без isfinite (-ffast-math): значение приходит со слайдера 0..150 мс
-    // и проверяется при загрузке конфига, сюда мусор не попадает — обычный
-    // кламп достаточен и безопасен.
+    // Автоматическая задержка контура для touch/memory; это не flight time.
+    // Баллистический flight time считается solver-ом из оружия и дистанции.
     if (seconds < 0.0F) seconds = 0.0F;
     if (seconds > 0.15F) seconds = 0.15F;
     g_aim_lead_seconds = seconds;

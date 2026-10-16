@@ -433,8 +433,9 @@ static void ConfigSaveToPath(const std::string& path) {
                            (g_state.esp_backpacks ? 256u : 0u) |
                            (g_state.esp_sleepers ? 512u : 0u) |
                            (g_state.esp_cupboards ? 1024u : 0u);
-        // v4+: упреждение аима в миллисекундах (0 = выкл).
-        extension.aim_lead_ms = g_state.aim_lead_ms;
+        // Поле упреждения сохранено в формате расширения для совместимости;
+        // автоматический предикт больше не имеет пользовательской настройки.
+        extension.aim_lead_ms = 0.f;
         uint8_t extra[sizeof(extension)];
         memcpy(extra, &extension, sizeof(extra));
         XorBuf(extra, sizeof(extra));
@@ -496,11 +497,8 @@ static void LoadCfgByName(const char* name, bool announce) {
     g_state.viewmodel = viewmodel::decode(extra, extraGot);
     g_state.esp_turrets = g_state.esp_backpacks = g_state.esp_sleepers = false;
     g_state.esp_cupboards = false;
-    // Упреждения в старых прицепах (v1–v3) нет — сброс в 0; v4–v6 могут
-    // вернуть своё значение. Сам прицеп 36 байт с v4; прицеп v3 был 32 —
-    // обрабатываем оба размера, иначе старые конфиги потеряли бы турели,
-    // рюкзаки и спящих.
-    g_state.aim_lead_ms = 0.f;
+    // Поле aim_lead_ms в старых прицепах читается только как часть формата:
+    // ручная поправка отключена, предикт рассчитывается автоматически.
     if (extraGot == 32 || extraGot == sizeof(viewmodel::ConfigExtension)) {
         viewmodel::ConfigExtension extension;
         memcpy(&extension, extra, extraGot);   // v3: 32 байта, хвост — дефолты
@@ -511,9 +509,6 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.esp_backpacks = (extension.flags & 256u) != 0;
             g_state.esp_sleepers = (extension.flags & 512u) != 0;
             g_state.esp_cupboards = (extension.flags & 1024u) != 0;
-            if (extension.version >= 4)
-                g_state.aim_lead_ms = viewmodel::decode_aim_lead_ms(extra, extraGot);
-            g_state.aim_predict = std::round(g_state.aim_lead_ms / kAimPredictStepMs);
         }
     }
     g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};

@@ -38,26 +38,12 @@ inline bool finite(const Vec3& value) {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
 
-// Семантика поля gravity — у двух источников цепочки она разная (снимки
-// дампов лежат в jni/tests/test_no_ballistics_memory.cpp):
-//   BallisticProfile.GRAVITY          — множитель штатного ускорения
-//                                       (замер профиля: 0.65; 1.0 = обычная
-//                                       гравитация);
-//   ShaftedProjectile.GRAVITY         — абсолютное ускорение в м/с²
-//                                       (замер префаба: 9.81).
-// Интегратор считает ускорение как kGravityY * params.gravity, то есть ждёт
-// множитель. Если взять м/с² напрямую, ускорение выходит 9.81² и дуга
-// перекомпенсируется в десять раз — аим стабильно стреляет ВЫШЕ головы на
-// дистанции (отчёт 10.2026), причём тем сильнее, чем дальше цель.
-// Порог 4 м/с²: множителем 4+ снаряд не описывается (такое оружие было бы видно
-// в игре сразу), а реальные значения файла — 9.81 и его полу-, кратные.
-// Отрицательное значение означает то же падение вниз.
-// Всегда возвращает множитель ≥ 0, пригодный для интегратора.
-inline float gravity_multiplier(float field_value) {
-    if (!finite(field_value)) return 1.0f;
-    float magnitude = field_value < 0.0f ? -field_value : field_value;
-    if (magnitude > 4.0f) magnitude /= -kGravityY;
-    return magnitude;
+// BallisticIntegrator::Step in both supplied game builds consumes this field
+// as signed world-space acceleration (m/s²), not a multiplier. It adds
+// gravity * dt to velocity.y only while position.y >= 0; preserve the raw sign
+// and magnitude read from BallisticProfile / ShaftedProjectile.
+inline float gravity_acceleration(float field_value) {
+    return finite(field_value) ? field_value : kGravityY;
 }
 
 inline Vec3 add(const Vec3& a, const Vec3& b) {
@@ -84,7 +70,7 @@ inline float drag_scale(float drag, float dt) {
 inline bool parameters_valid(const Parameters& params) {
     return params.valid && finite(params.muzzle_speed) &&
            params.muzzle_speed >= 1.0f && params.muzzle_speed <= 2000.0f &&
-           finite(params.gravity) && params.gravity >= -20.0f && params.gravity <= 20.0f &&
+           finite(params.gravity) && params.gravity >= -100.0f && params.gravity <= 100.0f &&
            finite(params.air_drag) && params.air_drag >= 0.0f && params.air_drag <= 100.0f &&
            finite(params.underwater_drag) && params.underwater_drag >= 0.0f &&
            params.underwater_drag <= 100.0f && finite(params.max_range) &&
@@ -117,10 +103,11 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const float dt = kIntegratorStep;
         const float drag = above_surface ? params.air_drag : params.underwater_drag;
         const float damping = drag_scale(drag, dt);
-        const Vec3 old_velocity = velocity;
-        if (above_surface) velocity.y += kGravityY * params.gravity * dt;
+        if (above_surface) velocity.y += params.gravity * dt;
         velocity = scale(velocity, damping);
-        position = add(position, scale(add(old_velocity, velocity), 0.5f * dt));
+        // Match Oxide.Utils.Combat.BallisticIntegrator::Step: semi-implicit
+        // Euler (apply acceleration and drag, then advance with new velocity).
+        position = add(position, scale(velocity, dt));
         if (!finite(position) || !finite(velocity)) return false;
     }
 
@@ -141,12 +128,10 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const float damping = drag_scale(drag, dt);
 
         const float next_factor_velocity = factor_velocity * damping;
-        const float next_factor = factor +
-            (factor_velocity + next_factor_velocity) * 0.5f * dt;
-        const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
+        const float next_factor = factor + next_factor_velocity * dt;
+        const float gravity_delta = above_surface ? params.gravity * dt : 0.0f;
         const float next_drop_velocity = (drop_velocity + gravity_delta) * damping;
-        const float next_drop = drop +
-            (drop_velocity + next_drop_velocity) * 0.5f * dt;
+        const float next_drop = drop + next_drop_velocity * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
             origin, target, target_velocity, inherited_velocity, params);

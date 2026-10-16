@@ -6578,7 +6578,7 @@ bool aim_read_profile(uint64_t profile, AimBallisticRead& read) {
         !aim_read_float(profile + BALLISTICPROFILE_AIR_DRAG, 0.0f, 100.0f, air_drag) ||
         !aim_read_float(profile + BALLISTICPROFILE_UNDERWATER_DRAG, 0.0f, 100.0f,
                         underwater_drag)) return false;
-    read.params.gravity = aim_ballistics::gravity_multiplier(gravity);
+    read.params.gravity = aim_ballistics::gravity_acceleration(gravity);
     read.params.air_drag = air_drag;
     read.params.underwater_drag = underwater_drag;
     return true;
@@ -6649,7 +6649,7 @@ bool aim_read_projectile(uint64_t weapon, uint64_t offset, bool allow_structural
 
     read.params.muzzle_speed = launch_speed;
     read.params.max_range = max_distance;
-    read.params.gravity = aim_ballistics::gravity_multiplier(gravity);
+    read.params.gravity = aim_ballistics::gravity_acceleration(gravity);
     read.params.air_drag = air_drag;
     read.params.underwater_drag = underwater_drag;
     read.params.valid = launch_speed >= 1.0f;

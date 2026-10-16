@@ -26,33 +26,22 @@ int main() {
                  params, solution));
     assert(solution.direction.x < -0.04f && solution.direction.x > -0.06f);
 
-    params.gravity = 1.0f;
+    params.gravity = -9.81f;
     assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, params, solution));
     assert(solution.direction.y > 0.04f);
     assert(solution.flight_time > 1.0f);
 
-    // Поле gravity читается из двух мест с разной семантикой (снимки дампов
-    // в test_no_ballistics_memory.cpp): профиль — множитель (0.65), префаб
-    // ShaftedProjectile — абсолютное м/с² (9.81). Интегратор ждёт множитель,
-    // поэтому м/с² обязано нормализоваться, иначе дуга ×10 и выстрел
-    // перелетает голову. Проверяем значения и тождество решения.
-    assert(near(gravity_multiplier(1.0f), 1.0f, 1e-5f));
-    assert(near(gravity_multiplier(0.0f), 0.0f, 1e-6f));
-    assert(near(gravity_multiplier(0.65f), 0.65f, 1e-5f));
-    assert(near(gravity_multiplier(-0.65f), 0.65f, 1e-5f));
-    assert(near(gravity_multiplier(9.81f), 1.0f, 1e-3f));
-    assert(near(gravity_multiplier(-9.81f), 1.0f, 1e-3f));
-    assert(near(gravity_multiplier(19.62f), 2.0f, 1e-3f));
+    // Both dump versions expose BallisticIntegrator::Step with a raw signed
+    // acceleration and a fixed 31.25 ms step; do not reinterpret it as a scale.
+    assert(near(gravity_acceleration(-9.81f), -9.81f, 1e-5f));
+    assert(near(gravity_acceleration(-3.2f), -3.2f, 1e-5f));
+    assert(near(gravity_acceleration(0.65f), 0.65f, 1e-5f));
 
     {
-        Parameters raw{100.0f, 1.0f, 0.0f, 0.0f, 0.0f, true};
-        Parameters norm = raw;
-        norm.gravity = gravity_multiplier(9.81f);
-        Solution from_raw{}, from_norm{};
-        assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, raw, from_raw));
-        assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, norm, from_norm));
-        assert(near(from_raw.direction.y, from_norm.direction.y, 1e-3f));
-        assert(near(from_raw.flight_time, from_norm.flight_time, 0.001f));
+        Parameters raw{100.0f, -9.81f, 0.0f, 0.0f, 0.0f, true};
+        assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, raw, solution));
+        assert(solution.direction.y > 0.04f);
+        assert(solution.flight_time > 1.0f);
     }
 
     params.gravity = 0.0f;
@@ -65,7 +54,7 @@ int main() {
                  params, solution));
     assert(solution.direction.x < 0.0f);
 
-    params.gravity = 1.0f;
+    params.gravity = -9.81f;
     params.air_drag = 0.0f;
     params.underwater_drag = 0.0f;
     assert(solve({0.0f, -2.0f, 0.0f}, {0.0f, -2.0f, 100.0f}, {}, {},

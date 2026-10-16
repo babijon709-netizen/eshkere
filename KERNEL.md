@@ -33,8 +33,12 @@ memio::Reader g_mem            (jni/src/mem_io.h, объект в game.cpp)
         │  transport_ — ровно один указатель, назначается ОДИН РАЗ
         ▼
 memio::Transport (интерфейс: open/close/read_once/write_once)
-        ├── ProcfsTransport   «Прямое чтение»  /proc/<pid>/mem  (единственное
-        │                                                   легальное место mem)
+        ├── ProcfsTransport   «Прямое чтение»  чтение: process_vm_readv (без
+        │                    fd вообще); запись: process_vm_writev, а защищённые
+        │                    страницы — /proc/<pid>/mem с fd на одну операцию.
+        │                    Запрет vm_readv политикой (EPERM/ENOSYS) навсегда
+        │                    переключает сессию на постоянный fd + pread/pwrite —
+        │                    единственное легальное место mem в проекте)
         ├── KernelTransport   «FT-Драйвер»     сокет bing/gongchuang (kernel_io.h)
         ├── RtDevTransport    «RT-Dev»          /dev/[A-GNY]{1,6}, ioctl 0x801/0x802
         └── RtHookTransport   «RT-Hook»         syscall ioctl(-1, 0x259/0x25a)
@@ -63,7 +67,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 
 | Режим | Класс драйвера | Механизм | Запрос | Коды |
 |---|---|---|---|---|
-| Прямое чтение | — | pread/pwrite `/proc/<pid>/mem` | — | — |
+| Прямое чтение | — | чтение `process_vm_readv` (raw syscall); запись `process_vm_writev`, защищённые страницы — `/proc/<pid>/mem` транзиентным fd (FOLL_FORCE); при запрете vm_readv политикой — постоянный fd + pread/pwrite | — | — |
 | FT | bing_rw / gongchuang (drivers.7z) | socket(сем.,4,0); команды getsockopt ИЛИ ioctl (поколение 5.10) | `DriverRwReq` 0x28: pid,pad,addr,size,user_buf,magic=0x1337 | auth 0x300, read 0x301, write 0x302; gong: attach 2, vm 4, pte 5/6 |
 | RT-Dev | RTkernel (`rt dev Драйвера root cheat.zip`) | char-устройство `/dev/[A-GNY]{1,6}` + ioctl | `RtDevCopyMem` 0x20: pid,pad,addr,buffer,size (не через границу 4К — транспорт чанкует сам) | read 0x801, write 0x802; base 0x803 |
 | RT-Hook | hookdd/gynhdd (`RT-hook.7z`) | перехват syscall `ioctl`, без сокета и `/dev`-узла | `RtHookCopyMem` 0x20: pid,pad,addr,buffer,size (transport чанкует по 4К) | read 0x259, write 0x25a |
@@ -132,7 +136,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
    На устройстве: `ls -l /proc/<pid чита>/fd/*` — в кернел-режимах
    НЕ должно быть `-> /proc/<pid игры>/mem` (процесс скрыт: «vold»).
 9. Хост-проверка синтаксиса правленных файлов + CI (основной артефакт
-   `benzware.sh`, совместимый алиас `xvcen-arm64-v8a`). При изменении RT-Dev:
+   `benzware.sh`). При изменении RT-Dev:
    `python3 scripts/verify_rt_dev_archive.py`
    должен подтвердить все модули архива. `--check-driver` из Termux — коды выхода:
    0 = драйвер работает, 1 = ничего не найдено, 2 = драйвер есть, коды

@@ -372,15 +372,24 @@ void test_hmj_solid_wall_mask_extraction() {
     assert((solid & f[22]) == 0); // VehicleBox excluded
     assert((solid & f[24]) == 0); // Trigger excluded
 
-    const std::int32_t raw_occ_mask = f[10] | f[21] | f[22] | f[24];
+    const std::int32_t m_no_placement = 1 << 18; // d[12] NoPlacement (in hMD, not in hMj)
+    const std::int32_t m_sleeper      = 1 << 20; // d[16] (in hMD, not in hMj)
+    const std::int32_t raw_occ_mask = f[10] | f[21] | f[22] | f[24] | m_no_placement | m_sleeper;
     const std::int32_t sanitized = sanitize_occlusion_obstacle_mask(raw_occ_mask, solid, strip);
     assert(sanitized == solid);
     assert((sanitized & f[4]) == 0);
     assert((sanitized & f[21]) == 0);
     assert((sanitized & f[22]) == 0);
     assert((sanitized & f[24]) == 0);
+    assert((sanitized & m_no_placement) == 0);
+    assert((sanitized & m_sleeper) == 0);
+    assert((strip & f[1]) == 0);  // Hitbox preserved in AimRaycast
+    assert((strip & f[7]) == 0);  // ProxyEntity preserved in AimRaycast
+    assert((strip & f[8]) == 0);  // Entity preserved in AimRaycast
+    assert((strip & f[4]) != 0);  // Deployed stripped in AimRaycast
+    assert((strip & m_no_placement) != 0); // NoPlacement stripped in AimRaycast
 
-    // Also test hMD.static_fields (18 layer indices):
+    // Also test hMD.static_fields (18 layer indices, where d[15] is a custom layer != 4):
     std::int32_t d[18] = {
         0,  // Default
         8,  // Construction
@@ -394,11 +403,11 @@ void test_hmj_solid_wall_mask_extraction() {
         15, // Entity
         16, // Hitbox
         17, // IgnoreCollision
-        18, // ItemPreview
+        18, // NoPlacement
         4,  // Water
         19, // Doorway
-        4,  // Water
-        20, // Sleeper
+        22, // d[15] custom layer
+        20, // d[16] custom layer
         21  // Trigger
     };
     std::int32_t d_solid = 0;

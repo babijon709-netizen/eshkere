@@ -8838,6 +8838,14 @@ static bool try_extract_wall_masks_from_klass(uint64_t klass,
     int32_t fields[25]{};
     if (rd_buf(statics, fields, sizeof(fields)) &&
         vis_check::extract_hmj_solid_wall_mask(fields, out_solid_mask, out_strip_mask)) {
+        // Очищаем также маску препятствий AimAssist (hMj + 0x34 = f[13], читаемую
+        // в hwR::ohb на 0x65003CC / 0x6500600) от слоёв Deployed (+0x10), Vehicle (+0x54),
+        // Water (+0x18) и FirstPerson (+0x24), оставляя только твёрдые стены
+        // (Default | Construction | Terrain) и коллайдеры целей (ProxyEntity | Entity).
+        const int32_t desired_hwr_mask = out_solid_mask | fields[7] | fields[8];
+        if (desired_hwr_mask > 0 && fields[13] != desired_hwr_mask) {
+            wr_buf(statics + 0x34, &desired_hwr_mask, sizeof(desired_hwr_mask));
+        }
         return true;
     }
     if (rd_buf(statics, fields, 18 * sizeof(int32_t)) &&
@@ -8983,16 +8991,6 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
         const bool world_ok  = vec3_is_finite(world_pos) && !position_near_world_origin(world_pos);
         const bool head_ok   = vec3_is_finite(head_pos)  && !position_near_world_origin(head_pos);
 
-        Vec3 base_torso{};
-        bool have_base_torso = false;
-        if (head_ok) {
-            base_torso      = head_pos;
-            have_base_torso = true;
-        } else if (world_ok) {
-            base_torso      = {world_pos.x, world_pos.y - 0.80F, world_pos.z};
-            have_base_torso = true;
-        }
-
         const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
         const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
 
@@ -9008,6 +9006,19 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
                 s_view_probe_slot.clear();
             }
             s_view_probe_slot[view] = next_slot;
+        }
+
+        Vec3 base_torso{};
+        bool have_base_torso = false;
+        if (cur_slot == 0 && head_ok) {
+            base_torso      = head_pos;
+            have_base_torso = true;
+        } else if (world_ok) {
+            base_torso      = {world_pos.x, world_pos.y - 0.80F, world_pos.z};
+            have_base_torso = true;
+        } else if (head_ok) {
+            base_torso      = head_pos;
+            have_base_torso = true;
         }
 
         Vec3 probe_tgt = base_torso;
@@ -9219,7 +9230,10 @@ static void evaluate_boxes_visibility(uint64_t local_player,
         if (!is_melee && solid_wall_mask > 0) {
             const int32_t cur_aim_mask = rd<int32_t>(rm + RAYCASTMAN_AIM_LAYER_MASK);
             if (cur_aim_mask > 0) {
-                const int32_t desired_aim_mask = cur_aim_mask | solid_wall_mask;
+                const int32_t desired_aim_mask =
+                    (strip_prop_mask > 0)
+                        ? ((cur_aim_mask & ~strip_prop_mask) | solid_wall_mask)
+                        : (cur_aim_mask | solid_wall_mask);
                 if (cur_aim_mask != desired_aim_mask) {
                     wr_buf(rm + RAYCASTMAN_AIM_LAYER_MASK, &desired_aim_mask, sizeof(desired_aim_mask));
                 }

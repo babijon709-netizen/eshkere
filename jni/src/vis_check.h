@@ -92,7 +92,8 @@ inline float vec3_len_sq(const float v[3]) {
 }
 
 inline bool is_single_layer_bit(std::int32_t m) {
-    return m > 0 && (m & (m - 1)) == 0;
+    const std::uint32_t u = static_cast<std::uint32_t>(m);
+    return u != 0u && (u & (u - 1u)) == 0u;
 }
 
 // Structural validator for hMj.static_fields (TypeDefIndex: 6280, 25 int32 LayerMask fields):
@@ -100,13 +101,13 @@ inline bool is_single_layer_bit(std::int32_t m) {
 //   +0x10 Deployed, +0x14 Terrain, +0x18 Water (1<<4), +0x1C ProxyEntity, +0x20 Entity,
 //   +0x24 First Person, +0x28 Default|Construction|Deployed|Terrain|Water,
 //   +0x2C Default|Terrain|Water, +0x30 Entity|Vehicle, +0x3C == +0x28,
-//   +0x50 Doorway, +0x54 Vehicle, +0x58 VehicleBox, +0x5C Water (1<<4), +0x60 Trigger.
+//   +0x50 Doorway, +0x54 Vehicle, +0x58 VehicleBox, +0x5C 1<<d[15], +0x60 Trigger.
 // Extracts the solid wall/terrain mask (Default | Construction | Terrain) and the
-// non-wall prop/vehicle/trigger strip mask so OcclusionModule::Tick's 4-arg
-// Physics.Raycast (QueryTriggerInteraction.UseGlobal) keeps hitting all static
+// non-wall prop/vehicle/trigger/no-placement strip mask so OcclusionModule::Tick's
+// 4-arg Physics.Raycast (QueryTriggerInteraction.UseGlobal) hits ONLY static
 // monument walls (Default), player bases (Construction), and terrain/containers
-// (Terrain), while ignoring 1-4m Deployed / Trigger / Vehicle / VehicleBox volumes
-// around server-spawned crate/barrel piles and cars.
+// (Terrain), while ignoring Deployed / NoPlacement / Trigger / Vehicle / VehicleBox
+// volumes around server-spawned crate/barrel junkpiles and cars.
 inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
                                         std::int32_t& out_solid_mask,
                                         std::int32_t& out_strip_mask) {
@@ -114,7 +115,6 @@ inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
     out_strip_mask = 0;
     const std::int32_t m_default      = f[0];  // +0x00 "Default" (layer 0 -> 0x1)
     const std::int32_t m_hitbox       = f[1];  // +0x04 "Hitbox"
-    const std::int32_t m_ignore_col   = f[2];  // +0x08 "IgnoreCollision"
     const std::int32_t m_construction = f[3];  // +0x0C "Construction"
     const std::int32_t m_deployed     = f[4];  // +0x10 "Deployed"
     const std::int32_t m_terrain      = f[5];  // +0x14 "Terrain"
@@ -126,20 +126,16 @@ inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
     const std::int32_t m_comp_2c      = f[11]; // +0x2C
     const std::int32_t m_comp_30      = f[12]; // +0x30
     const std::int32_t m_comp_3c      = f[15]; // +0x3C
-    const std::int32_t m_doorway      = f[20]; // +0x50 "Doorway"
     const std::int32_t m_vehicle      = f[21]; // +0x54 "Vehicle"
-    const std::int32_t m_vehicle_box  = f[22]; // +0x58 "VehicleBox"
-    const std::int32_t m_water2       = f[23]; // +0x5C "Water"
-    const std::int32_t m_trigger      = f[24]; // +0x60 "Trigger"
 
     if (m_default != 0x1) return false;
-    if (!is_single_layer_bit(m_construction) || m_construction < (1 << 8) ||
-        !is_single_layer_bit(m_deployed) || m_deployed < (1 << 8) ||
-        !is_single_layer_bit(m_terrain) || m_terrain < (1 << 8) ||
+    if (!is_single_layer_bit(m_construction) || m_construction == m_default ||
+        !is_single_layer_bit(m_deployed) || m_deployed == m_default ||
+        !is_single_layer_bit(m_terrain) || m_terrain == m_default ||
         !is_single_layer_bit(m_water) ||
-        !is_single_layer_bit(m_entity) || m_entity < (1 << 8) ||
-        !is_single_layer_bit(m_first_person) || m_first_person < (1 << 8) ||
-        !is_single_layer_bit(m_vehicle) || m_vehicle < (1 << 8)) {
+        !is_single_layer_bit(m_entity) || m_entity == m_default ||
+        !is_single_layer_bit(m_first_person) || m_first_person == m_default ||
+        !is_single_layer_bit(m_vehicle) || m_vehicle == m_default) {
         return false;
     }
     if (m_construction == m_deployed ||
@@ -153,10 +149,12 @@ inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
     if (m_comp_3c != m_comp_28) return false;
 
     out_solid_mask = m_default | m_construction | m_terrain;
-    out_strip_mask = (m_hitbox | m_ignore_col | m_deployed | m_water |
-                      m_proxy_entity | m_entity | m_first_person | m_doorway |
-                      m_vehicle | m_vehicle_box | m_water2 | m_trigger) &
-                     ~out_solid_mask;
+    const std::uint32_t keep_aim = static_cast<std::uint32_t>(
+        out_solid_mask |
+        (is_single_layer_bit(m_hitbox) ? m_hitbox : 0) |
+        (is_single_layer_bit(m_proxy_entity) ? m_proxy_entity : 0) |
+        m_entity);
+    out_strip_mask = static_cast<std::int32_t>(~keep_aim & 0x7fffffffu);
     return out_solid_mask > 0 && out_strip_mask > 0;
 }
 
@@ -164,17 +162,17 @@ inline bool extract_hmj_solid_wall_mask(const std::int32_t f[25],
 //   +0x00 Default (0), +0x04 Construction, +0x08 Deployed, +0x0C Terrain,
 //   +0x10 UI (5), +0x14 First Person, +0x18 Vehicle, +0x1C VehicleBox,
 //   +0x20 ProxyEntity, +0x24 Entity, +0x28 Hitbox, +0x2C IgnoreCollision,
-//   +0x30 ItemPreview, +0x34 Water (4), +0x38 Doorway, +0x3C Water (4),
-//   +0x40 Sleeper, +0x44 Trigger.
+//   +0x30 NoPlacement, +0x34 Water (4), +0x38 Doorway, +0x3C d[15],
+//   +0x40 d[16], +0x44 Trigger.
 inline bool extract_hmd_solid_wall_mask(const std::int32_t d[18],
                                         std::int32_t& out_solid_mask,
                                         std::int32_t& out_strip_mask) {
     out_solid_mask = 0;
     out_strip_mask = 0;
-    if (d[0] != 0 || d[4] != 5 || d[13] != 4 || d[15] != 4) return false;
-    constexpr int kUserIdx[] = {1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 17};
-    for (int idx : kUserIdx) {
-        if (d[idx] < 8 || d[idx] > 30) return false;
+    if (d[0] != 0 || d[4] != 5 || d[13] != 4) return false;
+    constexpr int kRequiredIdx[] = {1, 2, 3, 5, 6, 8, 9, 10};
+    for (int idx : kRequiredIdx) {
+        if (d[idx] < 1 || d[idx] > 30 || d[idx] == 4 || d[idx] == 5) return false;
     }
     if (d[1] == d[2] || d[1] == d[3] || d[2] == d[3]) return false;
 
@@ -182,21 +180,21 @@ inline bool extract_hmd_solid_wall_mask(const std::int32_t d[18],
         return (layer >= 0 && layer <= 30) ? (std::int32_t(1) << layer) : 0;
     };
     out_solid_mask = bit(d[0]) | bit(d[1]) | bit(d[3]);
-    out_strip_mask = (bit(d[2]) | bit(d[4]) | bit(d[5]) | bit(d[6]) |
-                      bit(d[7]) | bit(d[8]) | bit(d[9]) | bit(d[10]) |
-                      bit(d[11]) | bit(d[12]) | bit(d[13]) | bit(d[14]) |
-                      bit(d[15]) | bit(d[16]) | bit(d[17])) &
-                     ~out_solid_mask;
+    const std::uint32_t keep_aim = static_cast<std::uint32_t>(
+        out_solid_mask | bit(d[8]) | bit(d[9]) | bit(d[10]));
+    out_strip_mask = static_cast<std::int32_t>(~keep_aim & 0x7fffffffu);
     return out_solid_mask > 0 && out_strip_mask > 0;
 }
 
 inline std::int32_t sanitize_occlusion_obstacle_mask(std::int32_t cur_mask,
                                                      std::int32_t solid_mask,
                                                      std::int32_t strip_mask = 0) {
-    if (solid_mask <= 0) return cur_mask;
-    const std::int32_t cleaned =
-        (strip_mask > 0) ? ((cur_mask & ~strip_mask) | solid_mask) : solid_mask;
-    return cleaned > 0 ? cleaned : cur_mask;
+    if (solid_mask > 0) return solid_mask;
+    if (strip_mask > 0) {
+        const std::int32_t stripped = cur_mask & ~strip_mask;
+        return stripped > 0 ? stripped : cur_mask;
+    }
+    return cur_mask;
 }
 
 // Computes 5 anatomical probe points on a player from Na::Tick's marker data:

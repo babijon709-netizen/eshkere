@@ -10,8 +10,9 @@ namespace aim_ballistics {
 
 constexpr float kIntegratorStep = 0.03125f;
 constexpr float kGravityY = -9.81f;
-constexpr float kMaxFlightSeconds = 4.0f;
-constexpr int kMaxSteps = static_cast<int>(kMaxFlightSeconds / kIntegratorStep);
+// ShaftedProjectile's game-side simulation limit is 400 integrator ticks.
+constexpr int kMaxSteps = 400;
+constexpr float kMaxFlightSeconds = kMaxSteps * kIntegratorStep;
 
 struct Parameters {
     float muzzle_speed = 0.0f;
@@ -38,12 +39,40 @@ inline bool finite(const Vec3& value) {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
 
-// BallisticIntegrator::Step in both supplied game builds consumes this field
-// as signed world-space acceleration (m/s²), not a multiplier. It adds
-// gravity * dt to velocity.y only while position.y >= 0; preserve the raw sign
-// and magnitude read from BallisticProfile / ShaftedProjectile.
-inline float gravity_acceleration(float field_value) {
-    return finite(field_value) ? field_value : kGravityY;
+// Fade stale velocity instead of extrapolating an old strafe at full speed.
+// Remote positions normally refresh within ~100 ms; after 350 ms the estimate
+// is too old to steer from and is treated as stationary.
+inline float motion_confidence(float age_seconds) {
+    if (!finite(age_seconds) || age_seconds < 0.0f) return 0.0f;
+    constexpr float kFreshSeconds = 0.12f;
+    constexpr float kStaleSeconds = 0.35f;
+    if (age_seconds <= kFreshSeconds) return 1.0f;
+    if (age_seconds >= kStaleSeconds) return 0.0f;
+    return (kStaleSeconds - age_seconds) / (kStaleSeconds - kFreshSeconds);
+}
+
+// Integrated trusted age used to advance a stale position sample. This is the
+// area under the confidence curve, rather than multiplying full age by its
+// end-of-window confidence and under-leading by almost half.
+inline float motion_age_lead(float age_seconds) {
+    if (!finite(age_seconds) || age_seconds <= 0.0f) return 0.0f;
+    constexpr float kFreshSeconds = 0.12f;
+    constexpr float kStaleSeconds = 0.35f;
+    if (age_seconds <= kFreshSeconds) return age_seconds;
+    if (age_seconds >= kStaleSeconds) return 0.5f * (kFreshSeconds + kStaleSeconds);
+    const float tail = age_seconds - kFreshSeconds;
+    return kFreshSeconds + tail * (1.0f + motion_confidence(age_seconds)) * 0.5f;
+}
+
+// Aim params use a gravity multiplier: BallisticProfile stores that multiplier,
+// while some ShaftedProjectile prefabs store the equivalent acceleration (9.81).
+// Normalize the latter to 1.0; the game integrator multiplies this value by
+// Unity's downward gravity vector and applies it only while position.y >= 0.
+inline float gravity_multiplier(float field_value) {
+    if (!finite(field_value)) return 1.0f;
+    float magnitude = field_value < 0.0f ? -field_value : field_value;
+    if (magnitude > 4.0f) magnitude /= -kGravityY;
+    return magnitude;
 }
 
 inline Vec3 add(const Vec3& a, const Vec3& b) {
@@ -70,7 +99,7 @@ inline float drag_scale(float drag, float dt) {
 inline bool parameters_valid(const Parameters& params) {
     return params.valid && finite(params.muzzle_speed) &&
            params.muzzle_speed >= 1.0f && params.muzzle_speed <= 2000.0f &&
-           finite(params.gravity) && params.gravity >= -100.0f && params.gravity <= 100.0f &&
+           finite(params.gravity) && params.gravity >= -20.0f && params.gravity <= 20.0f &&
            finite(params.air_drag) && params.air_drag >= 0.0f && params.air_drag <= 100.0f &&
            finite(params.underwater_drag) && params.underwater_drag >= 0.0f &&
            params.underwater_drag <= 100.0f && finite(params.max_range) &&
@@ -94,23 +123,12 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
                                    const Vec3& inherited_velocity,
                                    const Parameters& params, const Vec3& guess_direction,
                                    Solution& out) {
-    bool air_path[kMaxSteps]{};
+    // Simulate the guessed trajectory and its scalar launch-speed / gravity
+    // responses together. The surface state selects drag/gravity exactly as in
+    // the game integrator; stopping at the first intercept avoids simulating
+    // the unused tail of the 400-step lifetime.
     Vec3 position = origin;
     Vec3 velocity = add(scale(guess_direction, params.muzzle_speed), inherited_velocity);
-    for (int index = 0; index < kMaxSteps; ++index) {
-        const bool above_surface = position.y >= 0.0f;
-        air_path[index] = above_surface;
-        const float dt = kIntegratorStep;
-        const float drag = above_surface ? params.air_drag : params.underwater_drag;
-        const float damping = drag_scale(drag, dt);
-        if (above_surface) velocity.y += params.gravity * dt;
-        velocity = scale(velocity, damping);
-        // Match Oxide.Utils.Combat.BallisticIntegrator::Step: semi-implicit
-        // Euler (apply acceleration and drag, then advance with new velocity).
-        position = add(position, scale(velocity, dt));
-        if (!finite(position) || !finite(velocity)) return false;
-    }
-
     float factor = 0.0f;
     float factor_velocity = 1.0f;
     float drop = 0.0f;
@@ -123,15 +141,23 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
 
     for (int index = 1; index <= kMaxSteps; ++index) {
         const float dt = kIntegratorStep;
-        const bool above_surface = air_path[index - 1];
+        const bool above_surface = position.y >= 0.0f;
         const float drag = above_surface ? params.air_drag : params.underwater_drag;
         const float damping = drag_scale(drag, dt);
 
+        const Vec3 old_velocity = velocity;
+        if (above_surface) velocity.y += kGravityY * params.gravity * dt;
+        velocity = scale(velocity, damping);
+        position = add(position, scale(add(old_velocity, velocity), 0.5f * dt));
+        if (!finite(position) || !finite(velocity)) return false;
+
         const float next_factor_velocity = factor_velocity * damping;
-        const float next_factor = factor + next_factor_velocity * dt;
-        const float gravity_delta = above_surface ? params.gravity * dt : 0.0f;
+        const float next_factor = factor +
+            (factor_velocity + next_factor_velocity) * 0.5f * dt;
+        const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
         const float next_drop_velocity = (drop_velocity + gravity_delta) * damping;
-        const float next_drop = drop + next_drop_velocity * dt;
+        const float next_drop = drop +
+            (drop_velocity + next_drop_velocity) * 0.5f * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
             origin, target, target_velocity, inherited_velocity, params);
@@ -139,7 +165,7 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         if (previous_residual >= 0.0f && current_residual <= 0.0f) {
             float low = previous_time;
             float high = time;
-            for (int iteration = 0; iteration < 14; ++iteration) {
+            for (int iteration = 0; iteration < 20; ++iteration) {
                 const float middle = (low + high) * 0.5f;
                 const float alpha = (middle - previous_time) / dt;
                 const float middle_factor = previous_factor + (next_factor - previous_factor) * alpha;
@@ -190,8 +216,8 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     const float inherited_speed = length(inherited_velocity);
     const float target_speed = length(target_velocity);
     if (!finite(target_distance) || target_distance < 0.01f ||
-        !finite(inherited_speed) || inherited_speed > 30.0f ||
-        !finite(target_speed) || target_speed > 30.0f) return false;
+        !finite(inherited_speed) || inherited_speed > 200.0f ||
+        !finite(target_speed) || target_speed > 200.0f) return false;
 
     float estimate = target_distance / params.muzzle_speed;
     if (estimate > kMaxFlightSeconds) estimate = kMaxFlightSeconds;
@@ -201,15 +227,24 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     guess = scale(guess, 1.0f / guess_length);
 
     Solution candidate{};
-    for (int iteration = 0; iteration < 3; ++iteration) {
+    constexpr int kMaxPathIterations = 16;
+    constexpr float kDirectionErrorSquared = 1.0e-8f;
+    for (int iteration = 0; iteration < kMaxPathIterations; ++iteration) {
         if (!solve_with_medium_path(origin, target, target_velocity, inherited_velocity,
                                     params, guess, candidate)) return false;
-        const float agreement = candidate.direction.x * guess.x +
-                               candidate.direction.y * guess.y +
-                               candidate.direction.z * guess.z;
+        const Vec3 change = sub(candidate.direction, guess);
+        const float error_squared = change.x * change.x + change.y * change.y +
+                                    change.z * change.z;
         out = candidate;
-        if (agreement > 0.9999f) return true;
-        guess = candidate.direction;
+        if (finite(error_squared) && error_squared <= kDirectionErrorSquared) return true;
+
+        // Relax direction updates when the guessed air/water path flips near
+        // the surface; the raw fixed-point iteration can otherwise alternate
+        // between two valid but inconsistent medium sequences.
+        const Vec3 relaxed = add(scale(guess, 0.25f), scale(candidate.direction, 0.75f));
+        const float relaxed_length = length(relaxed);
+        if (!finite(relaxed_length) || relaxed_length < 0.01f) return false;
+        guess = scale(relaxed, 1.0f / relaxed_length);
     }
     return out.valid;
 }

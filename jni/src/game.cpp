@@ -6544,6 +6544,7 @@ constexpr const char* kAimBallisticsNamespace =
 struct AimBallisticRead {
     aim_ballistics::Parameters params{};
     bool valid_chain = false;
+    bool has_physics = false;
 };
 
 bool aim_read_pointer_exact(uint64_t address, uint64_t& value) {
@@ -6578,9 +6579,10 @@ bool aim_read_profile(uint64_t profile, AimBallisticRead& read) {
         !aim_read_float(profile + BALLISTICPROFILE_AIR_DRAG, 0.0f, 100.0f, air_drag) ||
         !aim_read_float(profile + BALLISTICPROFILE_UNDERWATER_DRAG, 0.0f, 100.0f,
                         underwater_drag)) return false;
-    read.params.gravity = aim_ballistics::gravity_acceleration(gravity);
+    read.params.gravity = aim_ballistics::gravity_multiplier(gravity);
     read.params.air_drag = air_drag;
     read.params.underwater_drag = underwater_drag;
+    read.has_physics = true;
     return true;
 }
 
@@ -6598,8 +6600,12 @@ bool aim_read_weapon_config(uint64_t weapon, uint64_t offset, bool allow_structu
         return false;
 
     uint64_t profile = 0;
-    if (!aim_read_pointer_exact(config + HITSCANCONFIG_BALLISTIC_PROFILE, profile)) return false;
-    if (profile && !aim_read_profile(profile, read)) return false;
+    // Speed is enough for a moving-target intercept when a transient/null
+    // profile read fails. Keep that fallback instead of disabling prediction.
+    if (aim_read_pointer_exact(config + HITSCANCONFIG_BALLISTIC_PROFILE, profile) &&
+        profile && !aim_read_profile(profile, read)) {
+        read = {};
+    }
 
     if (identity == 2 && allow_structural_fallback) {
         float fire_rate = 0.0f, dispersion = 0.0f;
@@ -6639,19 +6645,23 @@ bool aim_read_projectile(uint64_t weapon, uint64_t offset, bool allow_structural
     if (!aim_read_float(projectile + SHAFTEDPROJECTILE_MAX_DISTANCE, 0.0f, 5000.0f,
                         max_distance) ||
         !aim_read_float(projectile + SHAFTEDPROJECTILE_LAUNCH_SPEED, 0.0f, 2000.0f,
-                        launch_speed) ||
-        !aim_read_float(projectile + SHAFTEDPROJECTILE_GRAVITY, -20.0f, 20.0f, gravity) ||
-        !aim_read_float(projectile + SHAFTEDPROJECTILE_AIR_DRAG, 0.0f, 100.0f, air_drag) ||
-        !aim_read_float(projectile + SHAFTEDPROJECTILE_UNDERWATER_DRAG, 0.0f, 100.0f,
-                        underwater_drag)) return false;
+                        launch_speed)) return false;
+    const bool physics_valid =
+        aim_read_float(projectile + SHAFTEDPROJECTILE_GRAVITY, -20.0f, 20.0f, gravity) &&
+        aim_read_float(projectile + SHAFTEDPROJECTILE_AIR_DRAG, 0.0f, 100.0f, air_drag) &&
+        aim_read_float(projectile + SHAFTEDPROJECTILE_UNDERWATER_DRAG, 0.0f, 100.0f,
+                       underwater_drag);
     if (identity == 2 && allow_structural_fallback &&
         (!(max_distance > 0.0f) || !(launch_speed > 1.0f))) return false;
 
     read.params.muzzle_speed = launch_speed;
     read.params.max_range = max_distance;
-    read.params.gravity = aim_ballistics::gravity_acceleration(gravity);
-    read.params.air_drag = air_drag;
-    read.params.underwater_drag = underwater_drag;
+    if (physics_valid) {
+        read.params.gravity = aim_ballistics::gravity_multiplier(gravity);
+        read.params.air_drag = air_drag;
+        read.params.underwater_drag = underwater_drag;
+        read.has_physics = true;
+    }
     read.params.valid = launch_speed >= 1.0f;
     read.valid_chain = true;
     return true;
@@ -6662,8 +6672,14 @@ void aim_merge_ballistics(const AimBallisticRead& config, const AimBallisticRead
     out = {};
     if (projectile.valid_chain && projectile.params.valid) {
         out = projectile.params;
-        if (!(out.max_range > 0.0f) && config.valid_chain && config.params.valid)
-            out.max_range = config.params.max_range;
+        if (config.valid_chain && config.params.valid) {
+            if (!(out.max_range > 0.0f)) out.max_range = config.params.max_range;
+            if (!projectile.has_physics && config.has_physics) {
+                out.gravity = config.params.gravity;
+                out.air_drag = config.params.air_drag;
+                out.underwater_drag = config.params.underwater_drag;
+            }
+        }
     } else if (config.valid_chain && config.params.valid) {
         out = config.params;
     }
@@ -6688,8 +6704,11 @@ void update_aim_ballistics(uint64_t player) {
             const Vec3 velocity = local_track->second.vel;
             const float speed = aim_ballistics::length(velocity);
             if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity) &&
-                aim_ballistics::finite(speed) && speed <= 12.0f)
-                g_aim_inherited_velocity = velocity;
+                aim_ballistics::finite(speed) && speed <= 12.0f) {
+                const float confidence = aim_ballistics::motion_confidence(
+                    static_cast<float>(age));
+                g_aim_inherited_velocity = aim_ballistics::scale(velocity, confidence);
+            }
         }
     }
 
@@ -8535,13 +8554,14 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         // перечитываются раз в 6/15 кадров, и видимый бот за это время уходит
         // вперёд от той точки, которую мы ещё держим в кэше.
         if (src.vel_valid) {
-            g_aim_velocity = {src.vx, src.vy, src.vz};
-            float lead = g_aim_lead_seconds;
-            if (src.pos_age > 0.0F)
-                lead += (src.pos_age < kBotPosLeadMax) ? src.pos_age : kBotPosLeadMax;
-            g_aim_lead.x = src.vx * lead;
-            g_aim_lead.y = src.vy * lead;
-            g_aim_lead.z = src.vz * lead;
+            const Vec3 measured{src.vx, src.vy, src.vz};
+            const float age = aim_ballistics::finite(src.pos_age) && src.pos_age > 0.0f
+                ? src.pos_age : 0.0f;
+            const float confidence = aim_ballistics::motion_confidence(age);
+            g_aim_velocity = aim_ballistics::scale(measured, confidence);
+            const float lead = g_aim_lead_seconds +
+                aim_ballistics::motion_age_lead(age < kBotPosLeadMax ? age : kBotPosLeadMax);
+            g_aim_lead = aim_ballistics::scale(measured, lead);
         } else {
             g_aim_velocity = {};
             g_aim_lead = {};
@@ -10775,10 +10795,12 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 const Vec3 velocity = vt->second.vel;
                 const double age = mono_seconds() - vt->second.vel_ref_t;
                 if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity)) {
-                    g_aim_velocity = velocity;
-                    g_aim_lead.x = velocity.x * g_aim_lead_seconds;
-                    g_aim_lead.y = velocity.y * g_aim_lead_seconds;
-                    g_aim_lead.z = velocity.z * g_aim_lead_seconds;
+                    const float age_seconds = static_cast<float>(age);
+                    const float confidence = aim_ballistics::motion_confidence(age_seconds);
+                    g_aim_velocity = aim_ballistics::scale(velocity, confidence);
+                    const float lead = g_aim_lead_seconds +
+                        aim_ballistics::motion_age_lead(age_seconds);
+                    g_aim_lead = aim_ballistics::scale(velocity, lead);
                 } else {
                     g_aim_velocity = {};
                     g_aim_lead = {};

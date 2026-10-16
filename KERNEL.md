@@ -33,12 +33,11 @@ memio::Reader g_mem            (jni/src/mem_io.h, объект в game.cpp)
         │  transport_ — ровно один указатель, назначается ОДИН РАЗ
         ▼
 memio::Transport (интерфейс: open/close/read_once/write_once)
-        ├── ProcfsTransport   «Прямое чтение»  чтение: process_vm_readv (без
-        │                    fd вообще); запись: process_vm_writev, а защищённые
-        │                    страницы — /proc/<pid>/mem с fd на одну операцию.
-        │                    Запрет vm_readv политикой (EPERM/ENOSYS) навсегда
-        │                    переключает сессию на постоянный fd + pread/pwrite —
-        │                    единственное легальное место mem в проекте)
+        ├── ProcfsTransport   «Прямое чтение»  только process_vm_readv/writev
+        │                    (raw syscall): /proc/<pid>/mem не открывается
+        │                    вообще (ни на чтение, ни на запись); запрет
+        │                    syscall политикой = доступа нет, bind отклонён —
+        │                    фоллбэка на pread/pwrite нет)
         ├── KernelTransport   «FT-Драйвер»     сокет bing/gongchuang (kernel_io.h)
         ├── RtDevTransport    «RT-Dev»          /dev/[A-GNY]{1,6}, ioctl 0x801/0x802
         └── RtHookTransport   «RT-Hook»         syscall ioctl(-1, 0x259/0x25a)
@@ -67,7 +66,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 
 | Режим | Класс драйвера | Механизм | Запрос | Коды |
 |---|---|---|---|---|
-| Прямое чтение | — | чтение `process_vm_readv` (raw syscall); запись `process_vm_writev`, защищённые страницы — `/proc/<pid>/mem` транзиентным fd (FOLL_FORCE); при запрете vm_readv политикой — постоянный fd + pread/pwrite | — | — |
+| Прямое чтение | — | только `process_vm_readv`/`process_vm_writev` (raw syscall); `/proc/<pid>/mem` не используется совсем, фоллбэка нет; правки только по rw-памяти | — | — |
 | FT | bing_rw / gongchuang (drivers.7z) | socket(сем.,4,0); команды getsockopt ИЛИ ioctl (поколение 5.10) | `DriverRwReq` 0x28: pid,pad,addr,size,user_buf,magic=0x1337 | auth 0x300, read 0x301, write 0x302; gong: attach 2, vm 4, pte 5/6 |
 | RT-Dev | RTkernel (`rt dev Драйвера root cheat.zip`) | char-устройство `/dev/[A-GNY]{1,6}` + ioctl | `RtDevCopyMem` 0x20: pid,pad,addr,buffer,size (не через границу 4К — транспорт чанкует сам) | read 0x801, write 0x802; base 0x803 |
 | RT-Hook | hookdd/gynhdd (`RT-hook.7z`) | перехват syscall `ioctl`, без сокета и `/dev`-узла | `RtHookCopyMem` 0x20: pid,pad,addr,buffer,size (transport чанкует по 4К) | read 0x259, write 0x25a |

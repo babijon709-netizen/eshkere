@@ -50,8 +50,8 @@
 // которыми пользуется весь остальной код чтения.
 memio::Reader g_mem;
 
-// Способ доступа к памяти: экстернал (process_vm_readv; запись — vm_writev
-// или /proc/<pid>/mem, см. ProcfsTransport), кернел FT (сокет
+// Способ доступа к памяти: экстернал (process_vm_readv/writev без единого
+// fd, см. ProcfsTransport), кернел FT (сокет
 // bing-класса), RT-Dev (/dev/[A-GNY]{1,6} с ioctl 0x801/0x802) или RT-Hook
 // (перехваченный syscall ioctl 0x259/0x25a).
 // Выбирается один раз на старте (экран режима, mode_select.h) до первого

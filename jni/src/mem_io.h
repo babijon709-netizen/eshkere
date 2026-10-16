@@ -1,14 +1,14 @@
 // mem_io.h — доступ к памяти чужого процесса (игра) с хоста читателя.
 //
-// Экстернал «Прямое чтение», v2 (скрытность): чтение идёт через
-// process_vm_readv сырым syscall'ом — дескриптора нет СОВСЕМ, в /proc/<self>/fd
-// чита нечего найти (подробности у ProcfsTransport). Запись — через
-// /proc/<pid>/mem, но fd живёт одну операцию (FOLL_FORCE нужен для правок
-// защищённых страниц). Там, где vm_readv запрещён политикой (SELinux, yama,
-// патченное ядро, seccomp root-менеджера), сессия навсегда переключается на
-// исторический путь: постоянный fd /proc/<pid>/mem с pread/pwrite. Исход
-// отказа один: доступа нет совсем — привязка отклоняется
-// (ESP_ATTACH_NO_ACCESS), и поток привязки повторяет попытку.
+// Экстернал «Прямое чтение», v2 (скрытность): чтение и запись идут только
+// syscall'ами process_vm_readv / process_vm_writev, сырым шлюзом мимо bionic
+// (подробности у ProcfsTransport). /proc/<pid>/mem не открывается ВООБЩЕ —
+// ни на чтение, ни на запись: дескриптора нет, в /proc/<self>/fd чита нечего
+// найти. Фоллбэка на pread/pwrite НЕТ по решению пользователя: там, где
+// vm_readv запрещён политикой (SELinux, yama, патченное ядро, seccomp
+// root-менеджера), доступа нет совсем — проба чтения при bind падает,
+// привязка отклоняется (ESP_ATTACH_NO_ACCESS), поток привязки повторяет
+// попытку.
 //
 // Чтений очень много (ESP на каждого игрока, кости, автофарм): тысячи мелких
 // чтений по 4-8 байт за кадр. Кэш блоков подтягивает 128 байт одним чтением и
@@ -40,7 +40,6 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <mutex>
 
 // arm64 asm-generic; на NDK уже определены в <sys/syscall.h>, guard — для
 // хост-проверки синтаксиса и экзотических тулчейнов.
@@ -158,137 +157,52 @@ public:
     virtual const char* name() const = 0;
 };
 
-// Экстернал «Прямое чтение», v2 — упор на скрытность.
-//
-// ЧТЕНИЕ: process_vm_readv через сырой syscall, мимо bionic-обёртки — хуки
-// сканеров висят на libc-символах вроде pread/pwrite/process_vm_readv, шлюз
-// syscall они не перехватывают. Дескриптора нет СОВСЕМ: в /proc/<self>/fd
-// чита нечего найти, openat("/proc/<pid>/mem") в аудите не появляется,
+// Экстернал «Прямое чтение», v2 — скрытность: память игры трогают только
+// два syscall'а, process_vm_readv / process_vm_writev, через сырой шлюз
+// syscall мимо bionic-обёрток — хуки сканеров висят на libc-символах вроде
+// pread/pwrite/process_vm_readv, шлюз они не перехватывают. Дескриптора нет
+// СОВСЕМ: /proc/<pid>/mem не открывается ни на чтение, ни на запись — в
+// /proc/<self>/fd чита нечего найти, openat в аудите не появляется,
 // ptrace-attach не выполняется (ядро делает только проверку прав), TracerPid
 // жертвы не меняется.
 //
-// ЗАПИСЬ: сначала process_vm_writev (тоже без fd). Если страница защищена
-// (кодовые r-x, r--) — vm_writev бьёт EFAULT, такие страницы запоминаем и
-// дальше пишем сразу через /proc/<pid>/mem: у него FOLL_FORCE, патч проходит.
-// fd при этом живёт одну операцию (open → pwrite → close), окно видимости —
-// микросекунды. Частые записи (фрикам — тысячи в секунду) идут по rw-памяти
-// и fd не порождают вообще.
+// Цена: у vm_writev нет FOLL_FORCE — защищённые страницы (r-x/r--) он не
+// пишет. Правкам чита это не мешает: все они идут по rw-памяти (поля
+// объектов il2cpp, статика libunity/libil2cpp), код не патчим.
 //
-// ФОЛЛБЭК: первый ENOSYS/EPERM/EACCES от vm_readv (политика запретила сам
-// syscall) навсегда переключает сессию на исторический путь — постоянный fd
-// /proc/<pid>/mem с pread/pwrite, как до v2. Отказы адреса (EFAULT/EIO/ESRCH)
-// фоллбэком не считаются: это адрес, а не транспорт.
+// Фоллбэка на /proc/<pid>/mem НЕТ (решение пользователя): запрет syscall'а
+// политикой = доступа нет совсем. Ресурсов на старте нет, доступ подтвердит
+// проба чтения при bind (ELF-заголовок): упала — bind отклонён.
 class ProcfsTransport : public Transport {
 public:
-    const char* name() const override {
-        return use_vm_.load(std::memory_order_relaxed) ? "process_vm_readv"
-                                                       : "/proc/<pid>/mem";
-    }
+    const char* name() const override { return "process_vm_readv"; }
 
-    // Захватывать на старте нечего: доступ подтвердит проба чтения при bind
-    // (ELF-заголовок libil2cpp). Если доступа нет совсем — проба падает, bind
-    // отклоняется, как и прежний «не открылся mem».
-    bool open(pid_t pid) override {
-        std::lock_guard<std::mutex> lk(fd_mu_);
-        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
-        pid_ = pid;
-        use_vm_.store(true, std::memory_order_relaxed);
-        return true;
-    }
+    bool open(pid_t pid) override { pid_ = pid; return true; }
 
-    void close() override {
-        std::lock_guard<std::mutex> lk(fd_mu_);
-        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
-        pid_ = -1;
-        use_vm_.store(true, std::memory_order_relaxed);
-    }
+    void close() override { pid_ = -1; }
 
     ssize_t read_once(uint64_t addr, void* out, size_t len) override {
-        if (!use_vm_.load(std::memory_order_relaxed))
-            return fd_ < 0 ? (errno = EBADF, (ssize_t)-1)
-                           : pread(fd_, out, len, (off_t)addr);
-
         struct iovec local  { out, len };
         struct iovec remote { (void*)(uintptr_t)addr, len };
-        const ssize_t n = (ssize_t)syscall(SYS_process_vm_readv, pid_,
-                                           &local, 1L, &remote, 1L, 0L);
-        if (n >= 0) return n;
-        if (errno != ENOSYS && errno != EPERM && errno != EACCES) return -1;
-
-        // Сам syscall запрещён политикой: липкий переезд на постоянный fd.
-        std::lock_guard<std::mutex> lk(fd_mu_);
-        if (!open_mem_fd_locked()) return -1;        // errno оставлен от open()
-        use_vm_.store(false, std::memory_order_relaxed);
-        return pread(fd_, out, len, (off_t)addr);
+        return (ssize_t)syscall(SYS_process_vm_readv, pid_,
+                                &local, 1L, &remote, 1L, 0L);
     }
 
     ssize_t write_once(uint64_t addr, const void* in, size_t len) override {
-        if (!use_vm_.load(std::memory_order_relaxed))
-            return fd_ < 0 ? (errno = EBADF, (ssize_t)-1)
-                           : pwrite(fd_, in, len, (off_t)addr);
-
-        const uint64_t page = addr & ~0xFFFULL;
-        bool page_needs_mem = false;
-        for (const auto& slot : mem_write_pages_)
-            if (slot.load(std::memory_order_relaxed) == page + 1) { page_needs_mem = true; break; }
-
-        if (!page_needs_mem) {
-            struct iovec local  { (void*)in, len };
-            struct iovec remote { (void*)(uintptr_t)addr, len };
-            const ssize_t n = (ssize_t)syscall(SYS_process_vm_writev, pid_,
-                                               &local, 1L, &remote, 1L, 0L);
-            if (n >= 0) return n;
-            if (errno != EFAULT) return -1;   // EIO/ESRCH/EPERM — отказ как есть
-            // Страница защищена от записи: дальше — через mem (FOLL_FORCE),
-            // и запоминаем страницу, чтобы не платить лишний syscall.
-            mem_write_pages_[mem_write_next_.fetch_add(1, std::memory_order_relaxed) % kMemWritePages]
-                .store(page + 1, std::memory_order_relaxed);
-        }
-
-        // fd живёт одну запись: open → pwrite → close.
-        char path[40];
-        snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid_);
-        int fd = ::open(path, O_WRONLY | O_CLOEXEC);
-        if (fd < 0) fd = ::open(path, O_RDWR | O_CLOEXEC);
-        if (fd < 0) return -1;
-        const ssize_t n = pwrite(fd, in, len, (off_t)addr);
-        const int e = errno;
-        ::close(fd);
-        errno = e;
-        return n;
+        struct iovec local  { (void*)in, len };
+        struct iovec remote { (void*)(uintptr_t)addr, len };
+        return (ssize_t)syscall(SYS_process_vm_writev, pid_,
+                                &local, 1L, &remote, 1L, 0L);
     }
 
-    // Ошибка открытия — самая частая причина «работает только меню»
-    // (SELinux, hidepid, root-менеджер): читатель кладёт её в диагностику.
+    // API совместимости диагностики (учёт отказов открытия ведёт Reader).
     bool last_error_was_open() const { return open_failed_; }
     void reset_open_failed() { open_failed_ = false; }
     void note_open_failed() { open_failed_ = true; }
 
 private:
-    // Только фоллбэк-режим: исторический постоянный fd /proc/<pid>/mem.
-    // Зовётся под fd_mu_, двойного открытия из двух потоков не будет.
-    bool open_mem_fd_locked() {
-        if (fd_ >= 0) return true;
-        char path[40];
-        snprintf(path, sizeof(path), "/proc/%d/mem", (int)pid_);
-        int fd = ::open(path, O_RDWR | O_CLOEXEC);
-        if (fd < 0) fd = ::open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) return false;
-        fd_ = fd;
-        return true;
-    }
-
-    // Диапазон записи не выходит за страницу (записи маленькие, page+1 в
-    // кольце — просто «тут vm_writev уже ударился об защиту»).
-    static constexpr int kMemWritePages = 16;
-
-    int               fd_ = -1;    // только фоллбэк-режим (живёт под fd_mu_)
-    pid_t             pid_ = -1;
-    std::atomic<bool> use_vm_{true};
-    std::mutex        fd_mu_;
-    std::atomic<uint64_t> mem_write_pages_[kMemWritePages] = {};
-    std::atomic<unsigned> mem_write_next_{0};
-    bool              open_failed_ = false;
+    pid_t pid_ = -1;
+    bool  open_failed_ = false;
 };
 
 // Единый экстернал-транспорт (Reader владеет указателем, но не объектом).

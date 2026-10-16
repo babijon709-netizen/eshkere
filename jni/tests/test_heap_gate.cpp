@@ -39,6 +39,17 @@ int main() {
     assert(check(maps, 0x7100000800, Reject::None));
     assert(check(maps, 0x7200000010, Reject::None));
 
+    // Явные области кучи ([anon:scudo:secondary], [anon:scudo:primary]) и
+    // анонимные страницы после именованных регионов не должны наследоваться как
+    // файловый хвост .bss от предыдущего .so отображения.
+    const std::string scudo_after_file_maps =
+        "6fc5f22000-6fc5f23000 rw-p 00002000 fd:01 1234   /apex/com.android.runtime/lib64/bionic/libdl.so\n"
+        "6fc5f23000-6fc5f39000 rw-p 00000000 00:00 0      [anon:scudo:secondary]\n"
+        "6fc5f39000-6fc5f3a000 ---p 00000000 00:00 0      [anon:bionic_alloc_small_objects]\n"
+        "6fc5f3a000-6fc5f80000 rw-p 00000000 00:00 0      \n";
+    assert(check(scudo_after_file_maps, 0x6fc5f24000, Reject::None));
+    assert(check(scudo_after_file_maps, 0x6fc5f40000, Reject::None));
+
     // Хвост файлового отображения (.bss-защита) — и причина, и строка в логе
     // (строка — сам хвост, накрывающий адрес, а не файловая перед ним).
     assert(check(maps, 0x7000002800, Reject::FileTail, "7000002000-7000003000"));

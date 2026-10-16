@@ -108,7 +108,7 @@ inline bool heap_writable_range(const std::string& maps, uint64_t address, size_
         // старое правило отвергало, и быстрая стрельба молчала до смены оружия.
         // Также намеренно отвергаются неизвестные именованные отображения,
         // ashmem и memfd.
-        file_tail = file || (lo == previous_end && file_tail);
+        file_tail = file || (lo == previous_end && file_tail && name_length == 0);
         previous_end = hi;
         if (address >= lo && address < hi) {
             copy_line(line_begin, line_length);
@@ -182,7 +182,7 @@ inline bool heap_writable_ranges(const std::string& maps, std::vector<HeapRange>
         const bool anonymous = name_length == 0 || name_is("[heap]") ||
             name_is("[anon:libc_malloc]") || name_is("[anon:scudo:primary]") ||
             name_is("[anon:scudo:secondary]");
-        file_tail = file || (lo == previous_end && file_tail);
+        file_tail = file || (lo == previous_end && file_tail && name_length == 0);
         previous_end = hi;
 
         if (inode || offset || major || minor || file) continue;

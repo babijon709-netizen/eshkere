@@ -441,12 +441,19 @@ inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = game_offsets::TRANSF
 
 // ---- Chams via OutlineFeature + Ragdoll.LateUpdate MethodInfo hook (beta 11959)
 // Plugins.Outline.OutlineFeature TypeInfo inner slot (outer 0xDB435D8 -> 0xDE9D280).
-inline constexpr std::uint64_t OUTLINE_FEATURE_TYPEINFO_RVA   = 0xDE9D280;
-// Ragdoll.BodyPart TypeInfo inner slot (outer 0xDB78C88 -> 0xDEAA958; declaringType +0x50 = Ragdoll).
-inline constexpr std::uint64_t RAGDOLL_BODYPART_TYPEINFO_RVA  = 0xDEAA958;
+inline constexpr std::uint64_t OUTLINE_FEATURE_TYPEINFO_RVA              = 0xDE9D280;
+// Ragdoll.BodyPart[] TypeInfo inner slot (outer 0xDB78C88 -> 0xDEAA958;
+// element_class +0x40 -> Ragdoll.BodyPart; declaringType +0x50 -> Ragdoll).
+inline constexpr std::uint64_t RAGDOLL_BODYPART_TYPEINFO_RVA             = 0xDEAA958;
 // Ragdoll.LateUpdate RVA (void (Ragdoll* this, MethodInfo* method)).
-inline constexpr std::uint64_t RAGDOLL_LATE_UPDATE_RVA        = 0x76558D8;
+inline constexpr std::uint64_t RAGDOLL_LATE_UPDATE_RVA                   = 0x76558D8;
 // Ymm.YpE RVA (registers this.gameObject + GetComponentsInChildren<Renderer> into OutlineFeature).
-inline constexpr std::uint64_t OUTLINE_REGISTER_COMPONENT_RVA = 0x679A384;
+inline constexpr std::uint64_t OUTLINE_REGISTER_COMPONENT_RVA            = 0x679A384;
+// OutlineFeature.uep(GameObject) RVA (appends GameObject to _outlinePass.TCW with F = false).
+inline constexpr std::uint64_t OUTLINE_REGISTER_GAMEOBJECT_RVA           = 0x5AFDD84;
+// Method$GameObject.GetComponentsInChildren<MeshRenderer>(bool) .bss slot (outer 0xDB435F8).
+inline constexpr std::uint64_t OUTLINE_GET_COMPONENTS_MESH_METHOD_RVA    = 0xDEFD940;
+// Method$GameObject.GetComponentsInChildren<SkinnedMeshRenderer>(bool) .bss slot (outer 0xDB43600).
+inline constexpr std::uint64_t OUTLINE_GET_COMPONENTS_SKINNED_METHOD_RVA = 0xDEFD980;
 
 } // namespace game_offsets_beta

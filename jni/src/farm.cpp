@@ -273,6 +273,7 @@ static void UpdateFarmInner(float dt) {
     static int   s_candFrames = 0;    // сколько кадров подряд он лучший
     static float s_flickerTime = 0.f; // сколько держимся прежнего, с
     static float s_spotAimStuck = 0.f;// сколько не можем довестись в допуск по X
+    static bool s_farmSessionActive = false;
 
     auto releaseAll = [&]() {
         if (s_moveDown) { farmjoy::release(); s_moveDown = false; }
@@ -311,12 +312,20 @@ static void UpdateFarmInner(float dt) {
 
     if (mask == 0 || !g_esp_attached) {
         releaseAll();
+        if (s_farmSessionActive) {
+            // Do not leave a confirmed memory-input candidate latched across
+            // disable/detach; it can point at a stale layer and eat real stick input.
+            farmjoy::reset_session();
+            s_farmSessionActive = false;
+        }
         g_farmActive = false; g_farmPhase = 0; g_farmPaused = false;
         g_farmHpPct = -1.f; g_farmSpotLife = -1.f; g_farmBlocked = false;
         g_farmSpot = 0; g_farmStreak = 0;
         resetNode(); s_settle = 0.f; s_lostTime = 0.f;
         return;
     }
+    s_farmSessionActive = true;
+
     // Aim owns the camera while tracking a player, and calibration owns the
     // physical touch used to select a control zone. Menu and popover windows
     // do not pause farming, so opening its status/settings cannot stop it.

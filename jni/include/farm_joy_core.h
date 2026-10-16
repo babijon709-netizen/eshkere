@@ -59,6 +59,33 @@ public:
         have_last_ = false;
     }
 
+    // New farming session: a previously confirmed layer may have gone stale
+    // while disabled, so do not carry its confirmation/rejection across runs.
+    void reset() {
+        cur_ = 0;
+        last_from_ = 0;
+        armed_ = strong_ = confirmed_ = false;
+        trials_ = 0;
+        trial_ = d0_ = dmin_ = last_dist_ = 0.0f;
+        have_last_ = false;
+        for (int i = 0; i < kMaxCount; ++i) {
+            rejected_[i] = false;
+            fails_[i] = 0;
+            available_[i] = true;
+        }
+    }
+
+    // A confirmed layer that cannot be written anymore must not pin movement
+    // forever. Rotate to another currently available input candidate.
+    void abandon_current() {
+        armed_ = strong_ = confirmed_ = false;
+        trial_ = 0.0f;
+        rejected_[cur_] = true;
+        cur_ = next_candidate(cur_);
+        d0_ = dmin_ = 0.0f;
+        have_last_ = false;
+    }
+
     // Обратная связь кадра: dt — секунды, walk_dist — метры до точки подхода,
     // clean — «ходьба чистая» (фаза подхода, курс вперёд, не манёвр обхода).
     Decision observe(float dt, float walk_dist, bool clean) {

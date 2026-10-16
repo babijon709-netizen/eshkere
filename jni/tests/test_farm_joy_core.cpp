@@ -143,6 +143,29 @@ int main() {
         assert(state.confirmed());
     }
 
+    // 10. A confirmed layer can fail later; abandon rotates instead of pinning it.
+    {
+        TrialState state(kLayers);
+        state.set_armed(true, true);
+        assert(run(state, 0.5f, 12.f, 4.f) == TrialState::CONFIRMED);
+        state.abandon_current();
+        assert(!state.confirmed());
+        assert(state.rejected(0));
+        assert(state.current() == 1);
+    }
+
+    // 11. A new farm session forgets stale confirmation/rejection state.
+    {
+        TrialState state(kLayers);
+        state.set_armed(true, true);
+        assert(run(state, 0.5f, 12.f, -6.f) == TrialState::NEXT);
+        assert(state.rejected(0));
+        state.reset();
+        assert(state.current() == 0);
+        assert(!state.confirmed() && !state.rejected(0));
+        assert(state.trials() == 0);
+    }
+
     std::printf("test_farm_joy_core: ok\n");
     return 0;
 }

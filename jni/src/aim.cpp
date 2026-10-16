@@ -178,6 +178,8 @@ struct AimPick {
     unsigned long long lastId = 0;
     int lastBone = -1;
     aim_control::AngleFilter angleFilter{};
+    float screenX = 0.0f, screenY = 0.0f;
+    bool screenReady = false;
     bool filterUsesCamera = false;
     bool filterModeSet = false;
     bool switched = false;
@@ -188,6 +190,8 @@ struct AimPick {
         switched = false;
         filterUsesCamera = false;
         filterModeSet = false;
+        screenX = screenY = 0.0f;
+        screenReady = false;
         angleFilter.reset();
     }
 };
@@ -533,7 +537,10 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
 
     const bool targetChanged = best.id != pick.lastId;
     const bool selectionChanged = targetChanged || best.bone != pick.lastBone;
-    if (selectionChanged) pick.angleFilter.reset();
+    if (selectionChanged) {
+        pick.angleFilter.reset();
+        pick.screenReady = false;
+    }
     if (g_state.aim_mode == AIM_MODE_MEMORY) {
         float filteredYaw = best.yaw;
         float filteredPitch = best.pitch;
@@ -545,7 +552,9 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
             pick.filterUsesCamera = haveCamera;
             pick.filterModeSet = true;
         }
-        float timeConstant = 0.050f;
+        // Bone pose snapshots contain short lateral jitter; a 100 ms filter
+        // keeps the memory writer from converting that noise into camera drift.
+        float timeConstant = 0.100f;
         if (best.world_dist > 0.0f && best.world_dist < 12.0f) timeConstant *= 0.75f;
         if (haveCamera) {
             filteredYaw = WrapDeg180(cameraYaw + filteredYaw);
@@ -624,8 +633,25 @@ static void UpdateAimTouch(float dt) {
         return;
     }
 
+    // Bone transforms can wobble a few pixels from animation and asynchronous
+    // snapshots even when the player is stationary. Filter the target point in
+    // screen space before integrating touch motion; otherwise each noisy sample
+    // becomes a real camera movement and the lock walks sideways.
+    if (!s_touchPick.screenReady) {
+        s_touchPick.screenX = best.sx;
+        s_touchPick.screenY = best.sy;
+        s_touchPick.screenReady = true;
+    } else {
+        const float alpha = 1.0f - expf(-dt / 0.10f);
+        float dxTarget = best.sx - s_touchPick.screenX;
+        float dyTarget = best.sy - s_touchPick.screenY;
+        if (fabsf(dxTarget) < 0.75f) dxTarget = 0.0f;
+        if (fabsf(dyTarget) < 0.75f) dyTarget = 0.0f;
+        s_touchPick.screenX += dxTarget * alpha;
+        s_touchPick.screenY += dyTarget * alpha;
+    }
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
-    const float ex = best.sx - crossX, ey = best.sy - crossY;
+    const float ex = s_touchPick.screenX - crossX, ey = s_touchPick.screenY - crossY;
     if (fabsf(ex) < 2.5f && fabsf(ey) < 2.5f) return;
 
     if (!s_fingerDown) {

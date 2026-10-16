@@ -458,10 +458,12 @@ bool command(float x, float y) {
     if (!alive(s_targets[cur])) revalidate(cur);
     if (!alive(s_targets[cur])) {
         s_why = s_targets[cur].why;
+        s_trial.abandon_current();
         return false;
     }
     if (!write_target(s_targets[cur], x, y)) {
         s_why = WHY_WRITE;
+        s_trial.abandon_current();
         return false;
     }
     s_why = WHY_OK;
@@ -536,6 +538,17 @@ void release() {
         zero_target(s_targets[c]);
         s_touched[c] = false;
     }
+}
+
+void reset_session() {
+    release();
+    s_trial.reset();
+    s_age = kResolveT;
+    s_prev_ok = false;
+    s_ack = 0.0f;
+    s_sprint_base_known = false;
+    s_sprint_direct = false;
+    s_sprint_miss = 0;
 }
 
 void observe(float walk_dist, bool clean) {

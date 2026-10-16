@@ -109,7 +109,9 @@ inline float memory_step(float error_degrees, float dt, float speed,
     if (speed > 10.0f) speed = 10.0f;
     float deadband = 0.015f;
     if (range_metres > 0.0f && finite(range_metres)) {
-        const float bone_tolerance = std::atan(0.004f / range_metres) * 57.2957795f;
+        // Ignore sub-2 cm bone motion from pose/read jitter; below this the
+        // correct command is no movement, not chasing a different snapshot.
+        const float bone_tolerance = std::atan(0.02f / range_metres) * 57.2957795f;
         deadband = std::max(deadband, bone_tolerance);
     }
     if (std::fabs(error_degrees) <= deadband) return 0.0f;

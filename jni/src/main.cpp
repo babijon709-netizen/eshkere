@@ -35,11 +35,11 @@
 #include <thread>
 
 // Диагностика кернел-режима из терминала (Termux/adb), без оверлея и игры:
-//   su -c /data/local/tmp/xvcen --check-driver   — базовая проверка
-//   su -c /data/local/tmp/xvcen --scan-driver    — + полный скан кодов команд
-//   su -c /data/local/tmp/xvcen dump             — рантайм-дамп global-metadata.dat
+//   su -c /data/local/tmp/benzware --check-driver   — базовая проверка
+//   su -c /data/local/tmp/benzware --scan-driver    — + полный скан кодов команд
+//   su -c /data/local/tmp/benzware dump             — рантайм-дамп global-metadata.dat
 //                                                  запущенной игры в benzware/dump/
-//   su -c /data/local/tmp/xvcen skel             — диагностика конвейера костей
+//   su -c /data/local/tmp/benzware skel             — диагностика конвейера костей
 //                                                  (почему нет скелетов)
 // Печатает: root/не root, ядро, семейство сокета FT-драйвера и класс маячка,
 // живые пробы команд по собственной памяти (оба известных протокола FT),
@@ -54,7 +54,7 @@ namespace driver_check {
 static int Run(bool full_scan) {
     struct utsname un{};
     if (uname(&un) != 0) un.release[0] = 0;
-    printf("== xvcen: проверка кернел режима%s ==\n",
+    printf("== benzware: проверка кернел режима%s ==\n",
            full_scan ? " (полный скан кодов команд)" : "");
     printf("ядро устройства : %s\n", un.release);
     printf("uid / euid      : %d / %d%s\n", getuid(), geteuid(),
@@ -62,7 +62,7 @@ static int Run(bool full_scan) {
     if (geteuid() != 0)
         printf("!! кернел режим требует root: сокет драйвера создаётся только\n"
                "   привилегированным процессом, без root маячок не виден.\n"
-               "   Запуск: su -c <путь>/xvcen\n");
+               "   Запуск: su -c <путь>/benzware\n");
 
     // 1) Поиск семейства сокета FT-драйвера по маячку на пробе socket(fam, 6, 0):
     //    1338 — bing-класс, 126/ENOKEY — gongchuang-класс. Раннего выхода
@@ -236,7 +236,7 @@ static int Run(bool full_scan) {
         printf("итог            : коды команд НЕ подтверждены. Включай кернел в меню —\n"
                "                  привязка к игре проверит транспорт по-настоящему;\n"
                "                  если откажет (тост с errno) — пришли вывод:\n"
-               "                  su -c <путь>/xvcen --scan-driver\n");
+               "                  su -c <путь>/benzware --scan-driver\n");
         return 2;
     }
     printf("итог            : НИ ОДИН класс драйвера не найден (FT/RT-Dev/RT-Hook).\n"
@@ -279,7 +279,7 @@ static void ArmShutdownDeadline() {
 }
 
 int main(int argc, char* argv[]) {
-    // Проверка драйвера из терминала (Termux/adb): su -c ./xvcen --check-driver
+    // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
     // (базовая) или --scan-driver (полный скан кодов команд) — без GUI,
     // до запуска оверлея и игры.
     // dump — рантайм-дамп global-metadata.dat из памяти запущенной игры

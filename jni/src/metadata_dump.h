@@ -2,9 +2,9 @@
 // metadata_dump.h — CLI-команда dump: рантайм-дамп global-metadata.dat из
 // памяти ЗАПУЩЕННОЙ игры, из Termux:
 //
-//     su -c /data/local/tmp/xvcen dump                  // режим из .mode
-//     su -c /data/local/tmp/xvcen dump external         // режим аргументом
-//     su -c /data/local/tmp/xvcen dump rt-dev 12345     // режим + конкретный pid
+//     su -c /data/local/tmp/benzware dump                  // режим из .mode
+//     su -c /data/local/tmp/benzware dump external         // режим аргументом
+//     su -c /data/local/tmp/benzware dump rt-dev 12345     // режим + конкретный pid
 //
 // Зачем: офсеты чита привязаны к сборке игры, а обфускатор перекатывает их на
 // каждом обновлении. Дамп метаданных — первый шаг пересбора офсетов: его
@@ -1076,7 +1076,7 @@ static int Run(int argc, char* argv[]) {
             mode_arg = a;
         } else {
             printf("не понимаю аргумент: %s\n", a);
-            printf("использование: xvcen dump [external|ft|rt-dev|rt-hook] [pid]\n");
+            printf("использование: benzware dump [external|ft|rt-dev|rt-hook] [pid]\n");
             return 1;
         }
     }
@@ -1098,11 +1098,11 @@ static int Run(int argc, char* argv[]) {
 
     Log log;
     log.open((dump_dir + "/dump.log").c_str());
-    log.say("== xvcen dump: рантайм-дамп global-metadata.dat ==");
+    log.say("== benzware dump: рантайм-дамп global-metadata.dat ==");
     log.say("uid/euid : %d / %d%s", (int)getuid(), (int)geteuid(),
             geteuid() == 0 ? " (root)" : "  <-- НЕ ROOT");
     if (geteuid() != 0)
-        log.say("!! нужен root: su -c <путь>/xvcen dump");
+        log.say("!! нужен root: su -c <путь>/benzware dump");
     log.say("режим    : %s%s", backend_name(backend),
             mode_arg ? " (аргументом)" : " (сохранённый)");
     log.say("каталог  : %s", dump_dir.c_str());
@@ -1192,9 +1192,9 @@ static int Run(int argc, char* argv[]) {
     if (!bound) {
         log.say("!! транспорт не смог читать память процесса: errno %d.",
                 esp_mem_last_errno());
-        log.say("   Проверь драйвер:  xvcen --check-driver");
+        log.say("   Проверь драйвер:  benzware --check-driver");
         log.say("   Или перезапусти с другим режимом ЯВНЫМ аргументом: "
-                "xvcen dump external");
+                "benzware dump external");
         return 1;
     }
 
@@ -1328,10 +1328,10 @@ static int Run(int argc, char* argv[]) {
                 (double)scanned / (1024.0 * 1024.0));
         log.say("   Значит, протектор держит её нестандартно. Что попробовать:");
         if (backend != ESP_MEM_EXTERNAL)
-            log.say("   1) другой режим чтения: xvcen dump external");
+            log.say("   1) другой режим чтения: benzware dump external");
         else
             log.say("   1) режимы драйвера видят страницы, закрытые для "
-                    "прямого чтения: xvcen dump ft | rt");
+                    "прямого чтения: benzware dump ft | rt");
         log.say("   2) подожди пару минут на сервере (метадата могла ещё не "
                 "расшифроваться) и перезапусти дамп");
         log.say("   3) пришли %s/dump.log и maps-%d.txt — по ним видно, "

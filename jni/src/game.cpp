@@ -8607,6 +8607,7 @@ static uint64_t s_presenter_map_mgr       = 0;
 static uint64_t s_presenter_marker_svc    = 0;
 static uint64_t s_vis_local_player        = 0;
 static std::unordered_map<uint64_t, uint64_t> s_view_occlusion_mod;
+static std::unordered_map<uint64_t, uint8_t>  s_view_probe_slot;
 
 static void reset_vis_caches() {
     s_vis_tracker.reset();
@@ -8616,13 +8617,15 @@ static void reset_vis_caches() {
     s_presenter_marker_svc    = 0;
     s_vis_local_player        = 0;
     s_view_occlusion_mod.clear();
+    s_view_probe_slot.clear();
 }
 
 struct NearbyPlayerOccSample {
-    uint64_t model_tr = 0;
+    uint64_t model_tr  = 0;
     Vec3     world_pos{};
     Vec3     head_pos{};
-    bool     visible = false;
+    bool     visible   = false;
+    bool     alt_point = false;
 };
 
 static bool looks_like_screen_marker_presenter(uint64_t obj) {
@@ -8634,7 +8637,7 @@ static bool looks_like_screen_marker_presenter(uint64_t obj) {
     if (!valid_obj(view_dict) || !valid_obj(marker_list) || !valid_obj(inst_dict)) return false;
     const int32_t d_cnt = rd<int32_t>(view_dict + DICT_COUNT);
     const int32_t l_cnt = rd<int32_t>(marker_list + IL2CPP_LIST_SIZE);
-    return d_cnt >= 0 && d_cnt <= 512 && l_cnt >= 0 && l_cnt <= 512;
+    return d_cnt >= 0 && d_cnt <= 4096 && l_cnt >= 0 && l_cnt <= 4096;
 }
 
 static uint64_t resolve_screen_marker_presenter() {
@@ -8686,6 +8689,7 @@ static uint64_t resolve_screen_marker_presenter() {
         s_presenter_marker_svc    = marker_svc;
         s_screen_marker_presenter = 0;
         s_view_occlusion_mod.clear();
+        s_view_probe_slot.clear();
         s_vis_tracker.reset();
     }
 
@@ -8909,13 +8913,17 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
     if (!valid_obj(dict)) return;
     int32_t count = rd<int32_t>(dict + DICT_COUNT);
     if (count <= 0) return;
-    if (count > 128) count = 128;
     const uint64_t entries = rd_ptr(dict + DICT_ENTRIES);
     if (!valid_obj(entries)) return;
+    const int32_t arr_len = rd<int32_t>(entries + IL2CPP_ARRAY_LENGTH);
+    if (arr_len > 0 && count > arr_len) count = arr_len;
+    if (count > 2048) count = 2048;
 
     static std::vector<uint8_t> s_dict_buf;
     s_dict_buf.resize((size_t)count * DICT_ENTRY_STRIDE);
     if (!rd_buf(entries + IL2CPP_ARRAY_FIRST_ELEMENT, s_dict_buf.data(), s_dict_buf.size())) return;
+
+    const float cam_pos_arr[3] = {g_frame_cam_pos.x, g_frame_cam_pos.y, g_frame_cam_pos.z};
 
     for (int32_t i = 0; i < count; ++i) {
         const uint8_t* slot = s_dict_buf.data() + (size_t)i * DICT_ENTRY_STRIDE;
@@ -8959,24 +8967,61 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
             wr_buf(view + NEARBY_VIEW_CACHED_HIT, &zero_b, sizeof(zero_b));
         }
 
-        // Na::Tick (0x5CFDC60..0x5CFDCC8) каждый кадр обновляет data + 0x28
-        // (MARKER_DATA_HEAD_POS = PlayerModelInfo.body.position + (0, 1.0, 0)), а
-        // NearbyPlayerScreenMarkerView::Tick (0x5D0C63C) копирует data + 0x28 в
-        // [view + 0x80] + 0x44 (MARKER_CTX_RAY_TARGET). Не перезаписываем data + 0x28
-        // боном головы из внешнего потока (внутри PlayerModelInfo.headModel находится
-        // собственный BoxCollider головы, а кости SkinnedMeshRenderer могут отставать
-        // при куллинге аниматора), а только страхуем ctx + 0x44, если он ещё пуст,
-        // и сбрасываем Rsp (+0x50) во всех контекстах маркера.
+        // Na::Tick (0x5CFDC60..0x5CFDCC8) каждый кадр в Update записывает в data + 0x28
+        // (MARKER_DATA_HEAD_POS) точку на уровне пояса (body.position + (0, 1.0, 0)), а
+        // в data + 0x1C (MARKER_DATA_WORLD_POS) — точку над головой (head.position + (0, 0.25, 0)).
+        // В LateUpdate сначала выполняется OcclusionModule::Tick (0x5D0C390), читающий
+        // ctx + 0x44 (MARKER_CTX_RAY_TARGET), и только в самом конце LateUpdate (0x5D0C63C)
+        // NearbyPlayerScreenMarkerView::Tick копирует data + 0x28 в ctx + 0x44.
+        // Если дефолтная точка пояса (слот 0) перекрыта перилами, забором или балкой ЛЭП,
+        // циклически перебираем 5 анатомических точек (пояс, голова, верх груди, левое и
+        // правое плечо) через ctx + 0x44 и фиксируемся на первой открытой точке.
         const Vec3 world_pos = rd_v3(data + MARKER_DATA_WORLD_POS);
         const Vec3 head_pos  = rd_v3(data + MARKER_DATA_HEAD_POS);
-        Vec3 fallback_tgt{};
-        bool have_fallback_tgt = false;
-        if (vec3_is_finite(head_pos) && !position_near_world_origin(head_pos)) {
-            fallback_tgt      = head_pos;
-            have_fallback_tgt = true;
-        } else if (vec3_is_finite(world_pos) && !position_near_world_origin(world_pos)) {
-            fallback_tgt      = {world_pos.x, world_pos.y - 0.25F, world_pos.z};
-            have_fallback_tgt = true;
+        const bool world_ok  = vec3_is_finite(world_pos) && !position_near_world_origin(world_pos);
+        const bool head_ok   = vec3_is_finite(head_pos)  && !position_near_world_origin(head_pos);
+
+        Vec3 base_torso{};
+        bool have_base_torso = false;
+        if (head_ok) {
+            base_torso      = head_pos;
+            have_base_torso = true;
+        } else if (world_ok) {
+            base_torso      = {world_pos.x, world_pos.y - 0.80F, world_pos.z};
+            have_base_torso = true;
+        }
+
+        const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
+        const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
+
+        uint8_t cur_slot  = 0;
+        uint8_t next_slot = 0;
+        auto slot_it = s_view_probe_slot.find(view);
+        if (slot_it != s_view_probe_slot.end()) {
+            cur_slot = slot_it->second % 5;
+        }
+        if (has_val != 0) {
+            next_slot = (is_occ == 0) ? cur_slot : static_cast<uint8_t>((cur_slot + 1) % 5);
+            if (s_view_probe_slot.size() > 256 && slot_it == s_view_probe_slot.end()) {
+                s_view_probe_slot.clear();
+            }
+            s_view_probe_slot[view] = next_slot;
+        }
+
+        Vec3 probe_tgt = base_torso;
+        if (have_base_torso) {
+            const float base_arr[3]  = {base_torso.x, base_torso.y, base_torso.z};
+            const float world_arr[3] = {world_pos.x, world_pos.y, world_pos.z};
+            float out_arr[3]         = {base_torso.x, base_torso.y, base_torso.z};
+            vis_check::compute_probe_target_point(
+                static_cast<int>(next_slot),
+                base_arr, world_arr, world_ok,
+                cam_pos_arr, g_frame_cam_basis_valid,
+                out_arr);
+            probe_tgt = {out_arr[0], out_arr[1], out_arr[2]};
+            if (next_slot != 0) {
+                wr_buf(data + MARKER_DATA_HEAD_POS, &probe_tgt, sizeof(probe_tgt));
+            }
         }
 
         const uint64_t ctxs[3] = {
@@ -8998,24 +9043,22 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
                 wr_buf(c + MARKER_CTX_SKIP_OCCLUSION, &zero_b, sizeof(zero_b));
             }
             const Vec3 cur_ray_tgt = rd_v3(c + MARKER_CTX_RAY_TARGET);
-            if (vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt)) {
+            const bool cur_tgt_ok  = vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt);
+            if (have_base_torso && (next_slot != 0 || !cur_tgt_ok)) {
+                wr_buf(c + MARKER_CTX_RAY_TARGET, &probe_tgt, sizeof(probe_tgt));
                 any_ctx_ready = true;
-            } else if (have_fallback_tgt) {
-                wr_buf(c + MARKER_CTX_RAY_TARGET, &fallback_tgt, sizeof(fallback_tgt));
+            } else if (cur_tgt_ok) {
                 any_ctx_ready = true;
             }
         }
-        if (!any_ctx_ready) continue;
-
-        const uint8_t has_val = rd<uint8_t>(occ + OCCLUSION_MOD_HAS_VAL);
-        const uint8_t is_occ  = rd<uint8_t>(occ + OCCLUSION_MOD_IS_OCCLUDED);
-        if (has_val == 0) continue;
+        if (!any_ctx_ready || has_val == 0) continue;
 
         NearbyPlayerOccSample sample{};
         sample.model_tr  = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
         sample.world_pos = world_pos;
-        sample.head_pos  = have_fallback_tgt ? fallback_tgt : head_pos;
+        sample.head_pos  = have_base_torso ? base_torso : head_pos;
         sample.visible   = (is_occ == 0);
+        sample.alt_point = (cur_slot != 0);
         out.push_back(sample);
     }
 }
@@ -9132,6 +9175,7 @@ static void evaluate_boxes_visibility(uint64_t local_player,
         s_vis_local_player        = local_player;
         s_screen_marker_presenter = 0;
         s_view_occlusion_mod.clear();
+        s_view_probe_slot.clear();
         s_vis_tracker.reset();
     }
 
@@ -9150,24 +9194,48 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     static std::vector<NearbyPlayerOccSample> s_occ_samples;
     collect_nearby_player_occlusion(local_player, s_occ_samples);
 
-    // 2. Чтение RaycastManager (RaycastData +0x160 использует m_LayerMask со стенами).
-    //    ВАЖНО: AimRaycast (local_eh + 0x168) использует m_AimLayerMask (rm + 0x4C),
-    //    в которой НЕТ слоёв стен/построек/рельефа — поэтому растягивание
-    //    m_AimRayLength (+0x3C) до 300м заставляет SphereCast пробивать стены
-    //    насквозь и выставлять hit_player = враг при наведении прицела на бокс.
+    // 2. Настройка и чтение RaycastManager (RaycastData +0x160 и AimRaycast +0x168):
+    //    Добавляем в m_AimLayerMask (rm + 0x4C) маску твёрдых стен/построек/рельефа
+    //    (Default | Construction | Terrain, на которых нет коллайдеров локального игрока),
+    //    сужаем радиус SphereCast (rm + 0x40) до 2 см (0.02м, чтобы луч проходил сквозь
+    //    перила и проёмы ЛЭП) и выставляем дальность m_AimRayLength (rm + 0x3C) = 350м.
+    int32_t solid_wall_mask = 0;
+    int32_t strip_prop_mask = 0;
+    resolve_solid_wall_masks(solid_wall_mask, strip_prop_mask);
+
     const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
     const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
     uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
     if (!valid_obj(rm) && valid_obj(cur_wpn)) rm = rd_ptr(cur_wpn + FPOBJECT_RAYCAST_MANAGER);
 
-    const bool  aim_ray_configured = false;
-    const float aim_ray_len        = 1.5F;
+    bool  aim_ray_configured = false;
+    float aim_ray_len        = 1.5F;
     if (valid_obj(rm) && rd_ptr(rm + RAYCASTMAN_PLAYER) == local_player) {
         const bool is_melee = weapon_is_melee_class(cur_wpn);
-        const float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
-        if (!is_melee && std::isfinite(cur_aim_len) && cur_aim_len > 10.0F) {
-            const float zero_f = 0.0F;
-            wr_buf(rm + RAYCASTMAN_AIM_RAY_LENGTH, &zero_f, sizeof(zero_f));
+        if (!is_melee && solid_wall_mask > 0) {
+            const int32_t cur_aim_mask = rd<int32_t>(rm + RAYCASTMAN_AIM_LAYER_MASK);
+            if (cur_aim_mask > 0) {
+                const int32_t desired_aim_mask = cur_aim_mask | solid_wall_mask;
+                if (cur_aim_mask != desired_aim_mask) {
+                    wr_buf(rm + RAYCASTMAN_AIM_LAYER_MASK, &desired_aim_mask, sizeof(desired_aim_mask));
+                }
+                const float cur_rad = rd<float>(rm + RAYCASTMAN_SPHERE_RADIUS);
+                if (!std::isfinite(cur_rad) || cur_rad <= 0.001F || cur_rad > 0.05F) {
+                    const float desired_rad = vis_check::kDesiredSphereRadius;
+                    wr_buf(rm + RAYCASTMAN_SPHERE_RADIUS, &desired_rad, sizeof(desired_rad));
+                }
+                const float cur_aim_len = rd<float>(rm + RAYCASTMAN_AIM_RAY_LENGTH);
+                if (!std::isfinite(cur_aim_len) ||
+                    fabsf(cur_aim_len - vis_check::kDesiredAimRayLength) > 1.0F) {
+                    const float desired_len = vis_check::kDesiredAimRayLength;
+                    wr_buf(rm + RAYCASTMAN_AIM_RAY_LENGTH, &desired_len, sizeof(desired_len));
+                }
+                if ((cur_aim_mask & solid_wall_mask) == solid_wall_mask &&
+                    std::isfinite(cur_aim_len) && cur_aim_len >= 50.0F) {
+                    aim_ray_configured = true;
+                    aim_ray_len        = cur_aim_len;
+                }
+            }
         }
     }
 
@@ -9175,6 +9243,9 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     const uint64_t local_eh = rd_ptr(local_player + PLAYER_EVENT_HANDLER);
     if (valid_obj(local_eh)) {
         read_gko_ray_sample(rd_ptr(local_eh + GUM_RAYCAST_DATA), local_player, primary_ray);
+        if (aim_ray_configured) {
+            read_gko_ray_sample(rd_ptr(local_eh + GUM_AIM_RAYCAST), local_player, aim_ray);
+        }
     }
 
     // 3. Пассивное чтение AimAssist (hwR / YuB) без записи в его поля:
@@ -9273,8 +9344,9 @@ static void evaluate_boxes_visibility(uint64_t local_player,
                     }
                 }
                 if (match) {
-                    tg.occlusion_known   = true;
-                    tg.occlusion_visible = occ.visible;
+                    tg.occlusion_known     = true;
+                    tg.occlusion_visible   = occ.visible;
+                    tg.occlusion_alt_point = occ.alt_point;
                     break;
                 }
             }

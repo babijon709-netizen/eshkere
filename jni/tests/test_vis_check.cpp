@@ -100,9 +100,9 @@ void test_marker_occlusion_and_rays() {
     t1.event_handler = 0x1100;
     t1.aim_target = 0x1200;
     t1.aim_collider = 0x1300;
-    t1.feet[0] = 0.0f; t1.feet[1] = 0.0f; t1.feet[2] = 20.0f;
-    t1.head[0] = 0.0f; t1.head[1] = 1.6f; t1.head[2] = 20.0f;
-    t1.distance = 20.0f;
+    t1.feet[0] = 0.0f; t1.feet[1] = 0.0f; t1.feet[2] = 50.0f;
+    t1.head[0] = 0.0f; t1.head[1] = 1.6f; t1.head[2] = 50.0f;
+    t1.distance = 50.0f;
     t1.screen_dist_px = 15.0f;
     t1.occlusion_known = true;
     t1.occlusion_visible = false; // Behind wall according to OcclusionModule
@@ -112,9 +112,9 @@ void test_marker_occlusion_and_rays() {
     t2.event_handler = 0x2100;
     t2.aim_target = 0x2200;
     t2.aim_collider = 0x2300;
-    t2.feet[0] = 5.0f; t2.feet[1] = 0.0f; t2.feet[2] = 35.0f;
-    t2.head[0] = 5.0f; t2.head[1] = 1.6f; t2.head[2] = 35.0f;
-    t2.distance = 35.4f;
+    t2.feet[0] = 5.0f; t2.feet[1] = 0.0f; t2.feet[2] = 65.0f;
+    t2.head[0] = 5.0f; t2.head[1] = 1.6f; t2.head[2] = 65.0f;
+    t2.distance = 65.2f;
     t2.screen_dist_px = 120.0f;
     t2.occlusion_known = true;
     t2.occlusion_visible = true; // Visible according to OcclusionModule
@@ -128,15 +128,14 @@ void test_marker_occlusion_and_rays() {
     assert(!tracker.is_visible(t1, 1.0));
     assert(tracker.is_visible(t2, 1.0));
 
-    // When t1 has an authoritative OcclusionModule sample (occlusion_known = true,
-    // occlusion_visible = false), even a wall-piercing AimRaycast hit on t1.id
-    // or a lingering AimAssist cur_target with hit_flag = false MUST NOT flip t1 green!
+    // When AimRaycast is NOT wall-configured (aim_ray_configured = false) or
+    // AimAssist has hit_flag = false (hwR.tjN == 0 behind a wall), t1 MUST NOT flip green!
     RaySample aim_ray{};
     aim_ray.valid = true;
     aim_ray.hit_player = t1.id;
-    aim_ray.distance = 20.0f;
+    aim_ray.distance = 50.0f;
     aim_ray.point_valid = true;
-    aim_ray.point[0] = 0.0f; aim_ray.point[1] = 1.2f; aim_ray.point[2] = 20.0f;
+    aim_ray.point[0] = 0.0f; aim_ray.point[1] = 1.2f; aim_ray.point[2] = 50.0f;
 
     AimAssistSnapshot snap_wall_linger{};
     snap_wall_linger.valid = true;
@@ -147,15 +146,21 @@ void test_marker_occlusion_and_rays() {
     snap_wall_linger.hit_flag = false; // hwR.tjN == 0 when blocked by wall in hwR::ohb
 
     tracker.consume_hwr_snapshot(snap_wall_linger, targets, 1.05);
-    tracker.update_from_rays(empty_ray, aim_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.05);
+    tracker.update_from_rays(empty_ray, aim_ray, false, 1.5f, true, cam_pos, cam_fwd, targets, 1.05);
     assert(!tracker.is_visible(targets[0], 1.05));
 
-    // Direct camera ray hit on a target WITHOUT OcclusionModule (e.g., bot) marks it visible
+    // However, when AimRaycast IS wall-masked (aim_ray_configured = true, Default|Construction|Terrain)
+    // and directly hits t1's hitbox under the crosshair (e.g. head peeking over a railing),
+    // it overrides the blocked waist OcclusionModule ray and marks t1 visible!
+    tracker.update_from_rays(empty_ray, aim_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.08);
+    assert(tracker.is_visible(targets[0], 1.08));
+
+    // Direct camera ray hit on a target WITHOUT OcclusionModule (e.g., bot or 200+m player) marks it visible
     targets[0].occlusion_known = false;
-    tracker.update_from_rays(empty_ray, aim_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.1);
+    tracker.update_from_rays(empty_ray, aim_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.1);
     assert(tracker.is_visible(targets[0], 1.1));
 
-    // Wall hit at 8m along the same ray occludes t1 at 20m
+    // Wall hit at 8m along the same ray occludes t1 at 50m
     RaySample wall_ray{};
     wall_ray.valid = true;
     wall_ray.hit_player = 0;
@@ -164,7 +169,7 @@ void test_marker_occlusion_and_rays() {
     wall_ray.point_valid = true;
     wall_ray.point[0] = 0.0f; wall_ray.point[1] = 1.5f; wall_ray.point[2] = 8.0f;
 
-    tracker.update_from_rays(empty_ray, wall_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.3);
+    tracker.update_from_rays(empty_ray, wall_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.3);
     assert(!tracker.is_visible(targets[0], 1.3));
 
     // Shipping container wall hit in front of t1 (1.2m in front of player,
@@ -173,38 +178,103 @@ void test_marker_occlusion_and_rays() {
     close_container_ray.valid = true;
     close_container_ray.hit_player = 0;
     close_container_ray.hit_entity = 0;
-    close_container_ray.distance = 18.8f;
+    close_container_ray.distance = 48.8f;
     close_container_ray.point_valid = true;
     close_container_ray.point[0] = 0.0f;
     close_container_ray.point[1] = 1.2f;
-    close_container_ray.point[2] = 18.8f;
-    assert(evaluate_ray_for_target(empty_ray, close_container_ray, true, 300.0f, true, cam_pos, cam_fwd, targets[0]) == -1);
+    close_container_ray.point[2] = 48.8f;
+    assert(evaluate_ray_for_target(empty_ray, close_container_ray, true, 350.0f, true, cam_pos, cam_fwd, targets[0]) == -1);
 
     // Empty GKo when Fox rejects a shipping container must return 0 (inconclusive), never +1!
-    assert(evaluate_ray_for_target(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets[0]) == 0);
+    assert(evaluate_ray_for_target(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets[0]) == 0);
 
-    // 1-frame container seam blip (occlusion_visible=true for 1 frame while occluded)
+    // 1-frame container seam blip on default torso slot (occlusion_alt_point = false) at 50m
     // must NOT flash visible; 2 consecutive visible frames transition to visible.
     targets[0].occlusion_known = true;
+    targets[0].occlusion_alt_point = false;
     targets[0].occlusion_visible = true;
-    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.316);
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.316);
     assert(!tracker.is_visible(targets[0], 1.316)); // 1st frame blip suppressed!
 
-    targets[0].occlusion_visible = false;
-    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.332);
-    assert(!tracker.is_visible(targets[0], 1.332)); // back behind container
+    for (int k = 0; k < kOcclusionHoldTicks; ++k) {
+        targets[0].occlusion_visible = false;
+        tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.332 + k * 0.016);
+    }
+    assert(!tracker.is_visible(targets[0], 1.430)); // back behind container
 
     // Now genuinely peeks out for 2 consecutive frames -> becomes visible
     targets[0].occlusion_visible = true;
-    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.348);
-    assert(!tracker.is_visible(targets[0], 1.348));
-    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.364);
-    assert(tracker.is_visible(targets[0], 1.364));
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.450);
+    assert(!tracker.is_visible(targets[0], 1.450));
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.466);
+    assert(tracker.is_visible(targets[0], 1.466));
 
-    // And the instant he steps back behind the container, 0-frame lag -> occluded immediately
+    // Behind a powerline lattice bar (1-3 occluded probe slots while sweeping the 5 body points),
+    // t1 stays visible without flickering red; once all 5 points stay occluded behind a solid
+    // container (>= kOcclusionHoldTicks and >= kOcclusionHoldSec), t1 becomes occluded.
     targets[0].occlusion_visible = false;
-    tracker.update_from_rays(empty_ray, empty_ray, true, 300.0f, true, cam_pos, cam_fwd, targets, 1.380);
-    assert(!tracker.is_visible(targets[0], 1.380));
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.482);
+    assert(tracker.is_visible(targets[0], 1.482)); // held across single blocked lattice bar!
+    for (int k = 1; k < kOcclusionHoldTicks; ++k) {
+        tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam_pos, cam_fwd, targets, 1.482 + k * 0.030);
+    }
+    assert(!tracker.is_visible(targets[0], 1.482 + kOcclusionHoldTicks * 0.030));
+}
+
+void test_multi_point_railing_and_long_range() {
+    using namespace vis_check;
+    const float torso[3] = {10.0f, 1.0f, 80.0f};
+    const float world[3] = {10.0f, 1.80f, 80.0f};
+    const float cam[3]   = {10.0f, 1.6f, 0.0f};
+    float pt0[3]{}, pt1[3]{}, pt2[3]{}, pt3[3]{}, pt4[3]{};
+
+    compute_probe_target_point(0, torso, world, true, cam, true, pt0);
+    compute_probe_target_point(1, torso, world, true, cam, true, pt1);
+    compute_probe_target_point(2, torso, world, true, cam, true, pt2);
+    compute_probe_target_point(3, torso, world, true, cam, true, pt3);
+    compute_probe_target_point(4, torso, world, true, cam, true, pt4);
+
+    // Slot 0 = torso (1.0m), Slot 1 = head (~1.58m), Slot 2 = upper chest (~1.32m),
+    // Slot 3 & 4 = left/right shoulders (+/-0.24m perpendicular to camera ray).
+    assert(std::fabs(pt0[1] - 1.0f) < 1e-4f);
+    assert(pt1[1] > 1.50f);
+    assert(pt2[1] > pt0[1] && pt2[1] < pt1[1]);
+    assert(std::fabs(pt3[0] - (10.0f + 0.24f)) < 1e-3f || std::fabs(pt3[0] - (10.0f - 0.24f)) < 1e-3f);
+    assert(std::fabs(pt3[0] - pt4[0]) > 0.45f);
+
+    // Enemy behind a waist-high Train Station railing at 90m:
+    // Slot 0 (torso) is blocked, Slot 1 (head, occlusion_alt_point = true) is clear -> immediately visible!
+    Tracker tracker;
+    TargetGeometry rail_enemy{};
+    rail_enemy.id = 0x5000;
+    rail_enemy.feet[0] = 10.0f; rail_enemy.feet[1] = 0.0f; rail_enemy.feet[2] = 90.0f;
+    rail_enemy.head[0] = 10.0f; rail_enemy.head[1] = 1.6f; rail_enemy.head[2] = 90.0f;
+    rail_enemy.distance = 90.0f;
+    rail_enemy.occlusion_known = true;
+    rail_enemy.occlusion_visible = false;
+    rail_enemy.occlusion_alt_point = false;
+
+    std::vector<TargetGeometry> targets = {rail_enemy};
+    RaySample empty_ray{};
+    const float cam_fwd[3] = {0.0f, 0.0f, 1.0f};
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam, cam_fwd, targets, 5.0);
+    assert(!tracker.is_visible(targets[0], 5.0));
+
+    // Next frame, probe steps to Slot 1 (Head) and clears the railing:
+    targets[0].occlusion_visible = true;
+    targets[0].occlusion_alt_point = true;
+    tracker.update_from_rays(empty_ray, empty_ray, true, 350.0f, true, cam, cam_fwd, targets, 5.016);
+    assert(tracker.is_visible(targets[0], 5.016));
+
+    // Distant enemy at 240m (> 200m Na::Tick marker limit, so occlusion_known == false):
+    // Visible by default unless the 350m wall-masked AimRaycast hits an obstacle in front of them.
+    TargetGeometry far_enemy{};
+    far_enemy.id = 0x6000;
+    far_enemy.feet[0] = 10.0f; far_enemy.feet[1] = 0.0f; far_enemy.feet[2] = 240.0f;
+    far_enemy.head[0] = 10.0f; far_enemy.head[1] = 1.6f; far_enemy.head[2] = 240.0f;
+    far_enemy.distance = 240.0f;
+    far_enemy.occlusion_known = false;
+    assert(tracker.is_visible(far_enemy, 5.016));
 }
 
 void test_hwr_offaxis_probe() {
@@ -341,6 +411,7 @@ int main() {
     test_lang_table_sorted();
     test_offsets_consistency();
     test_marker_occlusion_and_rays();
+    test_multi_point_railing_and_long_range();
     test_hwr_offaxis_probe();
     test_hmj_solid_wall_mask_extraction();
     return 0;

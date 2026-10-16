@@ -8,11 +8,14 @@
 
 namespace vis_check {
 
-inline constexpr float  kDesiredAimRayLength = 300.0f;
-inline constexpr float  kDesiredSphereRadius = 0.05f;
+inline constexpr float  kDesiredAimRayLength = 350.0f;
+inline constexpr float  kDesiredSphereRadius = 0.02f;
 inline constexpr float  kDesiredAssistDist   = 300.0f;
+inline constexpr float  kNearbyMarkerMaxDist = 198.0f;
 inline constexpr double kProbeTimeoutSec     = 0.060;
 inline constexpr double kStateTtlSec         = 1.500;
+inline constexpr double kOcclusionHoldSec    = 0.140;
+inline constexpr int    kOcclusionHoldTicks  = 6;
 inline constexpr double kPriorityRefreshSec  = 0.080;
 inline constexpr double kHwrActiveWindowSec  = 0.250;
 
@@ -55,9 +58,10 @@ struct TargetGeometry {
     float         head[3]           = {};
     float         distance          = 0.0f;
     float         screen_dist_px    = 1e9f;
-    bool          is_bot            = false;
-    bool          occlusion_known   = false; // NearbyPlayerScreenMarkerView -> OcclusionModule hasValue
-    bool          occlusion_visible = false; // OcclusionModule + 0x3D == 0 (Physics.Raycast to head)
+    bool          is_bot              = false;
+    bool          occlusion_known     = false; // NearbyPlayerScreenMarkerView -> OcclusionModule hasValue
+    bool          occlusion_visible   = false; // OcclusionModule + 0x3D == 0 (Physics.Raycast to probe point)
+    bool          occlusion_alt_point = false; // Probe slot != 0 (head / upper chest / left-right shoulder)
 };
 
 struct ProbeWrite {
@@ -74,6 +78,8 @@ struct TargetVisState {
     bool   visible      = false;
     bool   has_sample   = false;
     int    vis_streak   = 0;
+    int    occ_streak   = 0;
+    double last_vis_at  = -1.0e9;
     double updated_at   = -1.0e9;
 };
 
@@ -193,6 +199,69 @@ inline std::int32_t sanitize_occlusion_obstacle_mask(std::int32_t cur_mask,
     return cleaned > 0 ? cleaned : cur_mask;
 }
 
+// Computes 5 anatomical probe points on a player from Na::Tick's marker data:
+//   slot 0: mid-torso (body.position + (0, 1.0, 0), default Rqs)
+//   slot 1: head (head.position = Rqc - (0, 0.25, 0) — clears waist/chest railings and ridges)
+//   slot 2: upper chest / neck (45% torso + 55% head — clears railings under low ceilings)
+//   slot 3: left shoulder (-0.24m perpendicular to camera ray — slips past lattice/fence bars)
+//   slot 4: right shoulder (+0.24m perpendicular to camera ray — slips past lattice/fence bars)
+inline void compute_probe_target_point(int slot,
+                                       const float base_torso[3],
+                                       const float world_pos[3],
+                                       bool world_pos_valid,
+                                       const float cam_pos[3],
+                                       bool cam_valid,
+                                       float out_pt[3]) {
+    out_pt[0] = base_torso[0];
+    out_pt[1] = base_torso[1];
+    out_pt[2] = base_torso[2];
+    const int s = ((slot % 5) + 5) % 5;
+    if (s == 0) return;
+
+    float head_pt[3] = {
+        world_pos_valid ? world_pos[0] : base_torso[0],
+        world_pos_valid ? (world_pos[1] - 0.22f) : (base_torso[1] + 0.55f),
+        world_pos_valid ? world_pos[2] : base_torso[2]
+    };
+    if (head_pt[1] < base_torso[1] + 0.20f) {
+        head_pt[1] = base_torso[1] + 0.55f;
+    }
+    if (s == 1) {
+        out_pt[0] = head_pt[0];
+        out_pt[1] = head_pt[1];
+        out_pt[2] = head_pt[2];
+        return;
+    }
+
+    const float chest[3] = {
+        base_torso[0] * 0.45f + head_pt[0] * 0.55f,
+        base_torso[1] * 0.45f + head_pt[1] * 0.55f,
+        base_torso[2] * 0.45f + head_pt[2] * 0.55f
+    };
+    if (s == 2) {
+        out_pt[0] = chest[0];
+        out_pt[1] = chest[1];
+        out_pt[2] = chest[2];
+        return;
+    }
+
+    float rx = 1.0f;
+    float rz = 0.0f;
+    if (cam_valid && vec3_finite(cam_pos)) {
+        const float dx = chest[0] - cam_pos[0];
+        const float dz = chest[2] - cam_pos[2];
+        const float len = std::sqrt(dx * dx + dz * dz);
+        if (len > 0.1f) {
+            rx = -dz / len;
+            rz =  dx / len;
+        }
+    }
+    const float side = (s == 3) ? -0.24f : 0.24f;
+    out_pt[0] = chest[0] + rx * side;
+    out_pt[1] = chest[1];
+    out_pt[2] = chest[2] + rz * side;
+}
+
 inline bool point_hits_target_cylinder(const float pt[3],
                                        const TargetGeometry& t,
                                        float radius = 0.65f) {
@@ -250,6 +319,21 @@ inline bool ray_passes_through_target(const float cam_pos[3],
     return false;
 }
 
+inline bool direct_crosshair_hit_target(const RaySample& primary,
+                                        const RaySample& aim,
+                                        bool aim_ray_configured,
+                                        const TargetGeometry& t) {
+    if (primary.valid) {
+        if (t.id != 0 && primary.hit_player == t.id) return true;
+        if (t.entity_id != 0 && primary.hit_entity == t.entity_id) return true;
+    }
+    if (aim_ray_configured && aim.valid) {
+        if (t.id != 0 && aim.hit_player == t.id) return true;
+        if (t.entity_id != 0 && aim.hit_entity == t.entity_id) return true;
+    }
+    return false;
+}
+
 inline int evaluate_ray_for_target(const RaySample& primary,
                                    const RaySample& aim,
                                    bool aim_ray_configured,
@@ -259,15 +343,14 @@ inline int evaluate_ray_for_target(const RaySample& primary,
                                    const float cam_fwd[3],
                                    const TargetGeometry& t) {
     // Returns: +1 = confirmed visible, -1 = confirmed occluded, 0 = inconclusive
-    const RaySample* samples[2] = {&primary, &aim};
+    if (direct_crosshair_hit_target(primary, aim, aim_ray_configured, t)) {
+        return +1;
+    }
+    const RaySample* samples[2] = {&primary, aim_ray_configured ? &aim : nullptr};
     for (const RaySample* s : samples) {
-        if (!s->valid) continue;
-        if (t.id != 0 && s->hit_player == t.id) return +1;
-        if (t.entity_id != 0 && s->hit_entity == t.entity_id) return +1;
-        // Для целей с работающим OcclusionModule (игроки <= 200м) проверяем
-        // только прямое попадание в хитбокс (hit_player == t.id). Для ботов и
-        // целей без OcclusionModule проверяем попадание точки луча в 3D-цилиндр
-        // цели (например, попадание AimRaycast в капсулу AimTarget).
+        if (!s || !s->valid) continue;
+        // Для целей без OcclusionModule проверяем попадание точки луча в 3D-цилиндр
+        // цели (например, попадание AimRaycast в капсулу AimTarget у бота/игрока).
         if (!t.occlusion_known &&
             s->point_valid && point_hits_target_cylinder(s->point, t)) {
             return +1;
@@ -284,7 +367,7 @@ inline int evaluate_ray_for_target(const RaySample& primary,
     // Если луч упёрся в препятствие заметно ближе цели (и точка удара лежит
     // вне цилиндра самой цели) — цель перекрыта.
     for (const RaySample* s : samples) {
-        if (!s->valid || s->distance <= 0.35f) continue;
+        if (!s || !s->valid || s->distance <= 0.35f) continue;
         if (s->hit_player == 0 && s->hit_entity == 0 &&
             s->distance + 0.85f < proj_dist &&
             (!s->point_valid || !point_hits_target_cylinder(s->point, t))) {
@@ -313,6 +396,8 @@ public:
         st.visible    = visible;
         st.has_sample = true;
         st.vis_streak = visible ? 2 : 0;
+        st.occ_streak = visible ? 0 : kOcclusionHoldTicks;
+        if (visible) st.last_vis_at = now;
         st.updated_at = now;
     }
 
@@ -352,17 +437,14 @@ public:
             }
         }
 
-        // 2. Any target currently held in hwR.tjb (+0x60) is only confirmed visible
-        //    this frame when hwR.tjN (+0xDC, snap.hit_flag) is true: hwR::ohb (0x6500304)
+        // 2. Any target currently held in hwR.tjb (+0x60) is confirmed visible this
+        //    frame when hwR.tjN (+0xDC, snap.hit_flag) is true: hwR::ohb (0x6500304)
         //    clears tjN to 0 at the start of every frame and only sets tjN = 1 (0x65006BC)
-        //    when its obstacle-masked Physics.Raycast hits tjU.Collider. When blocked by a
-        //    wall (0x6500818), tjb (+0x60) and LastSeenTime (+0x74) stay populated until
-        //    targetSwitchDelay expires, while tjN is 0. Never override targets that already
-        //    have an authoritative OcclusionModule sample (t.occlusion_known).
+        //    when its obstacle-masked Physics.Raycast (using hMj+0x34 wall mask) hits
+        //    tjU.Collider. When blocked by a wall (0x6500818), tjN is 0.
         if (snap.hit_flag && snap.cur_target != 0 && snap.cur_last_seen_time > 0.0f &&
             (!in_flight_ || snap.cur_target != probe_aim_target_)) {
             for (const TargetGeometry& t : targets) {
-                if (t.occlusion_known) continue;
                 if ((t.aim_target != 0 && t.aim_target == snap.cur_target) ||
                     (t.event_handler != 0 && t.event_handler == snap.cur_handler)) {
                     record(t.id, true, now);
@@ -386,20 +468,27 @@ public:
         for (const TargetGeometry& t : targets) {
             if (!t.id) continue;
 
-            // 1. По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule
-            //    с маской препятствий (obstacleMask) имеет абсолютный приоритет над любыми
-            //    лучами прицела (AimRaycast использует m_AimLayerMask без стен и пробивает
-            //    преграды насквозь при наведении прицела на бокс врага за стеной).
+            // 1. Прямое попадание луча прицела с маской твёрдых стен (RaycastData /
+            //    AimRaycast с Default|Construction|Terrain) в хитбокс цели: если прицел
+            //    наведён прямо на видимую часть тела/головы врага (в т.ч. сквозь перила,
+            //    решётку или ЛЭП), цель гарантированно видима.
+            if (direct_crosshair_hit_target(primary, aim, aim_ray_configured, t)) {
+                record(t.id, true, now);
+                continue;
+            }
+
+            // 2. По-игроковой 3D Physics.Raycast из NearbyPlayerScreenMarkerView -> OcclusionModule
+            //    с маской твёрдых стен (Default | Construction | Terrain) и 5-точечным
+            //    анатомическим перебором (торс, голова, верх груди, левое/правое плечо).
             if (t.occlusion_known) {
-                if (!t.occlusion_visible) {
-                    // Уход за укрытие (контейнер/стену) фиксируем мгновенно без задержки.
-                    record(t.id, false, now);
-                } else {
-                    // Выход из-за контейнера: если цель уже числилась за преградой,
-                    // требуем 2 подряд видимых сэмпла (~16 мс), чтобы одиночный
-                    // проскок луча через стык контейнеров на бегу не давал вспышку.
-                    TargetVisState& st = states_[t.id];
-                    if (!st.has_sample || st.visible) {
+                TargetVisState& st = states_[t.id];
+                if (t.occlusion_visible) {
+                    st.occ_streak = 0;
+                    // Если цель подтверждена видимой на альтернативной точке (голова/плечи
+                    // над перилами или сквозь опору ЛЭП), вблизи (<= 35м), либо ещё не имела
+                    // сэмпла / уже была видимой — фиксируем видимость сразу.
+                    if (!st.has_sample || st.visible ||
+                        t.occlusion_alt_point || t.distance <= 35.0f) {
                         record(t.id, true, now);
                     } else {
                         ++st.vis_streak;
@@ -407,11 +496,30 @@ public:
                             record(t.id, true, now);
                         }
                     }
+                } else {
+                    ++st.occ_streak;
+                    if (!st.has_sample || !st.visible) {
+                        // Не сбрасываем накопленный vis_streak на одиночном перекрытом
+                        // тике во время перебора 5 анатомических точек (слоты 0..4).
+                        if (st.occ_streak >= kOcclusionHoldTicks) {
+                            record(t.id, false, now);
+                        } else if (!st.has_sample) {
+                            st.visible    = false;
+                            st.has_sample = true;
+                            st.updated_at = now;
+                        }
+                    } else if (st.occ_streak >= kOcclusionHoldTicks &&
+                               (now - st.last_vis_at) >= kOcclusionHoldSec) {
+                        // Все 5 анатомических точек перекрыты (враг зашёл за сплошную стену
+                        // или контейнер) — переводим в невидимые.
+                        record(t.id, false, now);
+                    }
                 }
                 continue;
             }
 
-            // 2. Для целей без OcclusionModule (боты, объекты вплотную <= 1.5м) проверяем луч камеры.
+            // 3. Для целей без OcclusionModule (боты, цели вплотную, игроки > 200м)
+            //    проверяем стеновой луч камеры (до 350м).
             const int r = evaluate_ray_for_target(
                 primary, aim, aim_ray_configured, aim_ray_len,
                 cam_valid, cam_pos, cam_fwd, t);
@@ -431,7 +539,7 @@ public:
             return it->second.visible;
         }
         if (t.occlusion_known) return t.occlusion_visible;
-        if (!t.is_bot && t.distance > 1.5f) {
+        if (!t.is_bot && t.distance > 2.5f && t.distance <= kNearbyMarkerMaxDist) {
             return false;
         }
         if (t.aim_target != 0 && t.aim_collider != 0 &&

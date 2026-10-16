@@ -6,6 +6,7 @@
 namespace cfg { namespace esp {
     inline ImVec4 box_col         = {0.20f, 0.85f, 0.35f, 1.f};
     inline ImVec4 box_col_invis   = {1.00f, 0.20f, 0.20f, 1.f};
+    inline ImVec4 chams_col       = {1.00f, 0.18f, 0.42f, 1.f};
     inline ImVec4 name_col        = {1.00f, 1.00f, 1.00f, 1.f};
     inline ImVec4 distance_col    = {0.70f, 0.70f, 0.70f, 1.f};
     inline ImVec4 weapon_col      = {1.00f, 0.95f, 0.10f, 1.f};

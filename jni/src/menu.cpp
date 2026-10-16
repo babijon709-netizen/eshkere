@@ -399,6 +399,21 @@ float TabContent(int tab, float dt, float cW) {
                 EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == NP-1);
         }
 
+        // ---- Чамсы (OutlineFeature + хук MethodInfo Ragdoll.LateUpdate) ----
+        ImGui::Dummy({1.f, 12.f});
+        SHdr(XS("Чамсы"));
+        {
+            CardBg(rowH * 2 + Layout::SliderH * 2);
+            EspToggleColorRow("##vch",  XS("Чамсы"), &g_state.chams,
+                              &g_state.a_chams, &cfg::esp::chams_col, false);
+            EspToggleColorRow("##vchg", XS("Геометрический контур"), &g_state.chams_geometry,
+                              &g_state.a_chams_geometry, nullptr, false);
+            SliderRow("##vchw", XS("Толщина чамсов"), &g_state.chams_width,
+                      1.f, 32.f, XS("%.0f px"), false, true, g_state.sl_chams_width, dt);
+            SliderRow("##vchi", XS("Яркость чамсов"), &g_state.chams_intensity,
+                      1.f, 100.f, XS("%.0f%%"), true, false, g_state.sl_chams_intensity, dt);
+        }
+
         // ---- Стрелки и радар 360° ------------------------------------------
         // Оба визуала читают один снимок пеленгов (esp_get_bearings): кто где,
         // включая тех, кого в кадре нет вовсе (за спиной, из-за угла). Кольцо
@@ -1823,6 +1838,8 @@ void RenderMenu() {
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);
     Tick(g_state.a_esp_wall,   g_state.esp_wall,           dt);
     Tick(g_state.a_esp_chams,  g_state.esp_chams,          dt);
+    Tick(g_state.a_chams,      g_state.chams,              dt);
+    Tick(g_state.a_chams_geometry, g_state.chams_geometry, dt);
     Tick(g_state.a_esp_weapon, g_state.esp_weapon,         dt);
     Tick(g_state.a_esp_ore,    g_state.esp_ore,            dt);
     Tick(g_state.a_esp_ore_stone,  g_state.esp_ore_stone,  dt);

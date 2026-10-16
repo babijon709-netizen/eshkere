@@ -439,4 +439,14 @@ inline constexpr std::uint64_t FPMOTION_CLOSE_OFFSET = game_offsets::FPMOTION_CL
 inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET = game_offsets::FPMOTION_ACTIVE_OFFSET;
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = game_offsets::TRANSFORMOFFSET_LERP_SPEED;
 
+// ---- Chams via OutlineFeature + Ragdoll.LateUpdate MethodInfo hook (beta 11959)
+// Plugins.Outline.OutlineFeature TypeInfo inner slot (outer 0xDB435D8 -> 0xDE9D280).
+inline constexpr std::uint64_t OUTLINE_FEATURE_TYPEINFO_RVA   = 0xDE9D280;
+// Ragdoll.BodyPart TypeInfo inner slot (outer 0xDB78C88 -> 0xDEAA958; declaringType +0x50 = Ragdoll).
+inline constexpr std::uint64_t RAGDOLL_BODYPART_TYPEINFO_RVA  = 0xDEAA958;
+// Ragdoll.LateUpdate RVA (void (Ragdoll* this, MethodInfo* method)).
+inline constexpr std::uint64_t RAGDOLL_LATE_UPDATE_RVA        = 0x76558D8;
+// Ymm.YpE RVA (registers this.gameObject + GetComponentsInChildren<Renderer> into OutlineFeature).
+inline constexpr std::uint64_t OUTLINE_REGISTER_COMPONENT_RVA = 0x679A384;
+
 } // namespace game_offsets_beta

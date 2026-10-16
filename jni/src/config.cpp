@@ -409,7 +409,9 @@ static void ConfigSaveToPath(const std::string& path) {
                           (g_state.esp_arrows_offscreen ? 0 : 16384) |
                           (g_state.esp_arrows_dist ? 32768 : 0) |
                           (g_state.esp_radar ? 131072 : 0) |
-                          (g_state.no_grass ? 262144 : 0);
+                          (g_state.no_grass ? 262144 : 0) |
+                          (g_state.chams ? 524288 : 0) |
+                          (g_state.chams_geometry ? 1048576 : 0);
         auto ch = [](float v) { int i = (int)(v * 255.f + 0.5f); return i < 0 ? 0 : (i > 255 ? 255 : i); };
         const float packed = (float)(ch(cfg::esp::pickup_col.x) * 65536
                                    + ch(cfg::esp::pickup_col.y) * 256
@@ -540,7 +542,7 @@ static void LoadCfgByName(const char* name, bool announce) {
     // Packed scalars. A config written before these existed holds the old ping
     // colour here, so each value is range-checked and falls back to its default.
     {
-        const int flags = (s.esp_extra.x >= 0.f && s.esp_extra.x < 524288.f) ? (int)(s.esp_extra.x + 0.5f) : 0;
+        const int flags = (s.esp_extra.x >= 0.f && s.esp_extra.x < 2097152.f) ? (int)(s.esp_extra.x + 0.5f) : 0;
         g_state.esp_loot   = (flags & 1) != 0;
         g_state.esp_pickup = (flags & 2) != 0;
         g_state.esp_bots     = (flags & 4) != 0;
@@ -562,6 +564,8 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.esp_arrows_dist = (flags & 32768) != 0;
         g_state.esp_radar = (flags & 131072) != 0;
         g_state.no_grass = (flags & 262144) != 0;
+        g_state.chams = (flags & 524288) != 0;
+        g_state.chams_geometry = (flags & 1048576) != 0;
         cfg::aim::fire_only = g_state.aim_fire_only;
         g_state.marker_dist = (s.esp_extra.y >= 25.f && s.esp_extra.y <= 300.f) ? s.esp_extra.y : 150.f;
         int pr = (int)(s.esp_extra.z + 0.5f) - 1;
@@ -644,6 +648,7 @@ static void LoadCfgByName(const char* name, bool announce) {
             if (!std::isfinite(c.w) || c.w <= 0.02f || c.w > 1.f) c.w = 1.f;
         };
         col(cfg::esp::box_col);       col(cfg::esp::box_col_invis);
+        col(cfg::esp::chams_col);
         col(cfg::esp::name_col);      col(cfg::esp::distance_col);
         col(cfg::esp::weapon_col);    col(cfg::esp::tracer_col);
         col(cfg::esp::skeleton_col);  col(cfg::esp::animal_col);

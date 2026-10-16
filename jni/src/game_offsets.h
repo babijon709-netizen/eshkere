@@ -974,4 +974,14 @@ inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xD8; // Oxide
 // Legacy snapshot field; custom hands no longer modify animation speed.
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = 0x20; // Oxide.TransformOffset.m_LerpSpeed
 
+// ---- Chams via OutlineFeature + Ragdoll.LateUpdate MethodInfo hook ----------
+// Plugins.Outline.OutlineFeature TypeInfo inner slot (outer 0xDB46870 -> 0xDEA03C8).
+inline constexpr std::uint64_t OUTLINE_FEATURE_TYPEINFO_RVA   = 0xDEA03C8;
+// Ragdoll.BodyPart TypeInfo inner slot (outer 0xDB7BD18 -> 0xDEADB00; declaringType +0x50 = Ragdoll).
+inline constexpr std::uint64_t RAGDOLL_BODYPART_TYPEINFO_RVA  = 0xDEADB00;
+// Ragdoll.LateUpdate RVA (void (Ragdoll* this, MethodInfo* method)).
+inline constexpr std::uint64_t RAGDOLL_LATE_UPDATE_RVA        = 0x764FDF8;
+// hWT.KVH RVA (registers this.gameObject + GetComponentsInChildren<Renderer> into OutlineFeature).
+inline constexpr std::uint64_t OUTLINE_REGISTER_COMPONENT_RVA = 0x67C2D00;
+
 }

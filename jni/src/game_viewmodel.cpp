@@ -5,8 +5,10 @@
 #include "fast_loot_memory.h"
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
+#include "chams_memory.h"
 #include "object_data_memory.h"
 #include "app_state.h"
+#include "cfg.h"
 #include "farm.h"
 #include "maps_lookup.h"
 #include <chrono>
@@ -305,6 +307,7 @@ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
 no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
+chams::Controller<HeapMemory> chams_ctl(heap_memory);
 
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
@@ -529,6 +532,7 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
+    chams_ctl.reset(restore && g_mem.bound(), g_il2cpp_base);
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -549,6 +553,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
         no_recoil_ctl.status = settings.no_recoil_button ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_ballistics_ctl.reset(false);
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
+        chams_ctl.reset(false);
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -571,6 +576,18 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
             loot_announced = true;
         }
         if (!settings.fast_loot) loot_announced = false;
+    }
+    {
+        chams::Params cp{};
+        cp.enabled = g_state.chams;
+        cp.geometry_outline = g_state.chams_geometry;
+        cp.width = g_state.chams_width;
+        cp.intensity = g_state.chams_intensity;
+        cp.r = cfg::esp::chams_col.x;
+        cp.g = cfg::esp::chams_col.y;
+        cp.b = cfg::esp::chams_col.z;
+        cp.a = cfg::esp::chams_col.w;
+        chams_ctl.tick(epoch, g_il2cpp_base, cp);
     }
     const bool want_no_spread = settings.no_spread || esp_silent_wants_no_spread();
     // Use the local identity already validated by the world reader first. The

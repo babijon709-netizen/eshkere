@@ -227,6 +227,13 @@ inline constexpr std::uint64_t DEATH_HANDLER_REF_TARGET = game_offsets::DEATH_HA
 inline constexpr std::uint64_t DEATH_HANDLER_DEATH = game_offsets::DEATH_HANDLER_DEATH;
 inline constexpr std::uint64_t PLAYER_VITALS = game_offsets::PLAYER_VITALS;
 inline constexpr std::uint64_t VITALS_HEALTH = game_offsets::VITALS_HEALTH;
+// Виталы в 11968 не перестраивались в этом месте: m_MinFallSpeed 0xC0 и
+// m_MaxFallSpeed 0xC4 сверены по dump.cs (class Oxide.EntityVitals, строка
+// 454330), бэклинк PlayerVitals.Player 0x100 — по строке 455117. Хвост класса
+// (m_HealthRegeneration 0x118, PlayerEvent 0x108) тоже совпадает с релизом.
+inline constexpr std::uint64_t VITALS_MIN_FALL_SPEED = game_offsets::VITALS_MIN_FALL_SPEED;
+inline constexpr std::uint64_t VITALS_MAX_FALL_SPEED = game_offsets::VITALS_MAX_FALL_SPEED;
+inline constexpr std::uint64_t VITALS_PLAYER_BACKREF = game_offsets::VITALS_PLAYER_BACKREF;
 inline constexpr std::uint64_t PLAYER_INVENTORY = game_offsets::PLAYER_INVENTORY;
 inline constexpr std::uint64_t PLAYER_WEAPON_REFERENCE = game_offsets::PLAYER_WEAPON_REFERENCE;
 inline constexpr std::uint64_t PLAYER_WEAPONS_ARRAY = game_offsets::PLAYER_WEAPONS_ARRAY;
@@ -401,6 +408,15 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_H
 // Move — ydK 0xF0 — но он стоит ДО пары oM/float, а не после PlayerInput.)
 inline constexpr std::uint64_t KCC_MOVE = 0x1AC;
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
+// Значение Move в бете то же самое (struct Move, TypeDefIndex 4453): State
+// 0x00, Position 0x0C, RealVelocity 0x18 — сверено по dump.cs 11968.
+inline constexpr std::uint64_t KCC_MOVE_STATE = game_offsets::KCC_MOVE_STATE;
+inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY = game_offsets::KCC_MOVE_REAL_VELOCITY;
+inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY_Y = game_offsets::KCC_MOVE_REAL_VELOCITY_Y;
+inline constexpr std::uint64_t KCC_MOVE_BASE_VELOCITY = game_offsets::KCC_MOVE_BASE_VELOCITY;
+inline constexpr std::uint64_t KCC_MOVE_BASE_VELOCITY_Y = game_offsets::KCC_MOVE_BASE_VELOCITY_Y;
+inline constexpr std::int32_t KCC_MOVE_STATE_AIRBORNE = game_offsets::KCC_MOVE_STATE_AIRBORNE;
+inline constexpr std::int32_t KCC_MOVE_STATE_CLAMP_MAX = game_offsets::KCC_MOVE_STATE_CLAMP_MAX;
 inline constexpr std::uint64_t KCC_CHARACTER_ANIMATION = game_offsets::KCC_CHARACTER_ANIMATION;
 inline constexpr std::uint64_t CHAR_ANIM_PLAYER_BACKREF = game_offsets::CHAR_ANIM_PLAYER_BACKREF;
 inline constexpr std::uint64_t CHAR_ANIM_RAGDOLL = game_offsets::CHAR_ANIM_RAGDOLL;

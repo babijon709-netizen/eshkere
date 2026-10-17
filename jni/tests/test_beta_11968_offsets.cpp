@@ -124,6 +124,22 @@ int main() {
     assert(go_active::KCC_HITBOX_ROOT == 0x70);
     assert(go_active::KCC_LOOK_HEIGHT_OFFSET == 0x90);
 
+    // --- Падение: виталы и раскладка значения Move в бете совпали с релизом ---
+    // Oxide.EntityVitals (dump.cs 11968, строка 454330): m_MinFallSpeed 0xC0,
+    // m_MaxFallSpeed 0xC4; Oxide.PlayerVitals (455117): Player 0x100,
+    // PlayerEvent 0x108; PlayerManager.vitals (484714+6): 0xC8.
+    assert(go_active::PLAYER_VITALS == 0xC8);
+    assert(go_active::VITALS_MIN_FALL_SPEED == 0xC0);
+    assert(go_active::VITALS_MAX_FALL_SPEED == 0xC4);
+    assert(go_active::VITALS_PLAYER_BACKREF == 0x100);
+    // struct Move 4453 — то же значение, что в релизе, хотя поле в KCC переехало.
+    assert(go_active::KCC_MOVE_REAL_VELOCITY == 0x18);
+    assert(go_active::KCC_MOVE_REAL_VELOCITY_Y - go_active::KCC_MOVE_REAL_VELOCITY == 4);
+    assert(go_active::KCC_MOVE_BASE_VELOCITY_Y - go_active::KCC_MOVE_BASE_VELOCITY == 4);
+    assert(go_active::KCC_MOVE_STATE_AIRBORNE == 4);
+    assert(go_active::KCC_MOVE_STATE_CLAMP_MAX == 4);
+    assert(go_active::KCC_MOVE_STATE_DEAD == 7);
+
     // --- Ragdoll: вставлен bool m_Interpolate перед m_SurfaceTexture ---
     assert(go_active::RAGDOLL_BONES_ARRAY == 0x90);
     assert(go_active::RAGDOLL_PELVIS_RIGIDBODY == 0x20);
@@ -155,6 +171,8 @@ int main() {
     assert(go_active::PLAYER_USER_ID == 0x298);
     assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x298);
     assert(go_active::KCC_MOVE == 0x13C);
+    assert(go_active::VITALS_MIN_FALL_SPEED == 0xC0);
+    assert(go_active::KCC_MOVE_BASE_VELOCITY_Y == 0x3C);
     assert(go_active::FPMOTION_IDLE_OFFSET == 0x78);
     assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0x9C);
     assert(go_active::PLAYERWEAPON_VIEW == 0xE8);

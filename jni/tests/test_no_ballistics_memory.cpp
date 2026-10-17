@@ -145,7 +145,7 @@ void test_config_extension() {
     settings.no_spread = true;
     settings.fast_loot = true;
     auto encoded = viewmodel::encode(settings);
-    assert(encoded.version == 6 && encoded.size == sizeof(encoded));
+    assert(encoded.version == 7 && encoded.size == sizeof(encoded));
     assert((encoded.flags & 2048u) != 0);
     auto decoded = viewmodel::decode(&encoded, sizeof(encoded));
     assert(decoded.no_ballistics && decoded.no_spread && decoded.fast_loot);
@@ -165,7 +165,7 @@ void test_config_extension() {
     assert(!decoded.no_ballistics && !decoded.no_spread && !decoded.fast_loot);
 
     auto corrupt = encoded;
-    corrupt.flags |= 4096u;
+    corrupt.flags |= 8192u;   // бит 13 ещё не занят — профиль с ним не читаем
     decoded = viewmodel::decode(&corrupt, sizeof(corrupt));
     assert(!decoded.no_ballistics && !decoded.no_spread && !decoded.fast_loot);
 }

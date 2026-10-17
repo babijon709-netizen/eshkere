@@ -381,6 +381,21 @@ inline constexpr std::uint64_t DEATH_HANDLER_DEATH          = 0xF0;
 // обфусцировано, сверялись позиционно по dump.cs (class Oxide.GenericVitals).
 inline constexpr std::uint64_t PLAYER_VITALS       = 0xC8;
 inline constexpr std::uint64_t VITALS_HEALTH       = 0xB8;
+// Урон от падения (dump.cs): Oxide.EntityVitals : GenericVitals
+//   [SerializeField][Range(1, 30)] protected float m_MinFallSpeed;  0xC0
+//   [SerializeField][Range(1, 60)] protected float m_MaxFallSpeed;  0xC4
+//   public SoundPlayer m_FallDamageAudio;                           0xD8
+// Имена полей в дампе НЕ обфусцированы (SerializeField), поэтому значения
+// снимались напрямую: релиз 11966 — class Oxide.EntityVitals строка 466678,
+// бета 11968 — строка 454330, и там, и там 0xC0/0xC4. Наследник
+// Oxide.PlayerVitals : EntityVitals (11966: 467618, 11968: 455117) своих
+// float-полей перед 0xC0 не добавляет, так что слот общий для обеих сборок.
+// ОСТОРОЖНО: 0xC0 сам по себе объект не опознаёт — у ECM.BaseCharacterController
+// там своё поле (gravityMagnitude-подобный float), идентифицируем vitals только
+// по классу и бэклинку PlayerVitals.Player (0x100) == player.
+inline constexpr std::uint64_t VITALS_MIN_FALL_SPEED  = 0xC0;
+inline constexpr std::uint64_t VITALS_MAX_FALL_SPEED  = 0xC4;
+inline constexpr std::uint64_t VITALS_PLAYER_BACKREF  = 0x100; // PlayerVitals.Player
 inline constexpr std::uint64_t PLAYER_INVENTORY         = 0x98;
 inline constexpr std::uint64_t PLAYER_WEAPON_REFERENCE  = 0xF0;  // без изменений
 inline constexpr std::uint64_t PLAYER_WEAPONS_ARRAY     = 0x1B8;
@@ -682,6 +697,22 @@ inline constexpr std::uint64_t KCC_MOVE                   = 0x13C;  // было 
 // 7 DEAD, 8 SEATED. Поза (Move.Pose, TypeDefIndex 4285) знает только
 // Stand 0 и Crouch 1 — лежачей позы в этой сборке НЕТ.
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD          = 7;
+// Внутренние смещения самого значения Move (value struct внутри KCC). Имя
+// поля ротируется (11966: Move RhW 0x13C, 11968: Move ydh 0x1AC), а раскладка
+// значения — нет: сверено по dump.cs обеих сборок (struct Move, TypeDefIndex
+// 4309 / 4453): State 0x00, Pose 0x04, Aim 0x08, Position 0x0C,
+// RealVelocity 0x18, MoveDirection 0x24, BaseVelocity 0x38.
+inline constexpr std::uint64_t KCC_MOVE_STATE              = 0x00; // int32 MoveState
+inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY      = 0x18; // Vector3
+inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY_Y    = 0x1C; // float .y
+inline constexpr std::uint64_t KCC_MOVE_BASE_VELOCITY      = 0x38; // Vector3
+inline constexpr std::uint64_t KCC_MOVE_BASE_VELOCITY_Y    = 0x3C; // float .y
+inline constexpr std::int32_t KCC_MOVE_STATE_AIRBORNE      = 4;
+// Верхняя граница (включительно) состояний, в которых «нет падения» вообще
+// что-то правит: 0 IDLE, 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE.
+// Выше (5 CLIMBING, 6 SWIMMING, 7 DEAD, 8 SEATED) вертикальная скорость —
+// часть другой логики (лезу, плыву, сижу), и трогать её нельзя.
+inline constexpr std::int32_t KCC_MOVE_STATE_CLAMP_MAX     = 4;
 inline constexpr std::uint64_t KCC_CHARACTER_ANIMATION     = 0xE0;  // было 0xF0; lua CharacterAnimation (был ZMl)
 inline constexpr std::uint64_t CHAR_ANIM_PLAYER_BACKREF    = 0x78;
 inline constexpr std::uint64_t CHAR_ANIM_RAGDOLL           = 0x38;

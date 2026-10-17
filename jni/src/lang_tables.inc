@@ -129,7 +129,6 @@ static const LangPair kUiEn[] = {
     {"Оружие: не применено, проверьте версию игры и журнал", "Weapons: not applied; check game version and log"},
     {"Отмена", "Cancel"},
     {"Ошибка чтения/записи", "Memory read/write failed"},
-    {"Падение", "Falling"},
     {"Память", "Memory"},
     {"Панель вкладок", "Tab bar"},
     {"Панель слева", "Panel on the left"},

@@ -20,11 +20,6 @@ struct ViewmodelSettings {
     // DelayPromise, на которых игра ждёт между предметами при сборе лута.
     // Реализация: fast_loot_memory.h, тик из esp_viewmodel_tick.
     bool fast_loot = false;
-    // «Без урона от падения»: глушит порог урона в PlayerVitals.m_MinFallSpeed
-    // (0xC0 := 1e9) и обнуляет Move.RealVelocity.y в KCC, пока игрок в полёте,
-    // — сервер видит мягкое приземление. Реализация: no_fall_memory.h, тик из
-    // esp_viewmodel_tick.
-    bool no_fall = false;
 };
 
 namespace viewmodel {
@@ -52,9 +47,10 @@ inline ViewmodelSettings sanitize(ViewmodelSettings s) {
 struct ConfigExtension {
     uint32_t magic = 0x31574d56u; // VMW1
     // v4 added aim lead, v5 kept the 36-byte layout, and v6 assigns bit 11
-    // to no-ballistics. Bit 10 remains retired. v1–v3 were 32 bytes. v7 takes
-    // bit 12 for no-fall-damage; the layout stays 36 bytes, so v4..v6 readers
-    // simply never see the new bit set in a file they can load.
+    // to no-ballistics. Bit 10 remains retired. v1–v3 were 32 bytes. v7 took
+    // bit 12 for no-fall-damage; the feature is gone, the bit stays allowed so
+    // profiles written back then still load (their trailer decodes to the same
+    // settings minus that one toggle). The layout stays 36 bytes.
     uint32_t version = 7;
     uint32_t size = 36;
     uint32_t flags = 0;
@@ -69,8 +65,7 @@ inline ConfigExtension encode(ViewmodelSettings s) {
     const uint32_t fps_mode = s.fps_limit == 144 ? 1u : s.fps_limit == 90 ? 2u : s.fps_limit == 120 ? 3u : 0u;
     e.flags = (s.fov_enabled ? 1u : 0u) | (s.hands_enabled ? 2u : 0u) | (fps_mode << 2) |
               (s.fast_loot ? 16u : 0u) | (s.no_recoil_button ? 32u : 0u) |
-              (s.no_spread ? 64u : 0u) | (s.no_ballistics ? 2048u : 0u) |
-              (s.no_fall ? 4096u : 0u);
+              (s.no_spread ? 64u : 0u) | (s.no_ballistics ? 2048u : 0u);
     e.fov = s.fov; e.x = s.x; e.y = s.y; e.z = s.z;
     return e;
 }
@@ -93,7 +88,6 @@ inline ViewmodelSettings decode(const void* bytes, size_t size) {
     s.no_recoil_button = e.version >= 2 && (e.flags & 32u) != 0;
     s.no_spread = e.version >= 2 && (e.flags & 64u) != 0;
     s.no_ballistics = e.version >= 6 && (e.flags & 2048u) != 0;
-    s.no_fall = e.version >= 7 && (e.flags & 4096u) != 0;
     s.fast_loot = e.version >= 3 && (e.flags & 16u) != 0;
     s.fov = e.fov; s.x = e.x; s.y = e.y; s.z = e.z;
     return sanitize(s);

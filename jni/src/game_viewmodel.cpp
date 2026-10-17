@@ -5,7 +5,6 @@
 #include "fast_loot_memory.h"
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
-#include "no_fall_memory.h"
 #include "object_data_memory.h"
 #include "app_state.h"
 #include "farm.h"
@@ -306,7 +305,6 @@ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
 no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
-no_fall::Controller<HeapMemory> no_fall_ctl(heap_memory);
 
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
@@ -386,24 +384,6 @@ const char* no_ballistics_stop_reason(viewmodel::Status status, int stage) {
         case 14: return "weapon context changed mid-write";
         case 16: case 17: return "zero write not confirmed by readback";
         case 18: return "original values could not be restored";
-        default: return "waiting for bind or player";
-    }
-}
-// «Без урона от падения»: расшифровка стадий из no_fall_memory.h для лога.
-const char* no_fall_stop_reason(viewmodel::Status status, int stage) {
-    if (status == viewmodel::Status::Off) return "disabled or game unbound";
-    switch (stage) {
-        case 1: case 2: return "no local player";
-        case 3: case 4: return "network identity missing or not local";
-        case 5: return "PlayerVitals not found";
-        case 6: return "vitals backlink to player mismatch";
-        case 7: return "character controller (KCC) not found";
-        case 9: return "fall threshold unreadable";
-        case 10: return "vitals context changed mid-write";
-        case 11: case 12: return "threshold write not confirmed by readback";
-        case 13: case 14: return "movement state/velocity unreadable";
-        case 15: case 16: return "velocity zero write failed";
-        case 17: return "original threshold could not be restored (restart the game)";
         default: return "waiting for bind or player";
     }
 }
@@ -549,8 +529,6 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
-    if (!no_fall_ctl.reset(restore && g_mem.bound()))
-        ;
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -571,8 +549,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
         no_recoil_ctl.status = settings.no_recoil_button ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_ballistics_ctl.reset(false);
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
-        no_fall_ctl.reset(false);
-        no_fall_ctl.status = settings.no_fall ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -607,7 +583,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
         want_fast_fire || rapid_fire.has_state() ||
         settings.no_recoil_button || no_recoil_ctl.has_state() ||
         settings.no_ballistics || no_ballistics_ctl.has_state() ||
-        settings.no_fall || no_fall_ctl.has_state() ||
         g_farmActive) {
         auto local_player_ok = [&](uint64_t candidate) {
             uint64_t net=0; uint8_t local=0;
@@ -639,7 +614,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
-            no_fall_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_fall);
             return;
         }
         local_source_failed=false;
@@ -663,16 +637,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings) {
         rapid_fire.tick(epoch, g_il2cpp_base, player, want_fast_fire);
         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
         no_ballistics_ctl.tick(epoch, g_il2cpp_base, player, settings.no_ballistics);
-    }
-    {
-        // «Без урона от падения» тикается КАЖДЫЙ кадр, а не в watchdog-очереди
-        // оружия: обнулять надо RealVelocity.y, который игра пересчитывает на
-        // каждом физическом тике. За 100 мс паузы свободное падение набирает
-        // ~10 м/с — этого хватит и серверу, и локальному порогу. Дорогой
-        // резолв цепочки (KCC ищется сканом полей) внутри контроллера
-        // закеширован и перепроверяется двумя разыменованиями, так что кадр
-        // стоит 3 чтения и запись только пока летишь.
-        no_fall_ctl.tick(epoch, g_il2cpp_base, player, settings.no_fall);
     }
     {
         // Log no-spread resolution changes only.

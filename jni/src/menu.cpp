@@ -999,9 +999,8 @@ float TabContent(int tab, float dt, float cW) {
                 const int fps = vm.fps_limit;
                 const bool recoilButton = vm.no_recoil_button, ns = vm.no_spread;
                 const bool ballistics = vm.no_ballistics, fl = vm.fast_loot;
-                const bool noFall = vm.no_fall;
                 vm = {}; vm.fps_limit = fps; vm.no_recoil_button = recoilButton; vm.no_spread = ns;
-                vm.no_ballistics = ballistics; vm.fast_loot = fl; vm.no_fall = noFall;
+                vm.no_ballistics = ballistics; vm.fast_loot = fl;
                 g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};
                 g_state.sl_hands_y = {}; g_state.sl_hands_z = {};
                 esp_viewmodel_tick(vm);
@@ -1060,14 +1059,6 @@ float TabContent(int tab, float dt, float cW) {
         SHdr(XS("Подбор"));
         CardBg(Layout::RowH);
         ToggleRow("##instantloot", XS("Быстрый подбор"), &vm.fast_loot, g_state.a_fast_loot, true, true);
-
-        // «Без урона от падения»: правка кучи (no_fall_memory.h) — порог урона
-        // в виталах и скорость падения в сетевом значении Move.
-        SHdr(XS("Падение"));
-        CardBg(Layout::RowH);
-        const bool oldNoFall = vm.no_fall;
-        ToggleRow("##nofall", XS("Без урона от падения"), &vm.no_fall, g_state.a_no_fall, true, true);
-        if (oldNoFall != vm.no_fall) esp_viewmodel_tick(vm);
 
         SHdr(XS("Лимит FPS"));
         {
@@ -1874,7 +1865,6 @@ void RenderMenu() {
     Tick(g_state.a_no_recoil, g_state.viewmodel.no_recoil_button, dt);
     Tick(g_state.a_no_spread, g_state.viewmodel.no_spread, dt);
     Tick(g_state.a_no_ballistics, g_state.viewmodel.no_ballistics, dt);
-    Tick(g_state.a_no_fall, g_state.viewmodel.no_fall, dt);
     Tick(g_state.a_fast_loot, g_state.viewmodel.fast_loot, dt);
     Tick(g_state.a_fast_fire, g_state.fast_fire, dt);
     Tick(g_state.a_fast_reload, g_state.fast_reload, dt);

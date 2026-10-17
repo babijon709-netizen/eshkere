@@ -473,6 +473,7 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
     int fd, i, tmp1, tmp2;
     int screenX, screenY, minCnt = eventCount + 1;
     int minKind = 0;
+    int real_touch_fd = -1;   // fd настоящего тачскрина, выбранного ниже
     fdNum = 0;
     for (i = 0; i <= eventCount; i++) {
         sprintf(temp, "/dev/input/event%d", i);
@@ -498,6 +499,7 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
                     screenY = absY[fdNum].maximum;
                     minCnt = i;
                     minKind = kind;
+                    real_touch_fd = fd;
                 }
                 fdNum++;
                 if (fdNum >= maxE)
@@ -553,11 +555,36 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
         genRandomString(string, string_len);
         ioctl(nowfd, UI_SET_PHYS, string);
 
+        // Имя, phys и идентификаторы виртуального устройства. Выше они
+        // случайные, и это ровно то, что видно с устройства: список ввода
+        // через InputManager читается ЛЮБЫМ приложением без разрешений, а
+        // «uinput с именем kQ7zpa, vendor=7, bustype=0» — подпись инжектора.
+        // Функция, которая притворяется пальцем, не имеет права выглядеть как
+        // инжектор, поэтому берём identity настоящего тачскрина с того же fd,
+        // что открыт выше: тогда у нашего пальца тот же name/phys/bustype,
+        // что у пальца пользователя. Спросить не удалось — остаемся на
+        // прежнем поведении (ничего не ломается).
+        if (real_touch_fd >= 0) {
+            struct input_id real_id{};
+            char real_name[UINPUT_MAX_NAME_SIZE] = {};
+            char real_phys[UINPUT_MAX_NAME_SIZE] = {};
+            if (ioctl(real_touch_fd, EVIOCGID, &real_id) == (int)sizeof(real_id))
+                ui_dev.id = real_id;
+            if (ioctl(real_touch_fd, EVIOCGNAME(sizeof(real_name) - 1), real_name) > 0 &&
+                real_name[0])
+                strncpy(ui_dev.name, real_name, UINPUT_MAX_NAME_SIZE - 1);
+            if (ioctl(real_touch_fd, EVIOCGPHYS(sizeof(real_phys) - 1), real_phys) > 0 &&
+                real_phys[0])
+                ioctl(nowfd, UI_SET_PHYS, real_phys);
+        }
+
         sprintf(temp, "/dev/input/event%d", minCnt);
         fd = open(temp, O_RDWR);
         if (fd) {
             struct input_id id;
-            if (!ioctl(fd, EVIOCGID, &id)) {
+            // EVIOCGID возвращает размер структуры, а не 0 — прежняя проверка
+            // «!ioctl(...)» не срабатывала никогда, и id оставались rand()'ом.
+            if (ioctl(fd, EVIOCGID, &id) == (int)sizeof(id)) {
                 ui_dev.id.bustype = id.bustype;
                 ui_dev.id.vendor = id.vendor;
                 ui_dev.id.product = id.product;

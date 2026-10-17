@@ -2,9 +2,17 @@
 
 #include <cstdio>
 #include <cstring>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static const char* BLOCK   = "iptables -I INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP";
 static const char* UNBLOCK = "iptables -D INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP 2>/dev/null";
+// То же снятие, но одной командой и без popen: для аварийного порядка, где
+// malloc/stdio уже недопустимы.
+static const char* UNBLOCK_RAW =
+    "su -c 'iptables -D INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP' 2>/dev/null;"
+    " su -c 'iptables -D INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP' 2>/dev/null";
 
 // Выполняет команду через su -c '...'
 static void executeRoot(const char* cmd) {
@@ -12,6 +20,64 @@ static void executeRoot(const char* cmd) {
     snprintf(buf, sizeof(buf), "su -c '%s'", cmd);
     FILE* f = popen(buf, "r");
     if (f) pclose(f);
+}
+
+namespace {
+
+// iptables-правило переживает процесс: ни SIGKILL, ни наш дедлайн-выход, ни
+// падение по SIGSEGV не проходят через FakeLag::apply(false). Пока это было
+// единственной дорогой, «забыл выключить лаг» означало глобальный DROP на
+// входящий UDP до перезагрузки устройства — то есть функция уровня системы,
+// а не чита. Поэтому: (1) перед установкой снимем висящее с прошлого раза
+// правило, (2) на всё ловуемое (SIGINT/TERM/HUP/QUIT/ABRT/SEGV/BUS/ILL)
+// снимаем сами, (3) дедлайн-выход в main.cpp зовёт unblockRaw().
+// Ловить нельзя ровно два — SIGKILL и SIGSTOP.
+std::atomic<bool> g_guards_on{false};
+struct sigaction g_old_actions[8];
+const int kGuarded[8] = { SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
+
+void guard_handler(int sig) {
+    // Повторный сигнал внутри обработчика (например, второй SIGSEGV на
+    // испорченном стеке) обязан вести себя как раньше, а не зациклиться.
+    if (g_guards_on.exchange(false)) FakeLag::unblockRaw();
+    for (size_t i = 0; i < sizeof(kGuarded) / sizeof(kGuarded[0]); ++i)
+        sigaction(kGuarded[i], &g_old_actions[i], nullptr);
+    raise(sig);
+}
+
+void guards_on() {
+    if (g_guards_on.exchange(true)) return;
+    struct sigaction sa{};
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = guard_handler;
+    sa.sa_flags = SA_RESTART;   // чужие блокирующие вызовы (ввод, транспорт) трогать незачем
+    for (size_t i = 0; i < sizeof(kGuarded) / sizeof(kGuarded[0]); ++i)
+        sigaction(kGuarded[i], &sa, &g_old_actions[i]);
+}
+
+void guards_off() {
+    if (!g_guards_on.exchange(false)) return;
+    for (size_t i = 0; i < sizeof(kGuarded) / sizeof(kGuarded[0]); ++i)
+        sigaction(kGuarded[i], &g_old_actions[i], nullptr);
+}
+
+} // namespace
+
+// Снять правило, не полагаясь на то, что процесс ещё жив: ни malloc (его зовёт
+// popen), ни join потока, ни даже наш собственный стек здесь не гарантированы.
+// Один fork+exec, без ожидания: ребёнок переживает _exit'нувшего родителя, а
+// SIGCHLD игнорируется маскировкой (stealth.h), так что зомби не остаётся.
+void FakeLag::unblockRaw() {
+    const pid_t pid = fork();
+    if (pid > 0) return;
+    if (pid < 0) {
+        // Вилки нет (исчерпан лимит) — пробуем хотя бы из этого же образа:
+        // хуже уже было, правило всё равно осталось бы висеть.
+        executeRoot(UNBLOCK);
+        return;
+    }
+    execl("/system/bin/sh", "sh", "-c", UNBLOCK_RAW, (char*)nullptr);
+    _exit(127);
 }
 
 FakeLag::FakeLag()
@@ -34,11 +100,17 @@ void FakeLag::setPercent(int percent) {
 void FakeLag::apply(bool enable) {
     if (enable) {
         if (m_running.load()) return;   // уже запущен
+        // Чистим след прошлого запуска ДО установки своего: иначе два
+        // одинаковых правила в цепочке (убитый прошлый процесс) снимаются
+        // «выключением» только наполовину, и UDP-DROP остаётся живым.
+        executeRoot(UNBLOCK);
         m_enabled.store(true);
         m_running.store(true);
         m_blocked = false;
+        guards_on();
         m_thread = std::thread(&FakeLag::loop, this);
     } else {
+        guards_off();
         m_enabled.store(false);
         m_running.store(false);
         if (m_thread.joinable()) m_thread.join();

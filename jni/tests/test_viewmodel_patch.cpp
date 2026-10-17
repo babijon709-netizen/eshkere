@@ -121,6 +121,36 @@ void test_position_patch_same_rule() {
     assert(m.writes == 2);
 }
 
+// Поле, которое игра пересчитывает каждый кадр (lerp позы, нормализованный
+// вектор), в биты с нашим не совпадёт никогда: без допуска «писать по
+// расхождению» на таких полях и есть «писать каждый кадр».
+void test_tolerance_absorbs_game_recompute_noise() {
+    constexpr uint64_t addr = 0x5000;
+    Mem m;
+    m.p[addr] = viewmodel::Position{0.1199998F, -0.0499999F, 0.0300001F};
+    viewmodel::Patch<viewmodel::Position> hand;
+    const viewmodel::Position want{0.12F, -0.05F, 0.03F};
+
+    assert(hand.sample(m, addr));
+    assert(hand.put(m, want, 0.0002F));       // шум 1e-7 — не расхождение
+    assert(m.writes == 0);
+    assert(hand.written == false);            // владения нет: возвращать нечего
+
+    m.p[addr] = viewmodel::Position{0.12F, 0.5F, 0.03F};   // рука реально уехала
+    assert(hand.sample(m, addr));
+    assert(hand.put(m, want, 0.0002F));
+    assert(m.writes == 1);
+    assert(hand.written);
+
+    // Точное сравнение (eps = 0) допуска не видит — для позы-цели это и нужно.
+    Mem solo;
+    solo.f[addr] = 89.9999F;
+    viewmodel::Patch<float> f;
+    assert(f.sample(solo, addr));
+    assert(f.put(solo, 90.0F));
+    assert(solo.writes == 1);
+}
+
 void test_invalid_values_are_never_written() {
     constexpr uint64_t addr = 0x4000;
     Mem m;
@@ -139,6 +169,7 @@ int main() {
     test_float_writes_only_on_divergence();
     test_restore_never_clobbers_the_game();
     test_position_patch_same_rule();
+    test_tolerance_absorbs_game_recompute_noise();
     test_invalid_values_are_never_written();
     std::printf("ALL VIEWMODEL PATCH TESTS PASS\n");
     return 0;

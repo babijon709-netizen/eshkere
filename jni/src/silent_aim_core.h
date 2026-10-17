@@ -74,9 +74,15 @@ Result tick(Memory& mem, const Command& c) {
     // что сайлент трогает память чаще, чем стреляет: тик идёт каждый кадр,
     // пока ведётся цель, а не в момент выстрела.
     float cur[3] = {0.0F, 0.0F, 0.0F};
-    if (mem.read(c.look + c.value_offset, cur, sizeof(cur)) &&
-        cur[0] == dir[0] && cur[1] == dir[1] && cur[2] == dir[2])
-        return Result::written;
+    // Скалярное произведение, а не побайтовое сравнение: поле каждый кадр
+    // пересчитывается нормализацией игры, и в битах оно нашего не повторит.
+    // Порог 1 - 0.99999988 — ровно на порядок выше разрешения float возле
+    // единицы (иначе «совпало» зависело бы от округления): это ≈ 0.009°,
+    // шум переписывания не считается расхождением, поворот камеры — считается.
+    if (mem.read(c.look + c.value_offset, cur, sizeof(cur))) {
+        const float dot = cur[0] * dir[0] + cur[1] * dir[1] + cur[2] * dir[2];
+        if (dot >= 0.99999988F) return Result::written;
+    }
     return mem.write(c.look + c.value_offset, dir, sizeof(dir))
         ? Result::written : Result::write_failed;
 }

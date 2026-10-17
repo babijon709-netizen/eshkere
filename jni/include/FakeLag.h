@@ -20,6 +20,13 @@ public:
     // то же что apply(false), вызывается из деструктора
     void destroy();
 
+    // Идемпотентно и безопасно из обработчика сигнала: одно fork+exec,
+    // который снимет DROP-правило даже если наш процесс уже умирает.
+    static void unblockRaw();
+
+    // Лаг «ведётся» — по этому флагу выход решают убрать правило жёстко.
+    bool active() const { return m_enabled.load(); }
+
 private:
     void loop();
     void sleepMs(int ms);

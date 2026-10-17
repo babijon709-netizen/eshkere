@@ -3491,8 +3491,14 @@ bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
     // Чтение кадревого кэша корректно: свой блок после записи некэшируем,
     // а значит видим то, что реально лежит в MouseLook.
     float cur_angles[2] = {0.0F, 0.0F};
+    // Допуск 0.005° (на 100 м это сантиметр) — заметно ниже хитбокса, но
+    // ровно такой, чтобы не переписывать угол каждый кадр: игра сама
+    // пересчитывает MouseLook из аккумулированного ввода, и в биты его
+    // значение нашему не совпадает почти никогда.
+    constexpr float kAngleTolerance = 0.005F;
     const bool already = rd_buf(mouse_look + MOUSELOOK_ANGLES, cur_angles, sizeof(cur_angles)) &&
-                         cur_angles[0] == xw && cur_angles[1] == yw;
+                         fabsf(cur_angles[0] - xw) <= kAngleTolerance &&
+                         fabsf(cur_angles[1] - yw) <= kAngleTolerance;
     const bool ok = already || wr_buf(mouse_look + MOUSELOOK_ANGLES, angles, sizeof(angles));
     if (ok) {
         s_look_wrote = true;
@@ -3579,8 +3585,15 @@ bool esp_mem_aim_write_fire_dir(float x, float y, float z) {
     // меняется, и покадровая запись одного и того же — чистый шум. Разошлось
     // (игра повернула камеру) — пишем, как и раньше.
     float cur_dir[3] = {0.0F, 0.0F, 0.0F};
-    const bool already = rd_buf(addr, cur_dir, sizeof(cur_dir)) &&
-                         cur_dir[0] == dir[0] && cur_dir[1] == dir[1] && cur_dir[2] == dir[2];
+    // Единичный вектор сверяется скалярным произведением, а не по компонентам:
+    // у игры он выходит из своей нормализации, и расхождение в 1e-7 по
+    // компоненте — это шум, а не поворот. Порог 1 - 0.99999988 на порядок
+    // выше разрешения float возле единицы: это ≈ 0.009°, на 100 м — 1.6 см.
+    bool already = false;
+    if (rd_buf(addr, cur_dir, sizeof(cur_dir))) {
+        const float dot = cur_dir[0] * dir[0] + cur_dir[1] * dir[1] + cur_dir[2] * dir[2];
+        already = dot >= 0.99999988F;
+    }
     const bool ok = already || wr_buf(addr, dir, sizeof(dir));
     if (!ok) {
         // Отказ записи — редкость (доступ отобрали или адрес умер); пишем, но
@@ -6569,7 +6582,7 @@ bool aim_angles_for(const Vec3& world, const Vec2& screen, float sw, float sh, f
 }
 
 // Vertical offset of the head aim point (metres, world up). Раньше здесь было
-// +10/+4 см: точка прицела уходила ВЫШЕ головы, и на近距离 это давало промах
+// +10/+4 см: точка прицела уходила ВЫШЕ головы, и на близкой дистанции это давало промах
 // поверх макушки, а на средней — «прицел стоит на лбу, а не на голове». По
 // просьбе (19.09) смещение выключено совсем: цель — ровно кость головы. Обе
 // величины оставлены на месте и названы своими именами, чтобы вернуть подъём

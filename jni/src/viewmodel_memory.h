@@ -4,6 +4,7 @@
 #include "viewmodel.h"
 #include "game_offsets_active.h"
 #include <array>
+#include <cmath>
 
 namespace viewmodel {
 struct Position { float x, y, z; };
@@ -15,6 +16,23 @@ inline bool valid(Position v) {
            v.x > -10.f && v.x < 10.f && v.y > -10.f && v.y < 10.f && v.z > -10.f && v.z < 10.f;
 }
 template<class T> bool same(const T& a, const T& b) { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+// Поле, которое игра пересчитывает сама (lerp позы руки, нормализованный
+// вектор), в биты с нашим желаемым не совпадёт никогда — сравнение по
+// точному значению превращает «писать по расхождению» в «писать каждый
+// кадр». Для таких полей расхождение считается с допуском, и допуск берётся
+// много меньше того, что видно глазом (см. вызовы).
+// Значения, у которых «почти равно» не бывает (целые счётчики, перечисления
+// кадрового лимитера), сравниваются только точно — для них допуск не определён.
+template<class T> inline bool close(const T&, const T&, float) { return false; }
+inline bool close(float a, float b, float eps) {
+    return finite(a) && finite(b) && std::fabs(a - b) <= eps;
+}
+inline bool close(const Position& a, const Position& b, float eps) {
+    return finite(a.x) && finite(a.y) && finite(a.z) &&
+           finite(b.x) && finite(b.y) && finite(b.z) &&
+           std::fabs(a.x - b.x) <= eps && std::fabs(a.y - b.y) <= eps &&
+           std::fabs(a.z - b.z) <= eps;
+}
 
 struct Identity {
     uint64_t object = 0, klass = 0, native = 0;
@@ -47,9 +65,9 @@ template<class T> struct Patch {
     // случится. Пока значение уже наше, тик стоит одно чтение и ноль записей,
     // иначе каждая включённая функция оставляла бы детектору раунд-трип
     // в память на каждом кадре.
-    template<class IO> bool put(IO& io, T value) {
+    template<class IO> bool put(IO& io, T value, float eps = 0.0f) {
         if (!valid(value)) return false;
-        if (fresh && same(value, sampled)) { fresh = false; return true; }
+        if (fresh && (same(value, sampled) || close(value, sampled, eps))) { fresh = false; return true; }
         if (!io.write(address, value)) return false;
         last = value; written = true; sampled = value; fresh = false; return true;
     }
@@ -247,8 +265,12 @@ public:
             // running.  Hold both the target and current cache at the requested
             // absolute value; state transitions are now static immediately.
             const Position value{s.x*0.01f,s.y*0.01f,s.z*0.01f};
+            // Цель позы игра пишет только при смене состояния — там хватит
+            // точного сравнения. Кэш m_Position она интерполирует каждый кадр,
+            // поэтому для него допуск 0,2 мм: визуально ноль, а запись
+            // остаётся только когда рука реально уехала.
             const bool targetApplied = h.target.put(io, value);
-            const bool currentApplied = h.current.put(io, value);
+            const bool currentApplied = h.current.put(io, value, 0.0002f);
             // Retired ADS snap helper may still own a speed from an older tick;
             // restore it once, then leave animation speed to the game.
             const bool speedApplied = h.speed.restore(io);

@@ -274,6 +274,10 @@ static void ArmShutdownDeadline() {
         // A kernel transport call can be uninterruptible. Once the visible
         // Surface is gone and critical cleanup had its deadline, terminate the
         // process instead of leaving background workers alive for a minute.
+        // iptables-правило лага при этом живёт в ядре и переживало нас:
+        // снимаем его до _exit тем же способом, каким это делают обработчики
+        // сигналов (без join и без ожидания su).
+        if (g_fakeLag.active()) FakeLag::unblockRaw();
         _exit(0);
     }).detach();
 }

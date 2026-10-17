@@ -167,17 +167,26 @@ static void xray_apply(uint64_t native_cam) {
     if (!native_cam) return;
     g_native_camera = native_cam;   // фрикам берёт отсюда трансформ камеры
     if (g_xray_meters > 0.05F) {
+        // Чтение раз в кадр вместо записи раз в кадр. nearClip — общее поле
+        // камеры: игра возвращает своё значение при смене вида, поэтому
+        // решение о записи принимает свежее чтение, а не наша память о
+        // прошлом кадре. Пока в камере лежит наше — записей нет вовсе.
+        // Блок, в который мы сами писали, помечен в mem_io некэшируемым,
+        // поэтому read-back после wr_buf читается реально из памяти.
+        const float want = g_xray_meters;
+        float current = 0.0F;
+        const bool rd_ok = rd_exact(native_cam + CAMERA_NEAR_CLIP, current);
         if (g_xray_cam != native_cam || !g_xray_saved_valid) {
             // Другая камера: вернуть клип прежней, запомнить клип новой.
             if (g_xray_saved_valid && g_xray_cam)
                 wr_buf(g_xray_cam + CAMERA_NEAR_CLIP, &g_xray_saved_near, sizeof(float));
-            float current = rd<float>(native_cam + CAMERA_NEAR_CLIP);
-            g_xray_saved_near = (std::isfinite(current) && current > 0.0001F && current < 5.0F)
+            g_xray_saved_near = (rd_ok && std::isfinite(current) && current > 0.0001F && current < 5.0F)
                               ? current : 0.1F;
             g_xray_saved_valid = true;
             g_xray_cam = native_cam;
         }
-        wr_buf(native_cam + CAMERA_NEAR_CLIP, &g_xray_meters, sizeof(float));
+        if (!(rd_ok && current == want))
+            wr_buf(native_cam + CAMERA_NEAR_CLIP, &want, sizeof(float));
     } else if (g_xray_saved_valid) {
         if (g_xray_cam)
             wr_buf(g_xray_cam + CAMERA_NEAR_CLIP, &g_xray_saved_near, sizeof(float));
@@ -369,8 +378,18 @@ static void always_day_tick() {
                     while (g_day_writer_running.load()) {
                         uint64_t addr = g_day_cycle_addr.load();
                         if (addr && g_day_enabled && g_pid > 0) {
-                            float noon = 12.0F;
-                            wr_buf(addr, &noon, sizeof(float));
+                            // Доминировать по таймеру — значит писать полдень
+                            // 500 раз в секунду, хотя игра переписывает час
+                            // раз в кадр. Читаем свежо (off-cache: этот поток
+                            // живёт вне кадра оверлея) и кладём значение только
+                            // когда в памяти его нет. Окно, за которое игра
+                            // успевает показать свой час, не меняется: мы всё
+                            // так же приходим каждые 2 мс.
+                            float hour = 0.0F;
+                            if (!rd_fresh(addr, hour) || hour != 12.0F) {
+                                const float noon = 12.0F;
+                                wr_buf(addr, &noon, sizeof(float));
+                            }
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(2));
                     }
@@ -1797,6 +1816,20 @@ static Vec3    s_fc_basis_r{1.f, 0.f, 0.f}, s_fc_basis_u{0.f, 1.f, 0.f}, s_fc_ba
 static bool    s_fc_basis_have = false;
 static std::atomic<unsigned> g_fc_skew{0};   // отброшено кривых базисов за секунду
 
+// Флаг «кэш камеры несвежий» выставляет сама игра; мы его только гасим,
+// чтобы она не пересчитала вид из трансформа. Гасим по значению: писатель
+// фрикама крутится две тысячи раз в секунду, и писать ноль в уже нулевой
+// байт каждый виток — это два syscall'а на ровном месте. Не прочитали —
+// считаем взведённым и гасим, как раньше. Чтение в обход кэша: писатель
+// живёт вне кадра оверлея, блочный кэш ему чужой.
+static void clear_camera_dirty_byte(uint64_t addr) {
+    if (!addr) return;
+    uint8_t dirty = 1;
+    if (g_mem.read_quiet(addr, &dirty, 1) && !dirty) return;
+    const uint8_t zero = 0;
+    wr_buf(addr, &zero, 1);
+}
+
 static bool basis_is_orthonormal(const Vec3& r, const Vec3& u, const Vec3& f) {
     const float rl = r.x * r.x + r.y * r.y + r.z * r.z;
     const float ul = u.x * u.x + u.y * u.y + u.z * u.z;
@@ -2069,18 +2102,23 @@ static void freecam_writer_start() {
                 // пометившую кэш несвежим после нашей записи, тишина не
                 // остановит — она пересчитает вид из трансформа на рендере.
                 // Однобайтные записи атомарны — рваных чтений они не дают.
-                uint8_t zero = 0;
-                wr_buf(cam + CAMERA_VIEW_DIRTY, &zero, 1);
-                wr_buf(cam + CAMERA_PROJ_DIRTY, &zero, 1);
+                clear_camera_dirty_byte(cam + CAMERA_VIEW_DIRTY);
+                clear_camera_dirty_byte(cam + CAMERA_PROJ_DIRTY);
             }
-            // Трансформы слотов — безусловно, как раньше: их игра
-            // переписывает каждый кадр из положения тела, сравнение с памятью
-            // здесь всегда «не сошлось» и только лишний syscall.
+            // Трансформы слотов — по расхождению. Раньше писались безусловно
+            // («игра затирает каждый кадр, сравнение только лишний syscall»),
+            // но затирает она раз в кадр, а виток потока — около миллисекунды:
+            // почти все итерации кладут те же байты, что там уже лежат.
+            // 48-байтное чтение в обход кэша дешевле покадрового write'а,
+            // а не прочитали — пишем, как раньше (fail-safe).
             // Та же проверка протухания, что после чтения: запись вида выше —
             // тоже syscall, сессия могла смениться уже после снимка.
             if (!g_fc_writer_running.load() || my_gen != g_fc_writer_gen.load()) return;
             for (int sl = 0; sl < tn && sl < kFcMaxSlots; ++sl) {
                 if (!t[sl].addr) continue;
+                float cur[12] = {};
+                if (g_mem.read_quiet(t[sl].addr, cur, sizeof(cur)) &&
+                    memcmp(cur, t[sl].m, sizeof(cur)) == 0) continue;
                 if (wr_buf(t[sl].addr, t[sl].m, sizeof(t[sl].m)))
                     g_fc_write_count.fetch_add(1);
             }
@@ -2285,12 +2323,21 @@ static bool freecam_write() {
                 memcpy(block, view.m, sizeof(view.m));
                 memcpy(block + 16, proj.m, sizeof(proj.m));
                 memcpy(block + 32, w2c.m, sizeof(w2c.m));
-                if (wr_buf(g_native_camera + CAMERA_VIEW_MATRIX, block, sizeof(block))) ok = true;
-                {
-                    uint8_t zero = 0;
-                    wr_buf(g_native_camera + CAMERA_VIEW_DIRTY, &zero, 1);
-                    wr_buf(g_native_camera + CAMERA_PROJ_DIRTY, &zero, 1);
-                }
+                // Блок матриц держит писатель-поток (freecam_writer_start): он
+                // сверяет память и пишет при расхождении почти каждую
+                // миллисекунду. Оверлею дублировать те же 192 байта каждый
+                // кадр нечем — это самый крупный покадровый писатель модуля.
+                // Пишем, только если писатель за последний кадр тишины не
+                // прервал (счётчик записей — признак, что поток живой).
+                static unsigned s_writer_writes_seen = 0;
+                const unsigned s_writer_writes_now = g_fc_write_count.load();
+                const bool writer_live = g_fc_writer_running.load() &&
+                                         s_writer_writes_now != s_writer_writes_seen;
+                s_writer_writes_seen = s_writer_writes_now;
+                if (writer_live) ok = true;
+                else if (wr_buf(g_native_camera + CAMERA_VIEW_MATRIX, block, sizeof(block))) ok = true;
+                clear_camera_dirty_byte(g_native_camera + CAMERA_VIEW_DIRTY);
+                clear_camera_dirty_byte(g_native_camera + CAMERA_PROJ_DIRTY);
                 memcpy(pub.view, view.m, sizeof(view.m));
                 memcpy(pub.proj, proj.m, sizeof(proj.m));
                 memcpy(pub.w2c, w2c.m, sizeof(w2c.m));
@@ -2312,6 +2359,13 @@ static bool freecam_write() {
             Matrix34 cur_m{};
             if (!rd_fresh(S.m + (uint64_t)S.i * sizeof(Matrix34), cur_m)) continue;
             if (!matrix34_is_valid(cur_m)) { cur_m.rotation={0.f,0.f,0.f,1.f}; cur_m.scale={1.f,1.f,1.f,0.f}; }
+            // Трансформ слота игра переписывает каждый кадр из положения тела,
+            // поэтому сверяем ПРОЧИТАННОЕ с тем, что хотим, до правки: совпало
+            // — записи нет, разошлось — пишем. Лишнего syscall'а сравнение не
+            // стоит, cur_m уже прочитан этим же витком.
+            const bool moved = cur_m.translation.x != local.x ||
+                               cur_m.translation.y != local.y ||
+                               cur_m.translation.z != local.z;
             cur_m.translation.x=local.x; cur_m.translation.y=local.y; cur_m.translation.z=local.z;
             const uint64_t addr = S.m + (uint64_t)S.i * sizeof(Matrix34);
             FcSlotPayload& P = pub.t[pub.tn++];
@@ -2319,7 +2373,7 @@ static bool freecam_write() {
             P.m[0]=cur_m.translation.x; P.m[1]=cur_m.translation.y; P.m[2]=cur_m.translation.z; P.m[3]=cur_m.translation.w;
             P.m[4]=cur_m.rotation.x;    P.m[5]=cur_m.rotation.y;    P.m[6]=cur_m.rotation.z;    P.m[7]=cur_m.rotation.w;
             P.m[8]=cur_m.scale.x;       P.m[9]=cur_m.scale.y;       P.m[10]=cur_m.scale.z;      P.m[11]=cur_m.scale.w;
-            if (wr_buf(addr, &cur_m, sizeof(Matrix34))) ok = true;
+            if (!moved || wr_buf(addr, &cur_m, sizeof(Matrix34))) ok = true;
             if (first_gap && gap >= 0.f) { if (!pub.has_view) g_fc_gap.store(gap); first_gap = false; }
         }
     }
@@ -3431,7 +3485,15 @@ bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
     // ±360 и снова ослепнет (см. wrap_deg180 выше).
     const float xw = wrap_deg180(x_deg), yw = wrap_deg180(y_deg);
     float angles[2] = {xw, yw};
-    const bool ok = wr_buf(mouse_look + MOUSELOOK_ANGLES, angles, sizeof(angles));
+    // Наводка обязана дописывать угол ровно когда он расходится: автонаводка
+    // держит цель и каждый кадр, и без этого условия аим выглядит как
+    // «память трогается, а ввода нет» — единственный лишний след на кадр.
+    // Чтение кадревого кэша корректно: свой блок после записи некэшируем,
+    // а значит видим то, что реально лежит в MouseLook.
+    float cur_angles[2] = {0.0F, 0.0F};
+    const bool already = rd_buf(mouse_look + MOUSELOOK_ANGLES, cur_angles, sizeof(cur_angles)) &&
+                         cur_angles[0] == xw && cur_angles[1] == yw;
+    const bool ok = already || wr_buf(mouse_look + MOUSELOOK_ANGLES, angles, sizeof(angles));
     if (ok) {
         s_look_wrote = true;
         s_look_wrote_addr = mouse_look;
@@ -3513,7 +3575,13 @@ bool esp_mem_aim_write_fire_dir(float x, float y, float z) {
     const float len = sqrtf(x * x + y * y + z * z);
     if (!std::isfinite(len) || len < 0.001F) return false;
     const float dir[3] = {x / len, y / len, z / len};
-    const bool ok = wr_buf(addr, dir, sizeof(dir));
+    // Ось выстрела сверяем с памятью: при неподвижной камере вектор не
+    // меняется, и покадровая запись одного и того же — чистый шум. Разошлось
+    // (игра повернула камеру) — пишем, как и раньше.
+    float cur_dir[3] = {0.0F, 0.0F, 0.0F};
+    const bool already = rd_buf(addr, cur_dir, sizeof(cur_dir)) &&
+                         cur_dir[0] == dir[0] && cur_dir[1] == dir[1] && cur_dir[2] == dir[2];
+    const bool ok = already || wr_buf(addr, dir, sizeof(dir));
     if (!ok) {
         // Отказ записи — редкость (доступ отобрали или адрес умер); пишем, но
         // не чаще раза в секунду, чтобы не забить лог.
@@ -8417,6 +8485,18 @@ static float stretched_camera_aspect(float sw, float sh) {
     return 0.0F;
 }
 
+// Растяг экрана в Camera.aspect — по расхождению, а не каждый кадр. Кадр
+// оверлея стоит одно чтение поля, запись идёт только когда игра вернула
+// своё значение (смена вида/камеры) или когда мы его только что поменяли.
+// Значение для проекции этого же кадра при этом берётся из параметра,
+// так что картинка и визуалы по-прежнему в одном aspect.
+static void apply_camera_aspect(uint64_t native_cam, float aspect) {
+    if (aspect <= 0.0F || !native_cam) return;
+    float current = 0.0F;
+    if (rd_exact(native_cam + CAMERA_ASPECT, current) && current == aspect) return;
+    wr_buf(native_cam + CAMERA_ASPECT, &aspect, sizeof(aspect));
+}
+
 static bool read_camera_frame(float aspect, uint64_t& native, Mat4& projection, Mat4& view,
                               float force_aspect = 0.0F) {
     native = resolve_native_camera_pointer(true);
@@ -8455,8 +8535,7 @@ bool publish_camera_only_frame(float sw, float sh) {
     // игроков живут в другом aspect, чем картинка игры.
     const float stretched = stretched_camera_aspect(sw, sh);
     if (!read_camera_frame(sw / sh, cam_native, solo_proj, solo_view, stretched)) return false;
-    if (stretched > 0.0F && cam_native)
-        wr_buf(cam_native + CAMERA_ASPECT, &stretched, sizeof(stretched));
+    apply_camera_aspect(cam_native, stretched);
     Vec3 cam_pos{};
     if (!camera_position_from_view(solo_view, cam_pos)) return false;
     g_frame_vp = mat_mul(solo_proj, solo_view);
@@ -10308,9 +10387,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         // уходят за кадр, а модели врагов становятся шире/жирнее (круги-
         // прицелы овальные — норма для фичи). Через умножение эффект был
         // обратный — картинка сплющивалась (наблюдение с устройства 04.10).
-        // Пишем КАЖДЫЙ кадр тем же g_mem, что и аим: движок может возвращать
-        // aspect на место при смене вида. Базу берём из геометрии экрана
-        // (sw/sh), а не из памяти — там уже может лежать наша же запись. При
+        // Пишем тем же g_mem, что и аим, но только по расхождению (см.
+        // apply_camera_aspect): движок может возвращать aspect на место при
+        // смене вида — это увидит чтение, а не покадровая запись. Базу берём
+        // из геометрии экрана (sw/sh), а не из памяти — там уже может лежать
+        // наша же запись. При
         // возврате слайдера в 1.00 аспект один раз восстанавливается в ровный
         // sw/sh.
         //
@@ -10324,8 +10405,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         // freecam_tick() — в начале кадра (см. выше): ему нельзя за ранние выходы.
         g_matrix_configuration_validated = true;
         g_camera_matrix_physical_match = true;
-        if (stretched > 0.0F && native_cam)
-            wr_buf(native_cam + CAMERA_ASPECT, &stretched, sizeof(stretched));
+        apply_camera_aspect(native_cam, stretched);
         // Unity worldToClip = projection * worldToCamera (same order as native 0xe2b90c).
         vp = mat_mul(projection, view);
     }

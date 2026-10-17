@@ -478,6 +478,15 @@ bool attack(bool on) {
         return false;                 // класть 1 было некуда — и не надо
     }
     const unsigned char value = on ? 1u : 0u;
+    // Зажим держится всё время замаха, а farm зовёт attack(true) каждый его
+    // кадр. Пишем только по расхождению: байт всё ещё наш — лишнего syscall'а
+    // нет; игра его сняла (или мы ещё не писали) — чтение это видит и мы
+    // возвращаем зажатие, то есть keep-alive остаётся.
+    if (s_attack_value == value &&
+        rd<unsigned char>(handler + PLAYER_INPUT_HANDLER_ATTACK_HELD) == value) {
+        s_attack_why = WHY_OK;
+        return true;
+    }
     if (!wr_buf(handler + PLAYER_INPUT_HANDLER_ATTACK_HELD, &value, sizeof(value))) {
         s_attack_why = WHY_WRITE;
         return false;                 // состояние не меняем: попробуем ещё
@@ -511,7 +520,12 @@ bool sprint(bool on) {
         s_sprint_base_known  = true;
     }
     const unsigned char phase = on ? INPUT_ACTION_PHASE_STARTED : s_sprint_base_phase;
-    if (!wr_buf(phase_addr, &phase, sizeof(phase))) { s_sprint_why = WHY_WRITE; return false; }
+    // То же самое для бега: sprint(true) вызывается каждый кадр движения.
+    // Фазу трогаем только когда она разошлась с желаемой; в прямом режиме
+    // (s_sprint_direct) игра наше значение не держит, там пишем безусловно.
+    if (s_sprint_direct || rd<unsigned char>(phase_addr) != phase) {
+        if (!wr_buf(phase_addr, &phase, sizeof(phase))) { s_sprint_why = WHY_WRITE; return false; }
+    }
     if (s_sprint_direct) {
         const unsigned char press = on ? 1u : s_sprint_base_sprint;
         if (!wr_buf(press_addr, &press, sizeof(press))) { s_sprint_why = WHY_WRITE; return false; }

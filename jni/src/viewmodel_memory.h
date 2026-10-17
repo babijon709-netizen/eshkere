@@ -32,17 +32,26 @@ struct Identity {
 template<class T> struct Patch {
     uint64_t address = 0;
     T original{}, last{};
+    T sampled{};                 // что в этом тике читали по address
     bool written = false;
+    bool fresh = false;          // sampled снят в этом тике и ещё не израсходован
     template<class IO> bool sample(IO& io, uint64_t addr) {
         T current{};
         if (!io.read(addr, current) || !valid(current)) return false;
         if (!written || address != addr || !same(current, last)) original = current;
-        address = addr;
+        address = addr; sampled = current; fresh = true;
         return true;
     }
+    // Пишем только по расхождению. Решает снимок этого же тика, а не last:
+    // поле принадлежит и игре, вернёт своё — sample() это увидит и запись
+    // случится. Пока значение уже наше, тик стоит одно чтение и ноль записей,
+    // иначе каждая включённая функция оставляла бы детектору раунд-трип
+    // в память на каждом кадре.
     template<class IO> bool put(IO& io, T value) {
-        if (!valid(value) || !io.write(address, value)) return false;
-        last = value; written = true; return true;
+        if (!valid(value)) return false;
+        if (fresh && same(value, sampled)) { fresh = false; return true; }
+        if (!io.write(address, value)) return false;
+        last = value; written = true; sampled = value; fresh = false; return true;
     }
     template<class IO> bool restore(IO& io) {
         if (!written) { *this = {}; return true; }

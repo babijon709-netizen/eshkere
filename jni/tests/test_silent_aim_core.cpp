@@ -11,9 +11,16 @@ namespace {
 struct Memory {
     std::unordered_map<uint64_t, uint64_t> pointers;
     uint64_t last_write = 0;
+    uint64_t written_address = 0;   // куда легла последняя запись (ось выстрела)
     float value[3] = {};
+    int writes = 0;
 
     bool read(uint64_t address, void* out, size_t size) {
+        // Ось выстрела читается так же, как в игре: те же 12 байт, что и пишем.
+        if (size == sizeof(value) && address == written_address) {
+            std::memcpy(out, value, size);
+            return true;
+        }
         const auto it = pointers.find(address);
         if (size != sizeof(uint64_t) || it == pointers.end()) return false;
         std::memcpy(out, &it->second, size);
@@ -22,7 +29,9 @@ struct Memory {
     bool write(uint64_t address, const void* in, size_t size) {
         if (size != sizeof(value)) return false;
         last_write = address;
+        written_address = address;
         std::memcpy(value, in, size);
+        ++writes;
         return true;
     }
 };
@@ -74,6 +83,21 @@ int main() {
     memory = guarded_memory(c);
     memory.pointers[c.handler + c.look_offset] = 0x14000;
     assert(silent_aim::tick(memory, c) == silent_aim::Result::guard_failed);
+
+    // Пишем по расхождению. Тик сайлента идёт каждый кадр, пока ведётся цель,
+    // поэтому второй раз тот же вектор класть в чужую память незачем — это и
+    // есть единственный лишний след функции. Игра повернула камеру (значение
+    // сдвинулось) — запись возвращается.
+    memory = guarded_memory(c);
+    assert(silent_aim::tick(memory, c) == silent_aim::Result::written);
+    assert(memory.writes == 1);
+    assert(silent_aim::tick(memory, c) == silent_aim::Result::written);
+    assert(silent_aim::tick(memory, c) == silent_aim::Result::written);
+    assert(memory.writes == 1);
+    memory.value[2] = -1.0F;
+    assert(silent_aim::tick(memory, c) == silent_aim::Result::written);
+    assert(memory.writes == 2);
+    assert(std::fabs(memory.value[2] - 1.0F) < 0.00001f);
 
     assert(!silent_aim::wants_no_spread(false, true, false));
     assert(!silent_aim::wants_no_spread(true, false, false));

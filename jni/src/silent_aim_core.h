@@ -68,6 +68,15 @@ Result tick(Memory& mem, const Command& c) {
     float dir[3];
     if (!valid_command(c) || !direction(c, dir)) return Result::invalid;
     if (!guarded(mem, c)) return Result::guard_failed;
+    // Одно и то же направление пишем один раз. Камера стоит — вектор в памяти
+    // уже наш, и второй write подряд функции не нужен; игра переставила его
+    // сама — сверка это видит, и запись возвращается. Особый смысл тут в том,
+    // что сайлент трогает память чаще, чем стреляет: тик идёт каждый кадр,
+    // пока ведётся цель, а не в момент выстрела.
+    float cur[3] = {0.0F, 0.0F, 0.0F};
+    if (mem.read(c.look + c.value_offset, cur, sizeof(cur)) &&
+        cur[0] == dir[0] && cur[1] == dir[1] && cur[2] == dir[2])
+        return Result::written;
     return mem.write(c.look + c.value_offset, dir, sizeof(dir))
         ? Result::written : Result::write_failed;
 }

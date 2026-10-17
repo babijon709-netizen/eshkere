@@ -9,3 +9,8 @@ libs/
 # one-shot CLI dumps from the device
 *.partial
 global-metadata.dat
+
+# Скачанные с диска дампы игры (сотни МБ): распаковывать во временный каталог,
+# в git не класть. Схема распаковки: dump.cs / il2cpp.h / script.json.
+dumps/
+*.7z

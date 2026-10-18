@@ -7258,26 +7258,53 @@ void esp_set_aim_lead(float seconds) {
 }
 
 static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat4& vp, float sw, float sh) {
-    Vec3 world{world_in.x + g_aim_lead.x,
-               world_in.y + g_aim_lead.y,
-               world_in.z + g_aim_lead.z};
-    if (slot == 0) world.y += head_lift_for_range(world_in);
-
     Vec3 origin{};
     const bool haveOrigin = aim_ballistic_origin(origin);
+    float dist = box.distance;
+    if (haveOrigin) {
+        const float d = aim_ballistics::length(aim_ballistics::sub(world_in, origin));
+        if (aim_ballistics::finite(d) && d > 0.01f) dist = d;
+    } else if (g_frame_local_valid) {
+        const float d = aim_ballistics::length(aim_ballistics::sub(world_in, g_frame_local_pos));
+        if (aim_ballistics::finite(d) && d > 0.01f) dist = d;
+    }
+
+    // Distance-dependent lead scaling: inside 5m hitboxes subtend a wide angle
+    // and the first FixedUpdate raycast step (~8m) hits immediately, so extra
+    // control lead would pull aim outside the player's collider. Ramp smoothly
+    // from 0 at 5m to full at 30m.
+    float lead_dist_scale = 0.0f;
+    if (aim_ballistics::finite(dist) && dist > 5.0f) {
+        float t = (dist - 5.0f) / 25.0f;
+        if (t > 1.0f) t = 1.0f;
+        lead_dist_scale = t * t * (3.0f - 2.0f * t);
+    }
+    const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale);
+
+    Vec3 world{world_in.x + scaled_lead.x,
+               world_in.y + scaled_lead.y,
+               world_in.z + scaled_lead.z};
+    if (slot == 0) world.y += head_lift_for_range(world_in);
+
     bool ballisticSolved = false;
     if (g_state.aim_touch && haveOrigin) {
         aim_ballistics::Parameters params = g_aim_ballistic_params;
         if (!params.valid) {
-            params.muzzle_speed = 140.0f;
+            params.muzzle_speed = 260.0f;
             params.gravity = 1.0f;
-            params.air_drag = 0.02f;
+            params.air_drag = 0.015f;
             params.underwater_drag = 0.5f;
             params.max_range = 500.0f;
             params.valid = true;
         }
+        float ballistic_vel_scale = 1.0f;
+        if (aim_ballistics::finite(dist)) {
+            if (dist <= 2.5f) ballistic_vel_scale = 0.0f;
+            else if (dist < 6.0f) ballistic_vel_scale = (dist - 2.5f) / 3.5f;
+        }
+        const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
         aim_ballistics::Solution solution{};
-        if (aim_ballistics::solve(origin, world, g_aim_velocity,
+        if (aim_ballistics::solve(origin, world, solve_vel,
                                   g_aim_inherited_velocity,
                                   params, solution)) {
             float range = aim_ballistics::length(aim_ballistics::sub(world, origin));
@@ -7304,9 +7331,9 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     // ray endpoint so the silent writer steers along the ballistic solution.
     const Vec3 silent_world = ballisticSolved
         ? world
-        : Vec3{world_in.x + g_aim_lead.x,
-               world_in.y + g_aim_lead.y,
-               world_in.z + g_aim_lead.z};
+        : Vec3{world_in.x + scaled_lead.x,
+               world_in.y + scaled_lead.y,
+               world_in.z + scaled_lead.z};
     const Vec3 aim_world = g_state.aim_mode == AIM_MODE_SILENT
         ? silent_world : world;
     box.aim_world[slot][0] = aim_world.x;

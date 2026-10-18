@@ -7064,6 +7064,56 @@ void aim_merge_ballistics(const AimBallisticRead& config, const AimBallisticRead
     out.valid = out.muzzle_speed >= 1.0f && aim_ballistics::parameters_valid(out);
 }
 
+// Exact weapon ballistics extracted from data-weapons-configs_assets_all bundle
+// keyed by FPObject.m_ObjectID (+0x70).
+bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
+    read = {};
+    int32_t obj_id = 0;
+    if (!rd_exact(weapon + 0x70, obj_id)) return false;
+    struct Entry {
+        int32_t id;
+        float max_dist;
+        float speed;
+        float gravity;
+        float air_drag;
+        float water_drag;
+    };
+    static constexpr Entry kTable[] = {
+        {  4,  90.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 04_Revolver
+        {  5,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 05_Shotgun
+        {  6, 260.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 06_HuntingRifle
+        {  7, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 07_AssaultRifle
+        { 20,  90.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 20_SubmachineGun
+        { 21,   9.0f, 350.0f, 0.5f, 0.10f, 5.0f }, // 21_FlareGun
+        { 26, 130.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 26_DesertEagle
+        { 27, 120.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 27_Thompson
+        { 28, 200.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 28_DMR
+        { 30, 200.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 30_Winchester
+        { 32, 300.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 32_DVL
+        { 33, 180.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 33_HMLMG
+        { 35,  70.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 35_HandmadePistol
+        { 37, 150.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 37_KrissVector
+        { 41,  40.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 41_SteelBallGun
+        { 43, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 43_FnFal
+        { 44,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 44_DoubleBarrel
+        { 45,   9.0f, 300.0f, 0.0f, 0.10f, 2.5f }, // 45_SignalFlareGun
+    };
+    for (const Entry& e : kTable) {
+        if (e.id == obj_id) {
+            read.params.muzzle_speed = e.speed;
+            read.params.max_range = e.max_dist;
+            read.params.gravity = e.gravity;
+            read.params.air_drag = e.air_drag;
+            read.params.underwater_drag = e.water_drag;
+            read.params.valid = true;
+            read.valid_chain = true;
+            read.has_physics = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 void update_aim_ballistics(uint64_t player) {
     static uint64_t cached_player = 0;
     static uint64_t cached_weapon = 0;
@@ -7212,6 +7262,9 @@ void update_aim_ballistics(uint64_t player) {
             projectile_read = {};
         }
     }
+    if (!config_ok && !projectile_ok) {
+        config_ok = aim_lookup_weapon_by_object_id(weapon, config_read);
+    }
 
     aim_ballistics::Parameters current{};
     aim_merge_ballistics(config_ok ? config_read : AimBallisticRead{},
@@ -7269,15 +7322,19 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         if (aim_ballistics::finite(d) && d > 0.01f) dist = d;
     }
 
-    // Distance-dependent lead scaling: inside 5m hitboxes subtend a wide angle
-    // and the first FixedUpdate raycast step (~8m) hits immediately, so extra
-    // control lead would pull aim outside the player's collider. Ramp smoothly
-    // from 0 at 5m to full at 30m.
+    // Distance-dependent lead scaling: in Oxide FixedUpdate steps by 0.03125s,
+    // so a 350–600 m/s firearm bullet raycasts 11–19m on the very first tick.
+    // Inside 6m, extra control lead pulls aim ahead of the collider; from 6m
+    // to 40m it ramps smoothly with distance (up to 1.35x at >= 55m).
     float lead_dist_scale = 0.0f;
-    if (aim_ballistics::finite(dist) && dist > 5.0f) {
-        float t = (dist - 5.0f) / 25.0f;
-        if (t > 1.0f) t = 1.0f;
-        lead_dist_scale = t * t * (3.0f - 2.0f * t);
+    if (aim_ballistics::finite(dist) && dist > 6.0f) {
+        if (dist <= 40.0f) {
+            const float t = (dist - 6.0f) / 34.0f;
+            lead_dist_scale = t * t * (3.0f - 2.0f * t);
+        } else {
+            const float extra = (dist - 40.0f) / 40.0f;
+            lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
+        }
     }
     const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale);
 
@@ -7290,17 +7347,17 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     if (g_state.aim_touch && haveOrigin) {
         aim_ballistics::Parameters params = g_aim_ballistic_params;
         if (!params.valid) {
-            params.muzzle_speed = 260.0f;
-            params.gravity = 1.0f;
-            params.air_drag = 0.015f;
-            params.underwater_drag = 0.5f;
-            params.max_range = 500.0f;
+            params.muzzle_speed = 500.0f;
+            params.gravity = 0.0f;
+            params.air_drag = 0.10f;
+            params.underwater_drag = 5.0f;
+            params.max_range = 200.0f;
             params.valid = true;
         }
         float ballistic_vel_scale = 1.0f;
         if (aim_ballistics::finite(dist)) {
-            if (dist <= 2.5f) ballistic_vel_scale = 0.0f;
-            else if (dist < 6.0f) ballistic_vel_scale = (dist - 2.5f) / 3.5f;
+            if (dist <= 4.0f) ballistic_vel_scale = 0.0f;
+            else if (dist < 10.0f) ballistic_vel_scale = (dist - 4.0f) / 6.0f;
         }
         const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
         aim_ballistics::Solution solution{};

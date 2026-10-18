@@ -1026,6 +1026,11 @@ static uint64_t resolve_local_player() {
         if (class_identity(candidate, "GameControllerBase", "Oxide") != 0)
             g_game_controller_class = candidate;
     }
+    if (!g_player_manager_class && PLAYER_MANAGER_TYPEINFO_RVA != 0) {
+        const uint64_t candidate = rd_ptr(g_il2cpp_base + PLAYER_MANAGER_TYPEINFO_RVA);
+        if (class_identity(candidate, "PlayerManager", "Oxide") != 0)
+            g_player_manager_class = candidate;
+    }
 
     if (!g_game_controller_class || !g_player_manager_class) return 0;
 
@@ -1562,6 +1567,8 @@ static bool resolve_camera_arrays(uint64_t& matrices, uint64_t& indices, int32_t
     if (!data || idx < 0 || idx > 100000) return false;
     static const uint64_t kPairs[][2] = {{0x18, 0x20}, {0x08, 0x10}, {0x10, 0x18}, {0x20, 0x28}};
     static const uint64_t kExt[][2] = {{0x20, 0x28}, {0x28, 0x30}, {0x30, 0x38}, {0x40, 0x48}, {0x10, 0x18}, {0x48, 0x50}};
+    float best_close = 1e9f;
+    float best_any = 1e9f;
     auto try_pair = [&](uint64_t m0, uint64_t n0) {
         if (!m0 || !n0) return;
         const uint64_t ms[2] = {m0, rd_ptr(m0)};
@@ -1583,8 +1590,14 @@ static bool resolve_camera_arrays(uint64_t& matrices, uint64_t& indices, int32_t
                     const float d = sqrtf(dx * dx + dy * dy + dz * dz);
                     if (err_m < 0.f || d < err_m) err_m = d;
                     fc_slot_add(m, n, ii, d);
-                    if (d <= 1.0F && !matrices) { matrices = m; indices = n; index = ii; }
-                    if (!matrices && d <= 100.0F) { matrices = m; indices = n; index = ii; }
+                    const float score = d + ((di == 0) ? 0.0f : 0.05f);
+                    if (d <= 1.0F && score < best_close) {
+                        best_close = score;
+                        matrices = m; indices = n; index = ii;
+                    } else if (best_close > 1e8f && d <= 100.0F && score < best_any) {
+                        best_any = score;
+                        matrices = m; indices = n; index = ii;
+                    }
                 }
             }
         }
@@ -3129,10 +3142,14 @@ static bool transform_position_direct(uint64_t transform, Vec3& out) {
 static int mouse_look_camera_distance(uint64_t mouse_look, float& dist) {
     dist = -1.f;
     if (mouse_look < 0x10000) return -1;
-    const uint64_t root = rd_ptr(mouse_look + MOUSELOOK_LOOK_ROOT);
-    if (root < 0x10000) return -1;
+    const uint64_t root_raw = rd_ptr(mouse_look + MOUSELOOK_LOOK_ROOT);
+    if (root_raw < 0x10000) return -1;
+    const uint64_t root_native = resolve_native_transform(root_raw);
+    const uint64_t root = (root_native >= 0x10000 && root_native < 0x0001000000000000ULL)
+        ? root_native : root_raw;
     Vec3 p{}, cam{};
-    if (!transform_position_direct(root, p)) return -1;
+    if (!transform_position_direct(root, p) &&
+        !(root != root_raw && transform_position_direct(root_raw, p))) return -1;
     if (!vec3_is_finite(p)) return -1;
     if (!current_camera_position(cam)) return -1;
     const float dx = p.x - cam.x, dy = p.y - cam.y, dz = p.z - cam.z;
@@ -3369,6 +3386,11 @@ static bool resolve_local_mouse_look(uint64_t& out, LookFail* why = nullptr) {
     g_look_player_addr = player;
     g_look_local = local;
     g_look_cam_dist = d;
+    if (!known && klass >= 0x10000) {
+        const float sens = rd<float>(mouse_look + MOUSE_LOOK_SENSITIVITY_OFFSET);
+        if (std::isfinite(sens) && sens >= 0.05F && sens <= 100.0F)
+            g_mouse_look_klass.store(klass);
+    }
     look_mismatch(false);
     s_ml_cached = mouse_look;
     s_ml_cached_player = player;
@@ -6002,14 +6024,16 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
             const float moved = mx * mx + my * my + mz * mz;
             const double span = now - track.vel_ref_t;
             if (moved > 0.0004F) {                     // moved more than 2 cm
-                if (span > 0.02 && span < 0.5) {
-                    const Vec3 v = { (float)(mx / span), (float)(my / span), (float)(mz / span) };
-                    const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-                    if (std::isfinite(speed) && speed < 12.0F) {
-                        track.vel = playermotion::blend_velocity(track.vel, v);
+                if (span >= 0.02) {
+                    if (span < 0.5) {
+                        const Vec3 v = { (float)(mx / span), (float)(my / span), (float)(mz / span) };
+                        const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+                        if (std::isfinite(speed) && speed < 12.0F) {
+                            track.vel = playermotion::blend_velocity(track.vel, v);
+                        }
                     }
+                    track.vel_ref = position; track.vel_ref_t = now;
                 }
-                track.vel_ref = position; track.vel_ref_t = now;
             } else if (span > 0.3) {                   // stood still: stop leading
                 track.vel = {};
                 track.vel_ref = position; track.vel_ref_t = now;
@@ -6516,13 +6540,16 @@ static float wrap_deg_180(float d) {
     return d;
 }
 
+static float g_screen_stretch_x = 1.0F;
+
 static bool angles_from_screen(const Vec2& screen, float sw, float sh, float& yaw_deg, float& pitch_deg) {
     constexpr float rad2deg = 57.29577951F;
     if (!(sw > 1.f) || !(sh > 1.f)) return false;
     if (!std::isfinite(screen.x) || !std::isfinite(screen.y)) return false;
     float fov = (g_cam_fov_deg > 1.0F && g_cam_fov_deg < 179.0F) ? g_cam_fov_deg : 60.0F;
     const float tan_half_v = tanf(fov * 0.5F / rad2deg);
-    const float aspect = sw / sh;
+    const float stretch = (g_screen_stretch_x > 1.005F) ? g_screen_stretch_x : 1.0F;
+    const float aspect = (sw / sh) / stretch;
     const float ndc_x = (screen.x / sw) * 2.0F - 1.0F;
     const float ndc_y = 1.0F - (screen.y / sh) * 2.0F;
     yaw_deg = atanf(ndc_x * tan_half_v * aspect) * rad2deg;
@@ -6544,9 +6571,12 @@ bool aim_angles_for(const Vec3& world, const Vec2& screen, float sw, float sh, f
     // только если 3-D-путь с ним согласен — берём 3-D.
     float pix_yaw = 0.f, pix_pitch = 0.f;
     const bool have_pix = angles_from_screen(screen, sw, sh, pix_yaw, pix_pitch);
+    if (have_pix) {
+        yaw_deg = pix_yaw;
+        pitch_deg = pix_pitch;
+        return true;
+    }
     if (g_cam_pose_valid || g_aim_ref_valid) {
-        // Prefer the real firing reference (look root direction from the eye
-        // point); the camera pose is the fallback.
         const bool use_ref = g_aim_ref_valid;
         const Vec3& origin = use_ref ? g_aim_ref_origin : g_cam_pos;
         const Vec3& fwd = use_ref ? g_aim_ref_forward : g_cam_forward;
@@ -6560,24 +6590,10 @@ bool aim_angles_for(const Vec3& world, const Vec2& screen, float sw, float sh, f
             yaw_deg = atan2f(rx, fx) * rad2deg;
             pitch_deg = atan2f(ux, sqrtf(fx * fx + rx * rx)) * rad2deg;
             if (std::isfinite(yaw_deg) && std::isfinite(pitch_deg)) {
-                // Согласен с нарисованным — годится. Не согласен (источники
-                // разошлись) — берём пиксельный угол: он по построению совпадает
-                // с тем, что видит игрок.
-                if (!have_pix) return true;
-                const float dYaw = fabsf(wrap_deg_180(yaw_deg - pix_yaw));
-                const float dPitch = fabsf(pitch_deg - pix_pitch);
-                if (dYaw + dPitch <= 2.5F) return true;
-                static double s_last = -1e9;
-                const double now = memio::now_seconds();
-                if (now - s_last >= 5.0) {
-                    s_last = now;
-                }
-                yaw_deg = pix_yaw; pitch_deg = pix_pitch;
                 return true;
             }
         }
     }
-    if (have_pix) { yaw_deg = pix_yaw; pitch_deg = pix_pitch; return true; }
     return false;
 }
 
@@ -6672,8 +6688,19 @@ bool aim_read_weapon_config(uint64_t weapon, uint64_t offset, bool allow_structu
                             AimBallisticRead& read) {
     read = {};
     uint64_t config = 0;
-    if (!aim_read_pointer_exact(weapon + offset, config) || !valid_obj(config)) return false;
-    const int identity = aim_object_identity(config, "HitscanWeaponConfig", kAimWeaponNamespace);
+    int identity = 0;
+    if (aim_read_pointer_exact(weapon + offset, config) && valid_obj(config)) {
+        identity = aim_object_identity(config, "HitscanWeaponConfig", kAimWeaponNamespace);
+    }
+    if (identity == 0 && offset == FPHITSCAN_CONFIG) {
+        uint64_t calculator = 0;
+        if (aim_read_pointer_exact(weapon + FPHITSCAN_CALCULATOR, calculator) &&
+            valid_obj(calculator) &&
+            aim_read_pointer_exact(calculator + CALCULATOR_HITSCAN_CONFIG, config) &&
+            valid_obj(config)) {
+            identity = aim_object_identity(config, "HitscanWeaponConfig", kAimWeaponNamespace);
+        }
+    }
     if (identity == 0) return false;
 
     float max_distance = 0.0f, bullet_speed = 0.0f;
@@ -6779,20 +6806,6 @@ void update_aim_ballistics(uint64_t player) {
 
     g_aim_ballistic_params = {};
     g_aim_inherited_velocity = {};
-    if (valid_obj(player)) {
-        auto local_track = g_player_track.find(player);
-        if (local_track != g_player_track.end() && local_track->second.have_vel_ref) {
-            const double age = now - local_track->second.vel_ref_t;
-            const Vec3 velocity = local_track->second.vel;
-            const float speed = aim_ballistics::length(velocity);
-            if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity) &&
-                aim_ballistics::finite(speed) && speed <= 12.0f) {
-                const float confidence = aim_ballistics::motion_confidence(
-                    static_cast<float>(age));
-                g_aim_inherited_velocity = aim_ballistics::scale(velocity, confidence);
-            }
-        }
-    }
 
     auto clear_cache = [&]() {
         cached_weapon = 0;
@@ -6916,7 +6929,7 @@ void update_aim_ballistics(uint64_t player) {
         const uint64_t projectile_candidates[] = {
             FPBOW_PROJECTILE_PREFAB, FPCROSSBOW_PROJECTILE_PREFAB,
             FPROCKETLAUNCHER_PROJECTILE_PREFAB, FPEXPLOSIVECHARGE_PROJECTILE_PREFAB,
-            FPSPEAR_PROJECTILE_PREFAB
+            FPSNOWBALL_PROJECTILE_PREFAB, FPSPEAR_PROJECTILE_PREFAB
         };
         for (uint64_t offset : projectile_candidates) {
             if (aim_read_projectile(weapon, offset, true, projectile_read) &&
@@ -6956,7 +6969,6 @@ bool aim_ballistic_origin(Vec3& origin) {
 
 // Растяг экрана (Aspect Ratio), множитель к aspect камеры игры; 1.0 = выкл.
 // Поставляется из меню через esp_set_screen_stretch (см. esp_draw.cpp).
-static float g_screen_stretch_x = 1.0F;
 void esp_set_screen_stretch(float factor) {
     // Кламп к допустимому диапазону слайдера (1.00–2.00; верх поднят по заказу 04.10).
     if (!(factor >= 0.75F && factor <= 2.0F)) factor = 1.0F;
@@ -8215,9 +8227,10 @@ bool esp_camera_angles(float& yaw_deg, float& pitch_deg) {
     const bool ok_pose  = g_cam_pose_valid && farm_cam_source_ok(g_cam_pos);
     const bool ok_frame = g_frame_cam_basis_valid && farm_cam_source_ok(g_frame_cam_pos);
     if (!ok_ref && !ok_pose && !ok_frame) return false;
-    // Same reference the aim angles are measured against (firing direction
-    // when available), so finger-gain learning and target lead stay consistent.
-    const Vec3& f = ok_ref ? g_aim_ref_forward : ok_pose ? g_cam_forward : g_frame_cam_fwd;
+    // Match the exact camera view-matrix basis used by screen projection and
+    // aim_angles_for whenever available, so base camera yaw/pitch and target
+    // angular error never come from mismatched transforms.
+    const Vec3& f = ok_frame ? g_frame_cam_fwd : ok_ref ? g_aim_ref_forward : g_cam_forward;
     return angles_from_forward(f, yaw_deg, pitch_deg);
 }
 
@@ -8647,7 +8660,8 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         // перечитываются раз в 6/15 кадров, и видимый бот за это время уходит
         // вперёд от той точки, которую мы ещё держим в кэше.
         if (src.vel_valid) {
-            const Vec3 measured{src.vx, src.vy, src.vz};
+            Vec3 measured{src.vx, src.vy, src.vz};
+            if (fabsf(measured.y) < 1.8f) measured.y *= 0.35f;
             const float age = aim_ballistics::finite(src.pos_age) && src.pos_age > 0.0f
                 ? src.pos_age : 0.0f;
             const float confidence = aim_ballistics::motion_confidence(age);
@@ -8655,6 +8669,8 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
             const float lead = g_aim_lead_seconds +
                 aim_ballistics::motion_age_lead(age < kBotPosLeadMax ? age : kBotPosLeadMax);
             g_aim_lead = aim_ballistics::scale(measured, lead);
+            if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
+            else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
         } else {
             g_aim_velocity = {};
             g_aim_lead = {};
@@ -10350,8 +10366,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         // resolver is not, even though this camera-only frame can publish.
         note_player_pipeline_health(player_list_ok);
         publish_camera_only_frame(sw, sh);
-        if (g_aim_bones_requested && g_state.aim_touch &&
-            g_state.aim_mode != AIM_MODE_SILENT) {
+        if (g_aim_bones_requested && g_state.aim_touch) {
             const uint64_t local_player = resolve_local_player();
             const PlayerAux* local_aux = nullptr;
             bool local_crouched = false;
@@ -10647,7 +10662,8 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
 
     // Firing reference for the aimbot (local look direction + eye point).
     {
-        uint64_t local_player = (local_entity_index < s_transforms.size()) ? s_transforms[local_entity_index] : 0;
+        uint64_t local_player = (local_entity_index < s_transforms.size())
+            ? s_transforms[local_entity_index] : resolve_local_player();
         const PlayerAux* local_aux = nullptr;
         bool local_crouched = false;
         if (local_player && g_aim_bones_requested) {
@@ -10656,8 +10672,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             local_crouched = player_is_crouched(la);
         }
         read_local_aim_reference(local_player, local_aux, local_crouched);
-        if (g_aim_bones_requested && g_state.aim_touch &&
-            g_state.aim_mode != AIM_MODE_SILENT)
+        if (g_aim_bones_requested && g_state.aim_touch)
             update_aim_ballistics(local_player);
     }
 
@@ -10886,15 +10901,16 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         {
             auto vt = g_player_track.find(s_transforms[i]);
             if (vt != g_player_track.end() && vt->second.have_vel_ref) {
-                const Vec3 velocity = vt->second.vel;
+                Vec3 velocity = vt->second.vel;
+                if (fabsf(velocity.y) < 1.8f) velocity.y *= 0.35f;
                 const double age = mono_seconds() - vt->second.vel_ref_t;
                 if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity)) {
                     const float age_seconds = static_cast<float>(age);
                     const float confidence = aim_ballistics::motion_confidence(age_seconds);
                     g_aim_velocity = aim_ballistics::scale(velocity, confidence);
-                    const float lead = g_aim_lead_seconds +
-                        aim_ballistics::motion_age_lead(age_seconds);
-                    g_aim_lead = aim_ballistics::scale(velocity, lead);
+                    g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
+                    if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
+                    else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
                 } else {
                     g_aim_velocity = {};
                     g_aim_lead = {};
@@ -10995,6 +11011,10 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 if (hx * hx + hz * hz > 3.0F * 3.0F) {
                     box.has_skeleton = false;
                     for (int b = 0; b < ESP_BONE_COUNT; ++b) box.bone_valid[b] = false;
+                    for (int s = 0; s < 3; ++s) {
+                        box.aim_valid[s] = false;
+                        box.aim_world_valid[s] = false;
+                    }
                 }
             }
         }
@@ -11026,14 +11046,10 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             }
         }
 
-        // Запасные точки (по трансформу головы и по росту от пяток) выключены:
-        // просили «аим полностью по скелету и костям». Раньше при нечитаемом
-        // скелете цель бралась от роста персонажа — это давало точку выше/ниже
-        // настоящей головы и вносило ещё одно расхождение с нарисованным
-        // скелетом. Теперь цель либо по костям, либо её нет вовсе (это
-        // видно в логе ниже).
-        // (блок сохранён, чтобы вернуть запасные точки одной правкой условия)
-        if (false && g_aim_bones_requested && !transform_camera_mode &&
+        // Fallback aim slots when the ragdoll skeleton has not built yet or its
+        // rig is detached (e.g. passenger on a vehicle): prefer the live KCC
+        // head transform, then pose-height estimates from feet.
+        if (g_aim_bones_requested && !transform_camera_mode &&
             !(box.aim_valid[0] && box.aim_valid[1] && box.aim_valid[2])) {
             Vec3 head{};
             bool have_head = false;

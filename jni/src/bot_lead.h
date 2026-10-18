@@ -46,16 +46,19 @@ inline void update(Track& track, const Vec3& position, double now) {
     const float mz = position.z - track.ref.z;
     const double span = now - track.ref_t;
     if (mx * mx + my * my + mz * mz > kMinStepMeters * kMinStepMeters) {
-        if (span > kMinSpanSeconds && span < kMaxSpanSeconds) {
-            const Vec3 v = {(float)(mx / span), (float)(my / span), (float)(mz / span)};
-            const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-            if (std::isfinite(speed) && speed < kMaxSpeed) {
-                track.vel.x = track.vel.x * 0.5F + v.x * 0.5F;
-                track.vel.y = track.vel.y * 0.5F + v.y * 0.5F;
-                track.vel.z = track.vel.z * 0.5F + v.z * 0.5F;
+        if (span >= kMinSpanSeconds) {
+            if (span < kMaxSpanSeconds) {
+                const Vec3 v = {(float)(mx / span), (float)(my / span), (float)(mz / span)};
+                const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+                if (std::isfinite(speed) && speed < kMaxSpeed) {
+                    track.vel.x = track.vel.x * 0.5F + v.x * 0.5F;
+                    track.vel.y = track.vel.y * 0.5F + v.y * 0.5F;
+                    track.vel.z = track.vel.z * 0.5F + v.z * 0.5F;
+                }
             }
+            track.ref = position; track.ref_t = now;
         }
-        track.ref = position; track.ref_t = now; track.moved_t = now;
+        track.moved_t = now;
     } else if (span > kFreshSeconds) {
         track.vel = {};
         track.ref = position; track.ref_t = now;

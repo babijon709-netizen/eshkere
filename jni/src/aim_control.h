@@ -112,11 +112,18 @@ inline float memory_step(float error_degrees, float dt, float speed,
         const float bone_tolerance = std::atan(0.004f / range_metres) * 57.2957795f;
         deadband = std::max(deadband, bone_tolerance);
     }
-    if (std::fabs(error_degrees) <= deadband) return 0.0f;
+    const float abs_err = std::fabs(error_degrees);
+    if (abs_err <= deadband) return 0.0f;
 
-    const float smooth = 0.25f + (speed - 1.0f) / 9.0f * 0.75f;
-    const float gain = 1.0f - std::pow(1.0f - smooth, dt * 60.0f);
-    float max_rate = 120.0f + 48.0f * speed;
+    const float speed_norm = (speed - 1.0f) / 9.0f;
+    const float smooth = 0.25f + speed_norm * 0.60f;
+    float gain = 1.0f - std::pow(1.0f - smooth, dt * 60.0f);
+    const float fine_span = 0.55f;
+    if (abs_err < deadband + fine_span) {
+        const float t = (abs_err - deadband) / fine_span;
+        gain *= (0.35f + 0.65f * t);
+    }
+    float max_rate = 135.0f + 48.0f * speed;
     if (range_metres > 0.0f && range_metres < 12.0f) max_rate *= 1.15f;
     float max_step = max_rate * dt;
     if (max_step > 12.0f) max_step = 12.0f;

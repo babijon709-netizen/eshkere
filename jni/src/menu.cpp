@@ -1880,6 +1880,34 @@ void RenderMenu() {
     Tick(g_state.a_fakelag_btn_show, g_state.fakelag_btn_show, dt);
     ApplyTheme();
 
+    // Держим cfg::aim и cfg::esp синхронными с g_state на каждом кадре, а не
+    // только при открытии вкладок 1 и 2 (иначе после старта/загрузки конфига
+    // до первого захода во вкладку аим/ЕСП читают устаревшие зеркала).
+    cfg::aim::enabled       = g_state.aim_touch;
+    cfg::aim::vis_check     = g_state.aim_pos;
+    cfg::aim::draw_fov      = g_state.aim_special;
+    cfg::aim::scope_only    = g_state.aim_scope_only;
+    cfg::aim::fov           = g_state.gun_fov;
+    cfg::aim::smoothness    = g_state.gun_str;
+    cfg::aim::bone          = g_state.aim_bone;
+    cfg::aim::trigger_delay = g_state.gun_trigger_delay;
+    cfg::aim::fire_only     = g_state.aim_fire_only;
+
+    cfg::esp::box           = g_state.esp_box;
+    cfg::esp::name_esp      = g_state.esp_name;
+    cfg::esp::distance      = g_state.esp_wall;
+    cfg::esp::weapon        = g_state.esp_weapon;
+    cfg::esp::tracer        = g_state.esp_tracer;
+    cfg::esp::skeleton      = g_state.esp_skeleton;
+    cfg::esp::ore           = g_state.esp_ore;
+    cfg::esp::animal        = g_state.esp_animal;
+    cfg::esp::loot          = g_state.esp_loot;
+    cfg::esp::team          = g_state.esp_team;
+    cfg::esp::pickup        = g_state.esp_pickup;
+    cfg::esp::bot           = g_state.esp_bots;
+    cfg::esp::vehicle       = g_state.esp_vehicles;
+    cfg::esp::scrap         = g_state.esp_scrap;
+
     if (g_cfgLoadedIdx >= 0 && g_cfgLoadedIdx < kMaxConfigs)
         g_cfgLoadAnim[g_cfgLoadedIdx] += (1.f - g_cfgLoadAnim[g_cfgLoadedIdx]) * 10.f * dt;
 
@@ -1907,6 +1935,7 @@ void RenderMenu() {
         float dw = 0.f, dh = 0.f;
         VisibleScreen(dw, dh);
         if (dw < 100.f || dh < 100.f) { g_calibMode = 0; return; }
+        Touch_AddBlockRect(0.f, 0.f, dw, dh);
         auto* fg = ImGui::GetForegroundDrawList();
 
         // Затемнение + рамка-акцент.
@@ -2284,6 +2313,14 @@ void RenderMenu() {
         }
     }
     WW = g_win.w; WH = g_win.h;
+    if (g_sheet.visible || (g_pop.visible && !g_pop.closing)) {
+        float bsw = 0.f, bsh = 0.f;
+        VisibleScreen(bsw, bsh);
+        Touch_AddBlockRect(0.f, 0.f, bsw, bsh);
+    } else {
+        Touch_AddBlockRect(g_win.pos.x - 8.f, g_win.pos.y - 8.f,
+                           g_win.pos.x + WW + 16.f, g_win.pos.y + WH + 16.f);
+    }
 
     ImGui::SetNextWindowSize({g_win.w, g_win.h}, ImGuiCond_Always);
     ImGui::SetNextWindowPos(g_win.pos, ImGuiCond_Always);
@@ -2425,7 +2462,8 @@ void RenderMenu() {
     };
 
     auto TabTap = [&](int i) {
-        if (WasTappedHere() && !IsScrollDragging() && !g_input.touchConsumed && g_state.cur_tab != i) {
+        const bool modalBlk = g_sheet.visible || (g_pop.visible && !g_pop.closing);
+        if (!modalBlk && WasTappedHere() && !IsScrollDragging() && !g_input.touchConsumed && g_state.cur_tab != i) {
             g_state.cur_tab       = i;
             g_state.tab_alpha     = 0.f;
             g_state.tab_slide     = 50.f;

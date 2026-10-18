@@ -100,8 +100,8 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         // Automatic control latency for camera-driven modes; no user lead
         // knob. Projectile flight time is solved independently from active
         // weapon data and target distance in game.cpp.
-        const float leadAuto = (g_state.aim_mode == AIM_MODE_MEMORY ||
-                                g_state.aim_mode == AIM_MODE_TOUCH) ? 0.05f : 0.0f;
+        const float leadAuto = (g_state.aim_mode == AIM_MODE_TOUCH) ? 0.035f
+                             : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.018f : 0.0f);
         esp_set_aim_lead(leadAuto);
         esp_set_screen_stretch(g_state.screen_stretch_x);
         esp_set_xray(g_state.xray_on ? g_state.xray_range : 0.f);

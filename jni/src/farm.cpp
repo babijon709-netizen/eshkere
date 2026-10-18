@@ -208,7 +208,7 @@ constexpr float kGiveUpBlind   = 25.f;   // то же, но остаток не 
 // угол, игра разворачивает камеру в этом же кадре. Следующий шаг шлём только
 // после того, как накопитель вернул записанное (игра приняла), либо истёк таймаут.
 // Так шаги не складываются и камера не перелетает узел.
-constexpr float kLookWaitMax   = 0.10f;  // с: дольше ответа не ждём — запись потеряна
+constexpr float kLookWaitMax   = 0.025f; // с: ждём не дольше одного-двух кадров игры
 constexpr float kMemAckEps     = 0.10f;  // град: допуск «накопитель = наша запись»
 constexpr float kMemStepWalk   = 15.0f;  // град: предел одного шага на подходе
 constexpr float kMemStepBody   = 4.0f;   // град: предел шага, когда узел в прицеле
@@ -273,12 +273,19 @@ static void UpdateFarmInner(float dt) {
     static int   s_candFrames = 0;    // сколько кадров подряд он лучший
     static float s_flickerTime = 0.f; // сколько держимся прежнего, с
     static float s_spotAimStuck = 0.f;// сколько не можем довестись в допуск по X
+    static float s_lookErrY = 0.f, s_lookErrP = 0.f;
+    static bool  s_lookWait = false;
+    static float s_lookWaitT = 0.f;
+    static bool  s_coarseArmed = true;
 
     auto releaseAll = [&]() {
-        if (s_moveDown) { farmjoy::release(); s_moveDown = false; }
+        farmjoy::release();
+        s_moveDown = false;
         s_camTurn = false; s_memPend = false;
         if (s_swingOn)  { farmjoy::attack(false); s_swingOn = false; }
         s_memWait = 0.f;
+        s_lookWait = false; s_lookWaitT = 0.f;
+        s_coarseArmed = true;
     };
     auto resetNode = [&]() {
         s_nodeId = 0;
@@ -292,6 +299,8 @@ static void UpdateFarmInner(float dt) {
         s_blindSwings = 0; s_blindHp = -1.f;
         s_candId = 0; s_candFrames = 0; s_flickerTime = 0.f;
         s_spotAimStuck = 0.f;
+        s_lookWait = false; s_lookWaitT = 0.f;
+        s_coarseArmed = true;
     };
 
     if (dt <= 0.f || !std::isfinite(dt)) dt = 1.f / 60.f;
@@ -485,6 +494,8 @@ static void UpdateFarmInner(float dt) {
     // Знаки те же, что у мемори-аима: yaw +вправо -> накопитель Y, pitch +вверх ->
     // накопитель X с минусом (вверх — меньше). Накопитель уже в градусах, коэффициента
     // чувствительности не нужно: абсолютная запись сама задаёт поворот.
+    float lookSens = 0.f; bool lookInv = false, lookGyro = false;
+    esp_mem_aim_look_params(lookSens, lookInv, lookGyro);
     float accX = 0.f, accY = 0.f;
     const bool haveAcc = esp_mem_aim_read_angles(accX, accY);
     // Запись подтверждена, если накопитель вернул ровно то, что мы писали.
@@ -621,12 +632,6 @@ static void UpdateFarmInner(float dt) {
         const float wantPitch = (fabsf(steerPitch) > pitchDead) ? steerPitch : 0.f;
         const float wantMag   = fmaxf(fabsf(wantYaw), fabsf(wantPitch));
 
-        // Отклик позы: помним ошибку, по которой писали, и ждём, пока измерение
-        // изменится. Тогда шаг всегда считается по СВЕЖЕЙ позе, и задержка
-        // отклика не превращается в перелёт.
-        static float s_lookErrY = 0.f, s_lookErrP = 0.f;
-        static bool  s_lookWait = false;
-        static float s_lookWaitT = 0.f;
         if (s_lookWait) {
             s_lookWaitT += dt;
             const bool responded = fabsf(steerYaw - s_lookErrY) > kLookRespDeg ||
@@ -634,21 +639,15 @@ static void UpdateFarmInner(float dt) {
             if (responded || s_lookWaitT >= kLookWaitMax) s_lookWait = false;
         }
 
-        const bool needTurn = haveAcc && !s_lookWait &&
+        const bool wantTurn = haveAcc &&
                               (s_camTurn ? (errDeg > stopDeg) : (errDeg > startDeg));
-        if (!needTurn) {
+        if (!wantTurn) {
             s_camTurn = false; s_memPend = false; s_memWait = 0.f;
-        } else {
+        } else if (!s_lookWait) {
             s_camTurn = true;
             if (s_memPend && !acked && s_memWait < kLookWaitMax) {
                 s_memWait += dt;                  // ответа ждём, второй шаг не шлём
             } else {
-                // Крупная поправка — ОДНА на эпизод: без этого она же и
-                // раскачивала прицел (после переезда крестика ошибка большая,
-                // каждое «дообучение» трима снова делало её большой, и камера
-                // швырялась по 10° туда-сюда). Снова вооружаемся, когда ошибка
-                // уже улеглась.
-                static bool s_coarseArmed = true;
                 if (wantMag < kAimJumpGate * 0.5f) s_coarseArmed = true;
                 const bool coarse = s_coarseArmed && wantMag > kAimJumpGate;
                 if (coarse) s_coarseArmed = false;
@@ -700,12 +699,10 @@ static void UpdateFarmInner(float dt) {
 
     // Обратная связь памяти-джойстика: пока кандидат ведёт стик, дистанция до
     // точки подхода обязана сокращаться — по этому признаку модуль и выбирает
-    // рабочий слой ввода (см. farm_joy.h). «Чистой» ходьбой считаем только
-    // фазу подхода с курсом вперёд: на подводе (фаза 3) стик жмёт в упор, там
-    // сближение меряется иначе, а манёвр обхода ведёт стик сам.
+    // рабочий слой ввода (см. farm_joy.h).
     {
         const bool walkClean = (phase == 2) && (s_evadeTime <= 0.f) &&
-                               (fabsf(tgt.walk_yaw) <= 60.f) && (tgt.walk_dist > 0.f);
+                               (tgt.walk_dist > 0.f);
         farmjoy::observe(tgt.walk_dist, walkClean);
     }
 
@@ -725,6 +722,7 @@ static void UpdateFarmInner(float dt) {
         bool wantWalk =
             (phase == 2 && tgt.walk_dist > kArriveWalk) ||
             (phase == 3 && distNow > pressAt) ||
+            (phase == 3 && !aimSettled && !tgt.ray_self && tgt.walk_dist > kArriveWalk) ||
             // Нет луча игры — прицел мимо меша: поджимаем вплотную, там ствол
             // перекрывает уход декали вбок и луч появляется (97% на 0.5 м).
             // Только пока ждём луч: после kNoRaySwingAfter поведение прежнее,
@@ -764,23 +762,12 @@ static void UpdateFarmInner(float dt) {
                 const float yawDead = (phase == 3) ? 3.f : ((tgt.walk_dist > 3.f) ? 8.f : 3.f);
                 if (fabsf(steerYaw) < yawDead) steerYaw = 0.f;
                 if (phase == 3) {
-                    // Финальный подвод: мягко вперёд, руль пропорционален ошибке
-                    // наведения (без скачков sign()).
-                    float s3 = tgt.yaw / 45.f;
-                    if (s3 >  1.f) s3 =  1.f;
-                    if (s3 < -1.f) s3 = -1.f;
-                    wantX = 0.35f * s3;
-                    wantY = 0.75f;
+                    float moveYaw = atSpot ? steerYaw : tgt.yaw;
+                    if (fabsf(moveYaw) < 3.f) moveYaw = 0.f;
+                    const float a = moveYaw * 0.017453293f;
+                    wantX = sinf(a) * 0.85f;
+                    wantY = cosf(a) * 0.85f;
                 } else {
-                    // Полный аналог, 360°: стик давит ПРЯМО в сторону точки
-                    // подхода относительно камеры — идём к цели с первого же
-                    // кадра, не стоя на месте, пока камера доворачивается.
-                    // Прежняя схема («вперёд + руль ±0.6», а при |yaw| > 72°
-                    // сперва доворот камеры) стоила секунды на каждый узел:
-                    // при цели сбоку/сзади бот топтался или уходил по дуге.
-                    // Магнитуда полная: край стика игра сама мапит в бег, а
-                    // камера тем временем сводит yaw к нулю, и направление
-                    // само становится «вперёд» (самый быстрый ход).
                     const float a = steerYaw * 0.017453293f;
                     wantX = sinf(a);
                     wantY = cosf(a);
@@ -953,15 +940,13 @@ static void UpdateFarmInner(float dt) {
     }
 
     // ---- watchdog'и ------------------------------------------------------------
-    if (phase == 2) {
-        s_mineTime = 0.f;
-        // Нет продвижения к точке подхода — упёрлись в препятствие. Сначала
-        // пробуем обойти (назад + вбок, чередуя стороны), и только когда
-        // манёвры не помогают, узел уходит в чёрный список. Меряем именно
-        // дистанцию до точки подхода: на последних метрах дистанция до самого
-        // узла почти не меняется, и по ней watchdog срабатывал ложно.
-        if (tgt.walk_dist < s_lastWalk - 0.25f) {
-            s_lastWalk = tgt.walk_dist;
+    const bool walkClosing = (phase == 2) ||
+                             (phase == 3 && s_moveDown && distNow > meleeTight + 0.10f && !tgt.ray_self);
+    if (walkClosing) {
+        if (phase == 2) s_mineTime = 0.f;
+        const float watchDist = (phase == 2) ? tgt.walk_dist : distNow;
+        if (watchDist < s_lastWalk - 0.25f) {
+            s_lastWalk = watchDist;
             s_stuckTime = 0.f;
         } else if (s_evadeTime <= 0.f) {
             s_stuckTime += dt;
@@ -980,14 +965,9 @@ static void UpdateFarmInner(float dt) {
                 }
             }
         }
-    } else {
-        // Дошли — препятствий на подходе больше нет, бюджет обходов обнуляем.
-        // НО манёвр из-за ПЕРЕКРЫТОГО узла (s_evadeWhy == 2) не трогаем: он
-        // начинается в этой же фазе, и обнуление здесь означало, что обход не
-        // отрабатывал ни одного кадра — счётчик сбрасывался, обход запускался
-        // заново и бот вечно танцевал на месте, не доходя до отказа от узла.
-        // Контроль прогресса ниже при этом работает в обоих случаях.
-        if (s_evadeWhy != 2) { s_evadeCount = 0; s_evadeTime = 0.f; s_evadeWhy = 0; }
+    }
+    if (phase == 3) {
+        if (!walkClosing && s_evadeWhy != 2) { s_evadeCount = 0; s_evadeTime = 0.f; s_evadeWhy = 0; }
         // Машем, а узел не убывает: стоим на волосок дальше нужного (финальный
         // подвод это лечит) или в руке не инструмент. Прогресс теперь видим по
         // двум независимым признакам — падение остатка И рост серии попаданий по

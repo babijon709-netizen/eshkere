@@ -12,6 +12,9 @@
 #include "app_state.h"    // g_state.hud_cnt_* — положение счётчика
 #include "menu.h"          // g_calibMode — кнопка молчит при калибровке
 #include "audio.h"         // PlaySound — клик кнопки фрикама
+#include "widgets.h"       // g_win, g_pop, g_sheet, g_input
+#include "config.h"        // g_kbTarget, g_confirmAction
+#include "Android_touch/TouchHelperA.h"
 
 struct ToastState {
     char  msg[128]     = {};
@@ -189,6 +192,7 @@ void DrawWatermark(float dt) {
 
     float scrW = 0.f, scrH = 0.f;
     VisibleScreen(scrW, scrH);
+    Touch_ClearExtraBlockRects();
 
     // ---- Пилюля-счётчик противников --------------------------------------
     // Дефолт — верх по центру; двигается тапом в Опциях → Худ.
@@ -235,10 +239,22 @@ void DrawWatermark(float dt) {
             bY = 12.f;
         }
         g_hud_cnt_geom = {bX, bY, bW, bH}; // свежее — для превью калибровки
+        Touch_AddBlockRect(bX - 4.f, bY - 4.f, bX + bW + 4.f, bY + bH + 4.f);
 
+        const bool modalActive = (g_calibMode != 0) ||
+                                 (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+        const bool coveredByMenu = (menu_open || g_win.closing) &&
+                                   io.MousePos.x >= g_win.pos.x &&
+                                   io.MousePos.x <= g_win.pos.x + g_win.w &&
+                                   io.MousePos.y >= g_win.pos.y &&
+                                   io.MousePos.y <= g_win.pos.y + g_win.h;
         bool in = (io.MousePos.x >= bX && io.MousePos.x <= bX + bW &&
                    io.MousePos.y >= bY && io.MousePos.y <= bY + bH);
-        if (in && io.MouseClicked[0]) { menu_open = !menu_open; wm_ring = 0.f; }
+        if (in && io.MouseClicked[0] && !modalActive && !coveredByMenu && !g_input.touchConsumed) {
+            menu_open = !menu_open;
+            wm_ring = 0.f;
+            g_input.touchConsumed = true;
+        }
 
         if (wm_ring < 1.f) {
             float r = EaseOut3(wm_ring), ex = r * 22.f;
@@ -301,10 +317,12 @@ void DrawWatermark(float dt) {
         if (scrH > side + 16.f) qY = ImClamp(qY, 8.f, scrH - side - 8.f);
 
         const bool on = g_state.freecam_on;
-        if (!menu_open && g_calibMode == 0 && io.MouseClicked[0] &&
+        Touch_AddBlockRect(qX - 4.f, qY - 4.f, qX + side + 4.f, qY + side + 4.f);
+        if (!menu_open && g_calibMode == 0 && !g_input.touchConsumed && io.MouseClicked[0] &&
             io.MousePos.x >= qX && io.MousePos.x <= qX + side &&
             io.MousePos.y >= qY && io.MousePos.y <= qY + side) {
             g_state.freecam_on = !g_state.freecam_on;
+            g_input.touchConsumed = true;
             PlaySound(SND_CLICK);
         }
 
@@ -337,10 +355,12 @@ void DrawWatermark(float dt) {
         if (scrH > side + 16.f) qY = ImClamp(qY, 8.f, scrH - side - 8.f);
 
         const bool on = g_state.fake_lag;
-        if (!menu_open && g_calibMode == 0 && io.MouseClicked[0] &&
+        Touch_AddBlockRect(qX - 4.f, qY - 4.f, qX + side + 4.f, qY + side + 4.f);
+        if (!menu_open && g_calibMode == 0 && !g_input.touchConsumed && io.MouseClicked[0] &&
             io.MousePos.x >= qX && io.MousePos.x <= qX + side &&
             io.MousePos.y >= qY && io.MousePos.y <= qY + side) {
             g_state.fake_lag = !g_state.fake_lag;
+            g_input.touchConsumed = true;
             PlaySound(SND_CLICK);
             ShowToast(g_state.fake_lag ? XS("FakeLag включён") : XS("FakeLag выключен"));
         }
@@ -375,10 +395,12 @@ void DrawWatermark(float dt) {
         if (scrH > side + 16.f) qY = ImClamp(qY, 8.f, scrH - side - 8.f);
 
         const bool on = g_state.xray_on;
-        if (!menu_open && g_calibMode == 0 && io.MouseClicked[0] &&
+        Touch_AddBlockRect(qX - 4.f, qY - 4.f, qX + side + 4.f, qY + side + 4.f);
+        if (!menu_open && g_calibMode == 0 && !g_input.touchConsumed && io.MouseClicked[0] &&
             io.MousePos.x >= qX && io.MousePos.x <= qX + side &&
             io.MousePos.y >= qY && io.MousePos.y <= qY + side) {
             g_state.xray_on = !g_state.xray_on;
+            g_input.touchConsumed = true;
             PlaySound(SND_CLICK);
             ShowToast(g_state.xray_on ? XS("Иксрей включён") : XS("Иксрей выключен"));
         }

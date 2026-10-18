@@ -222,6 +222,9 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     float estimate = target_distance / params.muzzle_speed;
     if (estimate > kMaxFlightSeconds) estimate = kMaxFlightSeconds;
     Vec3 guess = sub(add(target, scale(target_velocity, estimate)), origin);
+    if (origin.y >= 0.0f && target.y >= 0.0f && params.gravity > 0.0f) {
+        guess.y -= 0.5f * kGravityY * params.gravity * estimate * estimate;
+    }
     float guess_length = length(guess);
     if (!finite(guess_length) || guess_length < 0.01f) return false;
     guess = scale(guess, 1.0f / guess_length);

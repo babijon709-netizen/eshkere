@@ -123,7 +123,12 @@ bool write_target(const Target& t, float x, float y) {
 // Обнулить цель: у Nullable вместе с флагом — состояние «стик отпущен».
 void zero_target(const Target& t) {
     if (!alive(t)) return;
-    write_target(t, 0.0f, 0.0f);
+    if (t.nul == NUL_NONE) {
+        write_target(t, 0.0f, 0.0f);
+        return;
+    }
+    unsigned char buf[0xC] = {};
+    wr_buf(t.addr, buf, sizeof(buf));
 }
 
 // --- резолв ---------------------------------------------------------------
@@ -436,13 +441,15 @@ void tick(float dt) {
 // этого хватает с запасом (нужно около 0.27 м/с, а ходьба даёт метры в
 // секунду), зато камеру, если слот окажется взглядом, тянет в разы слабее.
 bool probe_slot(int candidate) {
-    return candidate == C_OVR_A || candidate == C_OVR_B ||
-           candidate == C_OVR_A_S || candidate == C_OVR_B_S;
+    return candidate == C_OVR_B || candidate == C_OVR_A_S || candidate == C_OVR_B_S;
 }
 
 bool command(float x, float y) {
     if (!std::isfinite(x) || !std::isfinite(y)) { release(); return false; }
-    const int cur = s_trial.current();
+    int cur = s_trial.current();
+    // Слот B (+0x78) — это look override в PlayerInputHandler; писать туда
+    // вектор ходьбы нельзя, поэтому перенаправляем в слот A (+0x6C).
+    if (cur == C_OVR_B || cur == C_OVR_B_S) cur = C_OVR_A;
     const float limit = (!s_trial.confirmed() && probe_slot(cur)) ? kProbeMax : kStickMax;
     const float len = sqrtf(x * x + y * y);
     if (len > limit && len > 0.0f) {
@@ -456,16 +463,25 @@ bool command(float x, float y) {
     s_trial.set_armed(true, len >= 0.5f);
 
     if (!alive(s_targets[cur])) revalidate(cur);
-    if (!alive(s_targets[cur])) {
-        s_why = s_targets[cur].why;
-        return false;
+    if (!alive(s_targets[C_OVR_A])) revalidate(C_OVR_A);
+
+    bool wrote = false;
+    // Слот A (PlayerInputHandler.qNf +0x6C, Nullable<Vector2>) — основной
+    // рабочий канал движения в Oxide; дублируем в него сразу, чтобы персонаж
+    // шёл с первого кадра, не простаивая 1.5 с на UI-стике.
+    if (alive(s_targets[C_OVR_A]) && write_target(s_targets[C_OVR_A], x, y)) {
+        s_touched[C_OVR_A] = true;
+        wrote = true;
     }
-    if (!write_target(s_targets[cur], x, y)) {
-        s_why = WHY_WRITE;
+    if (cur != C_OVR_A && alive(s_targets[cur]) && write_target(s_targets[cur], x, y)) {
+        s_touched[cur] = true;
+        wrote = true;
+    }
+    if (!wrote) {
+        s_why = alive(s_targets[cur]) ? WHY_WRITE : s_targets[cur].why;
         return false;
     }
     s_why = WHY_OK;
-    s_touched[cur] = true;
     ++s_writes;
     return true;
 }
@@ -547,8 +563,28 @@ void release() {
     if (s_sprint_on) sprint(false);
     for (int c = 0; c < C_COUNT; ++c) {
         if (!s_touched[c]) continue;
+        if (!alive(s_targets[c])) revalidate(c);
         zero_target(s_targets[c]);
         s_touched[c] = false;
+    }
+    // Безусловная страховка: проверяем оба Nullable<Vector2> слота в
+    // PlayerInputHandler и сбрасываем hasValue=0 по расхождению, даже если
+    // кэш целей устарел на кадре выключения автофарма.
+    uint64_t handler = 0, klass = 0, owner = 0;
+    int why = WHY_OK;
+    if (resolve_handler(handler, klass, owner, why)) {
+        const uint64_t ovr_offs[2] = {
+            PLAYER_INPUT_HANDLER_OVERRIDE_A,
+            PLAYER_INPUT_HANDLER_OVERRIDE_B
+        };
+        const unsigned char zero[0xC] = {};
+        for (uint64_t off : ovr_offs) {
+            unsigned char cur_buf[0xC] = {};
+            if (rd_buf(handler + off, cur_buf, sizeof(cur_buf)) &&
+                memcmp(cur_buf, zero, sizeof(zero)) != 0) {
+                wr_buf(handler + off, zero, sizeof(zero));
+            }
+        }
     }
 }
 

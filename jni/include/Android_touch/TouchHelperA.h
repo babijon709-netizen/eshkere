@@ -30,6 +30,10 @@ void Touch_UploadStats(unsigned long long& calls, double& ms, unsigned long long
 // Касания внутри прямоугольника (в координатах ImGui, то есть в пикселях
 // оверлея) не уходят в игру: их забирает оверлей. on=false — выключить.
 void Touch_BlockRect(bool on, float x0, float y0, float x1, float y1);
+// Дополнительные прямоугольные зоны блокировки (окно меню, пилюля HUD,
+// плавающие кнопки, модальные шторки/поповеры). Обновляются каждый кадр.
+void Touch_ClearExtraBlockRects();
+void Touch_AddBlockRect(float x0, float y0, float x1, float y1);
 // Несколько круглых зон для органов управления фрикама. Блокируется только
 // касание, НАЧАВШЕЕСЯ внутри одного из кругов; кнопки игры снаружи работают.
 void Touch_BlockCircles(bool on, const float* xs, const float* ys,

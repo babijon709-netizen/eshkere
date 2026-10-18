@@ -439,7 +439,12 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         if (b.dead) { ++s_dead_skipped; continue; }
         if (cfg::aim::vis_check && !b.visible) continue;
         AimTarget t;
-        const int usedBone = aim_control::configured_bone_slot(wantBone, b.aim_valid);
+        int usedBone = aim_control::configured_bone_slot(wantBone, b.aim_valid);
+        if (usedBone < 0) {
+            for (int fb = 0; fb < 3; ++fb) {
+                if (b.aim_valid[fb]) { usedBone = fb; break; }
+            }
+        }
         if (usedBone >= 0) {
             t.bone = usedBone;
             t.yaw = b.aim_yaw[usedBone];  t.pitch = b.aim_pitch[usedBone];
@@ -452,8 +457,6 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
                 t.world_valid = t.world_valid && std::isfinite(t.world[i]);
             }
         } else {
-            // Do not substitute another joint or a box estimate when the
-            // configured bone is unavailable.
             if (b.has_skeleton) ++s_bones_not_projected; else ++s_no_skeleton;
             continue;
         }
@@ -471,12 +474,11 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         const float angularDistance = cameraAim
             ? manes_aim_source::angular_distance_degrees(t.yaw, t.pitch)
             : 0.f;
-        // Touch and memory use the same configured angular FOV; silent keeps
-        // the projected screen-space circle used for shot-axis selection.
+        const bool inScreenFov = t.dist <= (sticky ? fovR * 2.f : fovR);
         const bool inFov = cameraAim
-            ? manes_aim_source::inside_angular_fov(
-                  t.yaw, t.pitch, cfg::aim::fov, sticky ? fovRadiusDeg : 0.f)
-            : t.dist <= (sticky ? fovR * 2.f : fovR);
+            ? (inScreenFov || manes_aim_source::inside_angular_fov(
+                  t.yaw, t.pitch, cfg::aim::fov, sticky ? fovRadiusDeg : 0.f))
+            : inScreenFov;
         if (!inFov) { ++s_out_of_fov; continue; }
 
         const float pixelTerm = t.dist / (fovR > 1.f ? fovR : 1.f);
@@ -494,11 +496,9 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
     bool haveBest = false;
     float bestScore = 1e18f;
     for (const RankedAimTarget& candidate : candidates) {
-        // Unknown distances cannot outrank a known near target. The range
-        // window also prevents a distant crosshair-perfect target from taking
-        // priority over a much closer valid one.
         if (haveNearestRange && !candidate.range_valid) continue;
-        if (haveNearestRange && !aim_control::target_within_range_window(
+        if (haveNearestRange && g_state.aim_priority == 2 && !candidate.sticky &&
+            !aim_control::target_within_range_window(
                 candidate.target.world_dist, nearestRange)) continue;
         const float score = aim_control::target_priority_score(
             g_state.aim_priority, candidate.aim_error,
@@ -538,14 +538,14 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         float filteredYaw = best.yaw;
         float filteredPitch = best.pitch;
         float cameraYaw = 0.0f, cameraPitch = 0.0f;
-        const bool haveCamera = esp_aim_camera_angles(cameraYaw, cameraPitch) &&
+        const bool haveCamera = esp_camera_angles(cameraYaw, cameraPitch) &&
                                 std::isfinite(cameraYaw) && std::isfinite(cameraPitch);
         if (!pick.filterModeSet || pick.filterUsesCamera != haveCamera) {
             pick.angleFilter.reset();
             pick.filterUsesCamera = haveCamera;
             pick.filterModeSet = true;
         }
-        float timeConstant = 0.050f;
+        float timeConstant = 0.045f;
         if (best.world_dist > 0.0f && best.world_dist < 12.0f) timeConstant *= 0.75f;
         if (haveCamera) {
             filteredYaw = WrapDeg180(cameraYaw + filteredYaw);
@@ -579,6 +579,9 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
 // ============================ Тач-аим ======================================
 static void UpdateAimTouch(float dt) {
     static float s_fx = 0.f, s_fy = 0.f;
+    static unsigned long long s_lastTgtId = 0;
+    static float s_lastSx = 0.f, s_lastSy = 0.f;
+    static float s_vx = 0.f, s_vy = 0.f;
 
     const bool menuOpen = g_sheet.visible || (g_pop.visible && !g_pop.closing);
     bool active = g_state.aim_touch && g_esp_attached && !menuOpen &&
@@ -595,6 +598,7 @@ static void UpdateAimTouch(float dt) {
         AimReleaseFinger(s_fingerDown);
         g_aimActive = false;
         s_touchPick.reset();
+        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
@@ -611,6 +615,7 @@ static void UpdateAimTouch(float dt) {
         AimReleaseFinger(s_fingerDown);
         g_aimActive = false;
         s_touchPick.reset();
+        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
@@ -621,12 +626,28 @@ static void UpdateAimTouch(float dt) {
         g_aimActive = false;
         s_touchPick.reset();
         AimReleaseFinger(s_fingerDown);
+        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
+    if (best.id == s_lastTgtId && dt > 1e-4f) {
+        const float rawVx = (best.sx - s_lastSx) / dt;
+        const float rawVy = (best.sy - s_lastSy) / dt;
+        if (std::isfinite(rawVx) && std::isfinite(rawVy) &&
+            fabsf(rawVx) < 4000.f && fabsf(rawVy) < 4000.f) {
+            s_vx = s_vx * 0.60f + rawVx * 0.40f;
+            s_vy = s_vy * 0.60f + rawVy * 0.40f;
+        }
+    } else {
+        s_vx = 0.f; s_vy = 0.f;
+    }
+    s_lastTgtId = best.id;
+    s_lastSx = best.sx;
+    s_lastSy = best.sy;
+
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
     const float ex = best.sx - crossX, ey = best.sy - crossY;
-    if (fabsf(ex) < 2.5f && fabsf(ey) < 2.5f) return;
+    if (fabsf(ex) < 0.6f && fabsf(ey) < 0.6f) return;
 
     if (!s_fingerDown) {
         s_fx = ptX;
@@ -638,13 +659,21 @@ static void UpdateAimTouch(float dt) {
     float sm = g_state.gun_str;
     if (!(sm >= 1.f)) sm = 1.f;
     if (sm > 10.f) sm = 10.f;
-    const float rate = 4.f + (sm - 1.f) * (24.f / 9.f);
+    const float smNorm = (sm - 1.f) / 9.f;
+    const float rate = 14.f + smNorm * 58.f;
     float k = 1.f - expf(-rate * dt);
-    if (k > 0.85f) k = 0.85f;
+    const float errPx = sqrtf(ex * ex + ey * ey);
+    if (errPx < 42.f) {
+        const float innerFloor = 0.35f + smNorm * 0.55f;
+        if (k < innerFloor) k = innerFloor;
+    }
+    if (k > 0.94f) k = 0.94f;
 
-    float maxStep = (2500.f + (sm - 1.f) * 500.f) * dt;
-    if (maxStep > 150.f) maxStep = 150.f;
-    float dx = ex * k, dy = ey * k;
+    float maxStep = (3800.f + (sm - 1.f) * 900.f) * dt;
+    if (maxStep > 320.f) maxStep = 320.f;
+    const float ff = (errPx < 90.f) ? (0.35f + 0.45f * smNorm) : 0.f;
+    float dx = ex * k + s_vx * dt * ff;
+    float dy = ey * k + s_vy * dt * ff;
     if (dx > maxStep) dx = maxStep;
     if (dx < -maxStep) dx = -maxStep;
     if (dy > maxStep) dy = maxStep;
@@ -653,19 +682,26 @@ static void UpdateAimTouch(float dt) {
     // Shift the archived touch zone with the configured base point.
     const float xOffset = ptX - 0.72f * sw;
     const float yOffset = ptY - 0.48f * sh;
-    float xMin = 0.55f * sw + xOffset, xMax = 0.95f * sw + xOffset;
-    float yMin = 0.20f * sh + yOffset, yMax = 0.80f * sh + yOffset;
+    float xMin = 0.52f * sw + xOffset, xMax = 0.96f * sw + xOffset;
+    float yMin = 0.16f * sh + yOffset, yMax = 0.84f * sh + yOffset;
     xMin = std::max(xMin, 0.02f * sw);
     xMax = std::min(xMax, 0.98f * sw);
     yMin = std::max(yMin, 0.02f * sh);
     yMax = std::min(yMax, 0.98f * sh);
 
-    s_fx += dx;
-    s_fy += dy;
-    if (s_fx < xMin || s_fx > xMax || s_fy < yMin || s_fy > yMax) {
+    const float nextX = s_fx + dx;
+    const float nextY = s_fy + dy;
+    if (nextX < xMin || nextX > xMax || nextY < yMin || nextY > yMax) {
+        const float clampedX = std::max(xMin, std::min(xMax, nextX));
+        const float clampedY = std::max(yMin, std::min(yMax, nextY));
+        if (fabsf(clampedX - s_fx) > 1.0f || fabsf(clampedY - s_fy) > 1.0f) {
+            Touch_Move(clampedX, clampedY);
+        }
         AimReleaseFinger(s_fingerDown);
         return;
     }
+    s_fx = nextX;
+    s_fy = nextY;
     Touch_Move(s_fx, s_fy);
 }
 
@@ -730,6 +766,11 @@ static void UpdateAimMemory(float dt) {
     // вернёт чтение): по совпадению видно, приняла ли игра запись.
     static float s_lastWriteX = 0.f, s_lastWriteY = 0.f;
     static bool  s_haveLastWrite = false;
+    static float s_baseAccX = 0.f, s_baseAccY = 0.f;
+    static float s_baseErrY = 0.f, s_baseErrP = 0.f;
+    static float s_unconsumedT = 0.f;
+    static float s_trimY = 0.f, s_trimX = 0.f;
+    static bool  s_haveTrim = false;
     float sw = 0.f, sh = 0.f;
     int why = 0;
     if (!AimBegin(dt, sw, sh, &why)) {
@@ -738,6 +779,7 @@ static void UpdateAimMemory(float dt) {
         s_memDiag.ads = s_adsState; s_memDiag.ads_source = s_adsSource;
         s_memDiag.fire = s_fireState;
         pick.reset(); s_missFrames = 0; s_haveLast = false; s_haveLastWrite = false;
+        s_unconsumedT = 0.f; s_haveTrim = false;
         return;
     }
     s_memDiag.inactive = 0;
@@ -751,8 +793,9 @@ static void UpdateAimMemory(float dt) {
     const bool haveParams = esp_mem_aim_look_params(sens, invert, gyro);
     s_memDiag.params = haveParams;
     if (!haveParams) {
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; }
+        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
         s_haveLastWrite = false;
+        s_unconsumedT = 0.f;
         return;
     }
     s_memDiag.gyro = gyro;
@@ -765,8 +808,9 @@ static void UpdateAimMemory(float dt) {
         // Самый молчаливый путь: цель есть, писать нечем, а ни один счётчик
         // не растёт. Без отметки здесь кадр не отличить от «цели не было».
         ++s_memDiag.read_fail;
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; }
+        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
         s_haveLastWrite = false;
+        s_unconsumedT = 0.f;
         return;
     }
 
@@ -774,8 +818,9 @@ static void UpdateAimMemory(float dt) {
     int noTgtWhy = 0;
     if (!AimSelectTarget(sw, sh, dt, pick, best, &noTgtWhy)) {
         s_memDiag.no_target = noTgtWhy;
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; }
+        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
         s_haveLastWrite = false;
+        s_unconsumedT = 0.f;
         return;
     }
     s_missFrames = 0;
@@ -784,35 +829,32 @@ static void UpdateAimMemory(float dt) {
         // Другая цель: подтверждение прошлой записи и дрейф по прежней кости
         // к ней не относятся.
         s_haveLastWrite = false;
+        s_unconsumedT = 0.f;
     }
 
     // ---- ACK по накопителю --------------------------------------------------
-    // Мы пишем абсолютные углы. Если к этому такту в накопителе лежит ровно
-    // записанное (в пределах kMemAckEps), игра запись приняла: свой ввод
-    // игрок между нашими тактами не добавлял, чужой MouseLook значение не
-    // перезаписал. Диагностике это даёт «отклик» и там, где оси камеры нет
-    // вовсе (штатный режим этого устройства).
+    bool matchedLastWrite = false;
     if (s_haveLastWrite) {
-        const bool consumed =
+        matchedLastWrite =
             fabsf(WrapDeg180(accY - s_lastWriteY)) < kMemAckEps &&
             fabsf(WrapDeg180(accX - s_lastWriteX)) < kMemAckEps;
-        if (consumed) s_memDiag.responded = true;
+        if (matchedLastWrite) s_memDiag.responded = true;
     }
 
     // ---- камера: расхождение и отклик ---------------------------------------
     // Накопитель и камера должны совпадать: в конце каждого ZJo игра кладёт в
     // накопитель фактические углы камеры. Разошлись — это чужой MouseLook.
     float camYaw = 0.f, camPitch = 0.f;
-    const bool haveCam = esp_aim_camera_angles(camYaw, camPitch);
+    const bool haveCam = esp_aim_camera_angles(camYaw, camPitch) &&
+                         std::isfinite(camYaw) && std::isfinite(camPitch);
     if (haveCam) {
         s_memDiag.mismatch = fabsf(WrapDeg180(accY - camYaw)) +
                              fabsf(WrapDeg180(accX + camPitch));
-        // Камера задвигалась в такт записи и накопитель не расходится —
-        // разворачивается именно наша запись (дополнительно к ACK).
         if (s_haveLast && s_memDiag.mismatch < 1.0f &&
-            (fabsf(WrapDeg180(camYaw - s_lastCamYaw)) > 0.02f ||
-             fabsf(camPitch - s_lastCamPitch) > 0.02f))
+            (fabsf(WrapDeg180(camYaw - s_lastCamYaw)) > 0.05f ||
+             fabsf(camPitch - s_lastCamPitch) > 0.05f)) {
             s_memDiag.responded = true;
+        }
         s_lastCamYaw = camYaw; s_lastCamPitch = camPitch; s_haveLast = true;
     } else {
         s_haveLast = false;
@@ -823,18 +865,50 @@ static void UpdateAimMemory(float dt) {
     const float offPitch = mem_axis_step(best.pitch, dt, best.world_dist);
     if (offYaw == 0.f && offPitch == 0.f) {
         s_haveLastWrite = false;   // подтверждения больше нет — записи нет
+        s_unconsumedT = 0.f;
         ++s_memDiag.on_target;
         return;
     }
 
-    // Write from the camera orientation rather than from a pending accumulator
-    // value. Repeated overlay ticks then overwrite the same absolute command
-    // until the slower game frame consumes it, instead of stacking stale steps.
+    // Запись от абсолютных углов камеры вместо слепого прибавления к накопителю:
+    // так исключается накопление ошибки, когда оверлей крутится быстрее игры
+    // (два такта чтения видят один и тот же кадр матрицы).
     float cameraYaw = 0.0f, cameraPitch = 0.0f;
     const bool haveCameraReference = esp_camera_angles(cameraYaw, cameraPitch) &&
                                      std::isfinite(cameraYaw) && std::isfinite(cameraPitch);
+    if (haveCameraReference) {
+        if (!s_haveTrim || !s_haveLastWrite || !matchedLastWrite) {
+            const float dy = WrapDeg180(accY - cameraYaw);
+            const float dx = WrapDeg180(accX + cameraPitch);
+            if (fabsf(dy) > 8.0f || fabsf(dx) > 8.0f) {
+                s_trimY = dy;
+                s_trimX = dx;
+            } else {
+                s_trimY = 0.f;
+                s_trimX = 0.f;
+            }
+            s_haveTrim = true;
+        }
+        cameraYaw = WrapDeg180(cameraYaw + s_trimY);
+        cameraPitch = WrapDeg180(cameraPitch - s_trimX);
+    } else {
+        const bool errMoved = fabsf(best.yaw - s_baseErrY) > 0.25f ||
+                              fabsf(best.pitch - s_baseErrP) > 0.25f;
+        if (!s_haveLastWrite || !matchedLastWrite || errMoved || s_unconsumedT >= 0.035f) {
+            s_baseAccX = accX;
+            s_baseAccY = accY;
+            s_baseErrY = best.yaw;
+            s_baseErrP = best.pitch;
+            s_unconsumedT = 0.f;
+        } else {
+            s_unconsumedT += dt;
+        }
+    }
+
     float writeY = 0.0f, writeX = 0.0f;
-    aim_control::memory_command_angles(accY, accX, haveCameraReference,
+    aim_control::memory_command_angles(haveCameraReference ? accY : s_baseAccY,
+                                       haveCameraReference ? accX : s_baseAccX,
+                                       haveCameraReference,
                                        cameraYaw, cameraPitch, offYaw, offPitch,
                                        writeY, writeX);
 

@@ -239,6 +239,89 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
     return t.magic == kCfgUiMagic && t.version == 1;
 }
 
+struct CfgExt2Trailer {
+    uint32_t magic;          // "CFX2"
+    uint32_t version;        // 1
+    uint32_t flags;
+    float    esp_arrow_ring;
+    float    esp_radar_size;
+    float    esp_radar_range;
+    float    screen_stretch_x;
+    float    fake_lag_percent;
+    float    xray_range;
+    float    freecam_speed;
+    float    aim_speed;
+    ImVec4   aim_fov_col;
+    ImVec4   esp_bot_col;
+    ImVec4   esp_vehicle_col;
+    ImVec4   esp_scrap_col;
+    ImVec4   esp_turret_col;
+    ImVec4   esp_backpack_col;
+    ImVec4   esp_sleeper_col;
+    ImVec4   esp_cupboard_col;
+    ImVec4   esp_ore_stone_col;
+    ImVec4   esp_ore_metal_col;
+    ImVec4   esp_ore_sulfur_col;
+    ImVec4   esp_arrow_col;
+};
+static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
+
+static void WriteExt2Trailer(std::ostream& f) {
+    CfgExt2Trailer t{};
+    t.magic = kCfgExt2Magic;
+    t.version = 1;
+    t.flags = (g_state.esp_ore_stone ? (1u << 0) : 0u) |
+              (g_state.esp_ore_iron  ? (1u << 1) : 0u) |
+              (g_state.esp_ore_sulfur ? (1u << 2) : 0u) |
+              (g_state.always_day    ? (1u << 3) : 0u) |
+              (g_state.farm_wood     ? (1u << 4) : 0u) |
+              (g_state.farm_stone    ? (1u << 5) : 0u) |
+              (g_state.farm_metal    ? (1u << 6) : 0u) |
+              (g_state.farm_sulfur   ? (1u << 7) : 0u) |
+              (g_state.fake_lag      ? (1u << 8) : 0u) |
+              (g_state.xray_on       ? (1u << 9) : 0u) |
+              (g_state.ui_panel_left ? (1u << 10) : 0u) |
+              (g_state.aim_pos       ? (1u << 11) : 0u) |
+              (cfg::esp::vis_check   ? (1u << 12) : 0u) |
+              (cfg::esp::fill        ? (1u << 13) : 0u) |
+              (g_state.farm_on       ? (1u << 14) : 0u);
+    t.esp_arrow_ring   = g_state.esp_arrow_ring;
+    t.esp_radar_size   = g_state.esp_radar_size;
+    t.esp_radar_range  = g_state.esp_radar_range;
+    t.screen_stretch_x = g_state.screen_stretch_x;
+    t.fake_lag_percent = g_state.fake_lag_percent;
+    t.xray_range       = g_state.xray_range;
+    t.freecam_speed    = g_state.freecam_speed;
+    t.aim_speed        = g_state.gun_str;
+    t.aim_fov_col        = cfg::aim::fov_col;
+    t.esp_bot_col        = cfg::esp::bot_col;
+    t.esp_vehicle_col    = cfg::esp::vehicle_col;
+    t.esp_scrap_col      = cfg::esp::scrap_col;
+    t.esp_turret_col     = cfg::esp::turret_col;
+    t.esp_backpack_col   = cfg::esp::backpack_col;
+    t.esp_sleeper_col    = cfg::esp::sleeper_col;
+    t.esp_cupboard_col   = cfg::esp::cupboard_col;
+    t.esp_ore_stone_col  = cfg::esp::ore_stone_col;
+    t.esp_ore_metal_col  = cfg::esp::ore_metal_col;
+    t.esp_ore_sulfur_col = cfg::esp::ore_sulfur_col;
+    t.esp_arrow_col      = cfg::esp::arrow_col;
+    uint8_t buf[sizeof(t)];
+    memcpy(buf, &t, sizeof(t));
+    XorBuf(buf, sizeof(buf));
+    f.write((char*)buf, sizeof(buf));
+}
+
+static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
+    t = CfgExt2Trailer{};
+    uint8_t buf[sizeof(CfgExt2Trailer)];
+    f.read((char*)buf, sizeof(buf));
+    size_t got = (size_t)f.gcount();
+    if (got != sizeof(buf)) return false;
+    XorBuf(buf, got);
+    memcpy(&t, buf, got);
+    return t.magic == kCfgExt2Magic && t.version == 1;
+}
+
 // Единственный источник «текущего» конфига: тот же селектор, что у ConfigLoadLast().
 static std::string NewestCfgPath() {
     std::string name;
@@ -441,6 +524,7 @@ static void ConfigSaveToPath(const std::string& path) {
         XorBuf(extra, sizeof(extra));
         f.write((char*)extra, sizeof(extra));
         WriteUiTrailer(f);
+        WriteExt2Trailer(f);
         f.close();
         if (f.fail()) remove(tmp.c_str());
         else rename(tmp.c_str(), path.c_str());
@@ -485,6 +569,8 @@ static void LoadCfgByName(const char* name, bool announce) {
     size_t extraGot = (size_t)f.gcount();
     CfgUiTrailer ui{};
     const bool hasUi = ReadUiTrailer(f, ui);
+    CfgExt2Trailer ext2{};
+    const bool hasExt2 = hasUi && ReadExt2Trailer(f, ext2);
     f.close();
     if (got != sizeof(buf)) { if (announce) ShowToast(XS("Несовместимый конфиг")); return; }
     XorBuf(buf, sizeof(s));
@@ -514,15 +600,15 @@ static void LoadCfgByName(const char* name, bool announce) {
     g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};
     g_state.sl_hands_y = {}; g_state.sl_hands_z = {};
     g_state.aim_touch   = s.aim_touch;
-    // «Только видимых» убран из меню — значение из конфига игнорируется.
-    g_state.aim_pos     = false;
+    g_state.aim_pos     = (*reinterpret_cast<const unsigned char*>(&s.aim_pos) != 0) ||
+                          (*reinterpret_cast<const unsigned char*>(&s.aim_vis_check) != 0);
     g_state.aim_special = s.aim_special;
     g_state.aim_scope_only = s.aim_scope_only;
     cfg::aim::scope_only   = s.aim_scope_only;
     g_state.aim_bone    = s.aim_bone;
     // Режим аима: старые конфиги (и любой левый байт) дают 0 — прежний тач.
     g_state.aim_mode    = (s.aim_mode <= 2) ? (int)s.aim_mode : 0;
-    cfg::aim::vis_check  = false;
+    cfg::aim::vis_check  = g_state.aim_pos;
     cfg::aim::draw_fov   = s.aim_draw_fov;
     cfg::aim::fov        = s.aim_fov;
     // Дальность автофарма переехала в бывший слот aim_lead; в старых
@@ -537,6 +623,10 @@ static void LoadCfgByName(const char* name, bool announce) {
     g_state.esp_ore         = s.esp_ore;
     g_state.esp_animal      = s.esp_animal;
     g_state.esp_team        = s.esp_team;
+    cfg::esp::vis_check     = (*reinterpret_cast<const unsigned char*>(&s.esp_vis_check) != 0);
+    cfg::esp::fill          = (*reinterpret_cast<const unsigned char*>(&s.esp_fill) != 0);
+    if (std::isfinite(s.esp_fill_pct) && s.esp_fill_pct >= 0.f && s.esp_fill_pct <= 1.f)
+        cfg::esp::fill_pct  = s.esp_fill_pct;
     // Packed scalars. A config written before these existed holds the old ping
     // colour here, so each value is range-checked and falls back to its default.
     {
@@ -659,7 +749,96 @@ static void LoadCfgByName(const char* name, bool announce) {
         b01(g_state.esp_chams); b01(g_state.esp_weapon); b01(g_state.esp_tracer);
         b01(g_state.esp_skeleton); b01(g_state.esp_ore); b01(g_state.esp_animal);
         b01(g_state.esp_team); b01(g_state.ui_dark_mode);
+        if (hasExt2) {
+            g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
+            g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;
+            g_state.esp_ore_sulfur = (ext2.flags & (1u << 2)) != 0;
+            g_state.always_day     = (ext2.flags & (1u << 3)) != 0;
+            g_state.farm_wood      = (ext2.flags & (1u << 4)) != 0;
+            g_state.farm_stone     = (ext2.flags & (1u << 5)) != 0;
+            g_state.farm_metal     = (ext2.flags & (1u << 6)) != 0;
+            g_state.farm_sulfur    = (ext2.flags & (1u << 7)) != 0;
+            g_state.fake_lag       = (ext2.flags & (1u << 8)) != 0;
+            g_state.xray_on        = (ext2.flags & (1u << 9)) != 0;
+            g_state.ui_panel_left  = (ext2.flags & (1u << 10)) != 0;
+            g_state.aim_pos        = (ext2.flags & (1u << 11)) != 0;
+            cfg::esp::vis_check    = (ext2.flags & (1u << 12)) != 0;
+            cfg::esp::fill         = (ext2.flags & (1u << 13)) != 0;
+            g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
+
+            g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
+            g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);
+            g_state.esp_radar_range  = num(ext2.esp_radar_range,  10.f,  400.f, 100.f);
+            g_state.screen_stretch_x = num(ext2.screen_stretch_x, 0.75f, 2.0f,  1.0f);
+            g_state.fake_lag_percent = num(ext2.fake_lag_percent, 1.f,   99.f,  45.f);
+            g_state.xray_range       = num(ext2.xray_range,       2.f,   50.f,  5.f);
+            g_state.freecam_speed    = num(ext2.freecam_speed,    1.f,   60.f,  12.f);
+            g_state.gun_str          = num(ext2.aim_speed,        1.f,   10.f,  g_state.gun_str);
+
+            cfg::aim::fov_col        = ext2.aim_fov_col;
+            cfg::esp::bot_col        = ext2.esp_bot_col;
+            cfg::esp::vehicle_col    = ext2.esp_vehicle_col;
+            cfg::esp::scrap_col      = ext2.esp_scrap_col;
+            cfg::esp::turret_col     = ext2.esp_turret_col;
+            cfg::esp::backpack_col   = ext2.esp_backpack_col;
+            cfg::esp::sleeper_col    = ext2.esp_sleeper_col;
+            cfg::esp::cupboard_col   = ext2.esp_cupboard_col;
+            cfg::esp::ore_stone_col  = ext2.esp_ore_stone_col;
+            cfg::esp::ore_metal_col  = ext2.esp_ore_metal_col;
+            cfg::esp::ore_sulfur_col = ext2.esp_ore_sulfur_col;
+            cfg::esp::arrow_col      = ext2.esp_arrow_col;
+            col(cfg::aim::fov_col);
+            col(cfg::esp::bot_col);        col(cfg::esp::vehicle_col);
+            col(cfg::esp::scrap_col);      col(cfg::esp::turret_col);
+            col(cfg::esp::backpack_col);   col(cfg::esp::sleeper_col);
+            col(cfg::esp::cupboard_col);   col(cfg::esp::ore_stone_col);
+            col(cfg::esp::ore_metal_col);  col(cfg::esp::ore_sulfur_col);
+            col(cfg::esp::arrow_col);
+        }
+
+        cfg::aim::enabled       = g_state.aim_touch;
+        cfg::aim::vis_check     = g_state.aim_pos;
+        cfg::aim::draw_fov      = g_state.aim_special;
+        cfg::aim::scope_only    = g_state.aim_scope_only;
+        cfg::aim::fov           = g_state.gun_fov;
+        cfg::aim::smoothness    = g_state.gun_str;
+        cfg::aim::bone          = g_state.aim_bone;
+        cfg::aim::trigger_delay = g_state.gun_trigger_delay;
+        cfg::aim::fire_only     = g_state.aim_fire_only;
+
+        cfg::esp::box           = g_state.esp_box;
+        cfg::esp::name_esp      = g_state.esp_name;
+        cfg::esp::distance      = g_state.esp_wall;
+        cfg::esp::weapon        = g_state.esp_weapon;
+        cfg::esp::tracer        = g_state.esp_tracer;
+        cfg::esp::skeleton      = g_state.esp_skeleton;
+        cfg::esp::ore           = g_state.esp_ore;
+        cfg::esp::animal        = g_state.esp_animal;
+        cfg::esp::loot          = g_state.esp_loot;
+        cfg::esp::team          = g_state.esp_team;
+        cfg::esp::pickup        = g_state.esp_pickup;
+        cfg::esp::bot           = g_state.esp_bots;
+        cfg::esp::vehicle       = g_state.esp_vehicles;
+        cfg::esp::scrap         = g_state.esp_scrap;
+
+        g_state.sl_esp_thick           = {};
+        g_state.sl_esp_arrow_ring      = {};
+        g_state.sl_esp_radar_size      = {};
+        g_state.sl_esp_radar_range     = {};
+        g_state.sl_gun_str             = {};
+        g_state.sl_gun_fov             = {};
+        g_state.sl_gun_trig            = {};
+        g_state.sl_marker_dist         = {};
+        g_state.sl_farm_range          = {};
+        g_state.sl_freecam             = {};
+        g_state.sl_freecam_joy_size    = {};
+        g_state.sl_freecam_look_radius = {};
+        g_state.sl_fake_lag            = {};
+        g_state.sl_xray                = {};
+        g_state.sl_screen_stretch      = {};
     }
+    esp_viewmodel_tick(g_state.viewmodel);
+    esp_set_screen_stretch(g_state.screen_stretch_x);
     g_darkTheme = g_state.ui_dark_mode;
     snprintf(g_loadedConfigName, sizeof(g_loadedConfigName), "%s", name);
     g_cfgLoadedIdx = -1;

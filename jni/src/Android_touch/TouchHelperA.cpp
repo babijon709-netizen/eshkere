@@ -74,18 +74,50 @@ static int g_block_circle_count = 0;
 static float g_block_circle_x[kMaxBlockCircles]{}, g_block_circle_y[kMaxBlockCircles]{},
              g_block_circle_r[kMaxBlockCircles]{};
 
+struct BlockRectItem {
+    float x0 = 0.f, y0 = 0.f, x1 = 0.f, y1 = 0.f;
+};
+static constexpr int kMaxExtraBlockRects = 16;
+static pthread_mutex_t g_block_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_extra_rect_count = 0;
+static BlockRectItem g_extra_rects[kMaxExtraBlockRects]{};
+
 void Touch_BlockRect(bool on, float x0, float y0, float x1, float y1) {
+    pthread_mutex_lock(&g_block_mu);
     g_block_on = on;
     g_block_circle_count = 0;
     g_block_x0 = x0; g_block_y0 = y0; g_block_x1 = x1; g_block_y1 = y1;
+    pthread_mutex_unlock(&g_block_mu);
+}
+
+void Touch_ClearExtraBlockRects() {
+    pthread_mutex_lock(&g_block_mu);
+    g_extra_rect_count = 0;
+    pthread_mutex_unlock(&g_block_mu);
+}
+
+void Touch_AddBlockRect(float x0, float y0, float x1, float y1) {
+    if (!std::isfinite(x0) || !std::isfinite(y0) ||
+        !std::isfinite(x1) || !std::isfinite(y1)) return;
+    if (x0 > x1) { const float t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { const float t = y0; y0 = y1; y1 = t; }
+    pthread_mutex_lock(&g_block_mu);
+    if (g_extra_rect_count < kMaxExtraBlockRects) {
+        g_extra_rects[g_extra_rect_count++] = {x0, y0, x1, y1};
+    }
+    pthread_mutex_unlock(&g_block_mu);
 }
 
 void Touch_BlockCircles(bool on, const float* xs, const float* ys,
                         const float* radii, int count) {
+    pthread_mutex_lock(&g_block_mu);
     g_block_on = on;
     g_block_x0 = g_block_y0 = g_block_x1 = g_block_y1 = 0.f;
     g_block_circle_count = 0;
-    if (!on || !xs || !ys || !radii) return;
+    if (!on || !xs || !ys || !radii) {
+        pthread_mutex_unlock(&g_block_mu);
+        return;
+    }
     if (count > kMaxBlockCircles) count = kMaxBlockCircles;
     for (int i = 0; i < count; ++i) {
         if (!std::isfinite(xs[i]) || !std::isfinite(ys[i]) ||
@@ -94,18 +126,36 @@ void Touch_BlockCircles(bool on, const float* xs, const float* ys,
         g_block_circle_x[n] = xs[i]; g_block_circle_y[n] = ys[i];
         g_block_circle_r[n] = radii[i];
     }
+    pthread_mutex_unlock(&g_block_mu);
 }
 
 static bool Touch_IsBlocked(float x, float y) {
-    if (!g_block_on) return false;
+    pthread_mutex_lock(&g_block_mu);
+    for (int i = 0; i < g_extra_rect_count; ++i) {
+        const BlockRectItem& r = g_extra_rects[i];
+        if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) {
+            pthread_mutex_unlock(&g_block_mu);
+            return true;
+        }
+    }
+    if (!g_block_on) {
+        pthread_mutex_unlock(&g_block_mu);
+        return false;
+    }
     if (g_block_circle_count > 0) {
         for (int i = 0; i < g_block_circle_count; ++i) {
             const float dx = x - g_block_circle_x[i], dy = y - g_block_circle_y[i];
-            if (dx * dx + dy * dy <= g_block_circle_r[i] * g_block_circle_r[i]) return true;
+            if (dx * dx + dy * dy <= g_block_circle_r[i] * g_block_circle_r[i]) {
+                pthread_mutex_unlock(&g_block_mu);
+                return true;
+            }
         }
+        pthread_mutex_unlock(&g_block_mu);
         return false;
     }
-    return x >= g_block_x0 && x <= g_block_x1 && y >= g_block_y0 && y <= g_block_y1;
+    const bool hit = (x >= g_block_x0 && x <= g_block_x1 && y >= g_block_y0 && y <= g_block_y1);
+    pthread_mutex_unlock(&g_block_mu);
+    return hit;
 }
 
 static int fdNum = 0, origfd[maxE], nowfd;
@@ -410,11 +460,14 @@ static void *TypeA(void *arg) {
             if (ie.type == EV_ABS) {
                 if (ie.code == ABS_MT_SLOT) {
                     latest = ie.value;
+                    if (latest < 0) latest = 0;
+                    else if (latest >= maxF) latest = maxF - 1;
                     continue;
                 }
                 if (ie.code == ABS_MT_TRACKING_ID) {
                     if (ie.value == -1) {
                         Finger[i][latest].isDown = false;
+                        Finger[i][latest].blocked = false;
                         Finger[i][latest].blockClassified = false;
                     } else {
                         Finger[i][latest].id = (i * 2 + 1) * maxF + latest;
@@ -436,18 +489,33 @@ static void *TypeA(void *arg) {
             }
             if (ie.code == SYN_REPORT) {
                 ImGuiIO &io = ImGui::GetIO();
-                if (Finger[i][latest].isDown) {
+                int uiSlot = -1;
+                for (int s = 0; s < maxF; ++s) {
+                    if (Finger[i][s].isDown) {
+                        if (!Finger[i][s].blockClassified) {
+                            float sx = 0.f, sy = 0.f;
+                            Touch_ToOverlay(Finger[i][s].x, Finger[i][s].y, sx, sy);
+                            Finger[i][s].blocked = Touch_IsBlocked(sx, sy);
+                            Finger[i][s].blockClassified = true;
+                        }
+                        if (Finger[i][s].blocked && (uiSlot < 0 || s == latest)) {
+                            uiSlot = s;
+                        }
+                    } else {
+                        Finger[i][s].blocked = false;
+                        Finger[i][s].blockClassified = false;
+                    }
+                }
+                if (uiSlot < 0 && Finger[i][latest].isDown) {
+                    uiSlot = latest;
+                }
+                if (uiSlot >= 0 && Finger[i][uiSlot].isDown) {
                     float x = 0.f, y = 0.f;
-                    Touch_ToOverlay(Finger[i][latest].x, Finger[i][latest].y, x, y);
+                    Touch_ToOverlay(Finger[i][uiSlot].x, Finger[i][uiSlot].y, x, y);
                     io.MousePos = {x, y};
                     io.MouseDown[0] = true;
-                    if (!Finger[i][latest].blockClassified) {
-                        Finger[i][latest].blocked = Touch_IsBlocked(x, y);
-                        Finger[i][latest].blockClassified = true;
-                    }
                 } else {
                     io.MouseDown[0] = false;
-                    Finger[i][latest].blocked = false;
                 }
                 if (!Touch_readOnly) {
                     Upload();

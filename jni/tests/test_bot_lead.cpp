@@ -130,6 +130,19 @@ int main() {
         assert(botlead::fresh(t, 0.1));
         assert(!botlead::fresh(t, 0.5));
     }
+    // Высокая частота кадров (60/120 Гц, dt < 20 мс): опорная точка копит шаг
+    // до kMinSpanSeconds и не сбрасывает скорость в ноль на каждом кадре.
+    {
+        Track t;
+        double now = 0.0;
+        const double dt = 1.0 / 120.0;
+        for (int i = 0; i <= 60; ++i) {
+            botlead::update(t, V(6.0F * (float)(i * dt), 0.0F, 0.0F), now);
+            now += dt;
+        }
+        assert(near(t.vel.x, 6.0F, 0.5F));
+        assert(botlead::fresh(t, now));
+    }
     std::puts("bot-lead tests passed");
     return 0;
 }

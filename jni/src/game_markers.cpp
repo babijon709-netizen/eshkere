@@ -586,16 +586,85 @@ static bool is_static_or_loot_vehicle_name(const char* raw) {
     });
 }
 
-static bool pumpkin_look_from_object_name(const char* raw, MarkerLook& look) {
-    return for_each_name_token(raw, [&](const char* word) {
-        if (strncmp(word, "pumpkin", 7) == 0 ||
-            strcmp(word, "halloween") == 0 ||
-            strcmp(word, "jackolantern") == 0) {
-            look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
+static bool is_zombie_name(const char* raw);
+
+static bool is_halloween_item_name(const char* raw) {
+    if (!raw || !raw[0]) return false;
+    char lower[48] = {};
+    size_t n = 0;
+    for (; raw[n] && n + 1 < sizeof(lower); ++n) {
+        unsigned char c = (unsigned char)raw[n];
+        lower[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+    }
+    lower[n] = '\0';
+    return strstr(lower, "halloween") != nullptr ||
+           strstr(lower, "hallowin") != nullptr ||
+           strstr(lower, "pumpkin.lamp") != nullptr ||
+           strstr(lower, "candy.mystery") != nullptr ||
+           strstr(lower, "halloween.candy") != nullptr ||
+           strstr(lower, "jackolantern") != nullptr ||
+           strstr(lower, "pumpkintrick") != nullptr;
+}
+
+static bool pumpkin_look_from_object_name(const char* raw, MarkerLook& look,
+                                          bool allow_plain_pumpkin = false) {
+    if (!raw || !raw[0] || is_zombie_name(raw)) return false;
+    bool saw_explicit_halloween = false;
+    bool saw_pumpkin = false;
+    bool saw_halloween_qualifier = false;
+    bool saw_crop_word = false;
+    for_each_name_token(raw, [&](const char* word) {
+        if (strncmp(word, "halloween", 9) == 0 ||
+            strncmp(word, "hallowin", 8) == 0 ||
+            strncmp(word, "jackolantern", 12) == 0 ||
+            strcmp(word, "pumpkintrick") == 0 ||
+            strcmp(word, "pumpkinlamp") == 0 ||
+            strcmp(word, "pumpkinhead") == 0 ||
+            strcmp(word, "pumpkinloot") == 0 ||
+            strcmp(word, "pumpkinevent") == 0 ||
+            strcmp(word, "candypumpkin") == 0 ||
+            strcmp(word, "trickpumpkin") == 0 ||
+            strcmp(word, "evilpumpkin") == 0 ||
+            strcmp(word, "spookypumpkin") == 0) {
+            saw_explicit_halloween = true;
             return true;
+        }
+        if (strncmp(word, "pumpkin", 7) == 0) {
+            saw_pumpkin = true;
+            if (strlen(word) > 7 &&
+                strcmp(word, "pumpkins") != 0 &&
+                strcmp(word, "pumpkinplant") != 0 &&
+                strcmp(word, "pumpkinbush") != 0 &&
+                strcmp(word, "pumpkinseed") != 0) {
+                saw_halloween_qualifier = true;
+            }
+        }
+        if (strcmp(word, "trick") == 0 || strcmp(word, "treat") == 0 ||
+            strcmp(word, "candy") == 0 || strcmp(word, "candies") == 0 ||
+            strcmp(word, "mystery") == 0 || strcmp(word, "lamp") == 0 ||
+            strcmp(word, "lantern") == 0 || strcmp(word, "jack") == 0 ||
+            strcmp(word, "event") == 0 || strcmp(word, "loot") == 0 ||
+            strcmp(word, "random") == 0 || strcmp(word, "spawn") == 0 ||
+            strcmp(word, "evil") == 0 || strcmp(word, "spooky") == 0 ||
+            strcmp(word, "scary") == 0 || strcmp(word, "monster") == 0 ||
+            strcmp(word, "head") == 0 || strcmp(word, "crate") == 0 ||
+            strcmp(word, "box") == 0 || strcmp(word, "destroyable") == 0) {
+            saw_halloween_qualifier = true;
+        }
+        if (strcmp(word, "plant") == 0 || strcmp(word, "crop") == 0 ||
+            strcmp(word, "seed") == 0 || strcmp(word, "bush") == 0 ||
+            strcmp(word, "farm") == 0 || strcmp(word, "garden") == 0) {
+            saw_crop_word = true;
         }
         return false;
     });
+    if (saw_explicit_halloween ||
+        (saw_pumpkin && saw_halloween_qualifier) ||
+        (saw_pumpkin && allow_plain_pumpkin && !saw_crop_word)) {
+        look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
+        return true;
+    }
+    return false;
 }
 
 // Cars whose entityType is empty: prefab name only, excluding static/lootable wrecks.
@@ -1233,6 +1302,62 @@ static bool pickup_marker(uint64_t component, char* label, size_t label_cap) {
 // handful of classes come back for every entity in the registry).
 
 
+static bool mineable_is_halloween_pumpkin(uint64_t mineable, bool* out_regular_food_pumpkin = nullptr) {
+    if (out_regular_food_pumpkin) *out_regular_food_pumpkin = false;
+    if (!valid_obj(mineable)) return false;
+    if (object_class_or_parent_name_is(mineable, "MineableObjectWithRandomSpawn"))
+        return true;
+    const uint64_t sources[2] = {MINEABLE_LOOT, MINEABLE_FINISH_BONUS};
+    bool saw_halloween = false;
+    bool saw_regular_food = false;
+    for (uint64_t source : sources) {
+        uint64_t items[12];
+        int count = read_managed_collection(rd_ptr(mineable + source), items, 12);
+        for (int i = 0; i < count; ++i) {
+            if (!valid_obj(items[i])) continue;
+            char name[40] = {};
+            if (!read_managed_string(rd_ptr(items[i] + LOOTITEM_ITEM_NAME), name, sizeof(name)))
+                continue;
+            if (is_halloween_item_name(name)) {
+                saw_halloween = true;
+                break;
+            }
+            char lower[40] = {};
+            size_t n = 0;
+            for (; name[n] && n + 1 < sizeof(lower); ++n) {
+                unsigned char c = (unsigned char)name[n];
+                lower[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+            }
+            lower[n] = '\0';
+            if (strcmp(lower, "pumpkin") == 0 || strstr(lower, "seed.pumpkin") != nullptr) {
+                saw_regular_food = true;
+            }
+        }
+        if (saw_halloween) break;
+    }
+    if (out_regular_food_pumpkin) *out_regular_food_pumpkin = saw_regular_food && !saw_halloween;
+    return saw_halloween;
+}
+
+static bool pickup_is_halloween_pumpkin(uint64_t component) {
+    if (!valid_obj(component)) return false;
+    char short_name[48] = {};
+    if (read_managed_string_ex(rd_ptr(component + ITEMPICKUP_SHORTNAME), short_name,
+                               sizeof(short_name), 47) &&
+        is_halloween_item_name(short_name)) {
+        return true;
+    }
+    uint64_t item = rd_ptr(component + ITEMPICKUP_ITEM_OBJECT);
+    uint64_t data = valid_obj(item) ? rd_ptr(item + ITEM_DATA) : 0;
+    char display_name[48] = {};
+    if (valid_obj(data) &&
+        read_managed_string(rd_ptr(data + ITEMDATA_NAME), display_name, sizeof(display_name)) &&
+        is_halloween_item_name(display_name)) {
+        return true;
+    }
+    return false;
+}
+
 uint8_t marker_class_of(uint64_t klass) {
     if (!valid_obj(klass)) return MARKER_CLASS_NONE;
     auto found = g_marker_class_kind.find(klass);
@@ -1242,11 +1367,14 @@ uint8_t marker_class_of(uint64_t klass) {
     uint8_t kind = readable ? MARKER_CLASS_NONE : MARKER_CLASS_UNKNOWN;
     if (readable) {
         const auto recovered_name = manes_aim_source::classify_entity_name(name.c_str());
-        if (name.rfind("Mineable", 0) == 0 ||
-            recovered_name == manes_aim_source::EntityName::CompositeStone)
-            kind = MARKER_CLASS_MINEABLE;
-        else if (name == "PumpkinTrick" || name.find("Pumpkin") != std::string::npos)
+        if (name == "PumpkinTrick" || name == "MineableObjectWithRandomSpawn" ||
+            name.find("Pumpkin") != std::string::npos ||
+            name.find("Halloween") != std::string::npos ||
+            name.find("Hallowin") != std::string::npos)
             kind = MARKER_CLASS_PUMPKIN;
+        else if (name.rfind("Mineable", 0) == 0 ||
+                 recovered_name == manes_aim_source::EntityName::CompositeStone)
+            kind = MARKER_CLASS_MINEABLE;
         else if (name == "LootObject")
             kind = MARKER_CLASS_LOOT;
         else if (recovered_name == manes_aim_source::EntityName::ItemPickup)
@@ -1426,6 +1554,7 @@ static MarkerScanResult rebuild_marker_entities() {
         bool id_has_loot = false;
         bool id_has_barrel = false;
         bool id_has_vehicle = false;
+        bool id_emitted_pumpkin = false;
         for (int32_t b = 0; b < behaviour_count; ++b) {
             if (!valid_obj(behaviours[b])) continue;
             const uint8_t bc = marker_class_of(rd_ptr(behaviours[b]));
@@ -1459,7 +1588,8 @@ static MarkerScanResult rebuild_marker_entities() {
                 if (!managed_component_gameobject_name(component, none_name, sizeof(none_name)) ||
                     !(sleeper_look_from_object_name(none_name, look) ||
                       backpack_look_from_object_name(none_name, look) ||
-                      (g_markers_pumpkin_enabled && pumpkin_look_from_object_name(none_name, look))))
+                      (g_markers_pumpkin_enabled && !id_emitted_pumpkin &&
+                       pumpkin_look_from_object_name(none_name, look, false))))
                     continue;
                 known = true;   // рюкзак/спящий/тыква с переименованным классом
             }
@@ -1479,7 +1609,7 @@ static MarkerScanResult rebuild_marker_entities() {
                 look = special_look(ESP_MARKER_SLEEPER, "Спящий");
                 known = true;
             } else if (component_class == MARKER_CLASS_PUMPKIN) {
-                if (g_markers_pumpkin_enabled) {
+                if (g_markers_pumpkin_enabled && !id_emitted_pumpkin) {
                     look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
                     known = true;
                 }
@@ -1504,15 +1634,34 @@ static MarkerScanResult rebuild_marker_entities() {
             if (component_class == MARKER_CLASS_LOOT || family_unknown)
                 read_managed_string(rd_ptr(component + LOOTOBJECT_PANEL_NAME),
                                     loot_panel, sizeof(loot_panel));
-            if (!known && g_markers_pumpkin_enabled &&
+            if (!known && g_markers_pumpkin_enabled && !id_emitted_pumpkin &&
                 (family_unknown || component_class == MARKER_CLASS_LOOT ||
                  component_class == MARKER_CLASS_MINEABLE ||
                  component_class == MARKER_CLASS_BARREL ||
                  component_class == MARKER_CLASS_PICKUP)) {
-                if (pumpkin_look_from_object_name(object_name, look) ||
-                    pumpkin_look_from_object_name(root_name, look) ||
-                    pumpkin_look_from_object_name(loot_panel, look))
+                bool allow_plain_pumpkin = (component_class == MARKER_CLASS_LOOT ||
+                                            component_class == MARKER_CLASS_BARREL);
+                if (component_class == MARKER_CLASS_MINEABLE || family_unknown) {
+                    bool is_regular_food = false;
+                    if (mineable_is_halloween_pumpkin(component, &is_regular_food)) {
+                        look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
+                        known = true;
+                    }
+                    if (component_class == MARKER_CLASS_MINEABLE && !is_regular_food) {
+                        allow_plain_pumpkin = true;
+                    }
+                }
+                if (!known && (component_class == MARKER_CLASS_PICKUP || family_unknown) &&
+                    pickup_is_halloween_pumpkin(component)) {
+                    look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
                     known = true;
+                }
+                if (!known &&
+                    (pumpkin_look_from_object_name(object_name, look, allow_plain_pumpkin) ||
+                     pumpkin_look_from_object_name(root_name, look, allow_plain_pumpkin) ||
+                     pumpkin_look_from_object_name(loot_panel, look, true))) {
+                    known = true;
+                }
             }
             if (!known && (family_unknown || component_class == MARKER_CLASS_LOOT ||
                            component_class == MARKER_CLASS_MINEABLE ||
@@ -1637,6 +1786,7 @@ static MarkerScanResult rebuild_marker_entities() {
             entity.id = component;
             entity.kind = look.kind;
             entity.ore_type = look.ore_type;
+            if (entity.kind == ESP_MARKER_PUMPKIN) id_emitted_pumpkin = true;
             if (entity.kind == ESP_MARKER_BOT) {
                 // The death handler is a sibling behaviour, not the Mineable
                 // component used to classify the marker. Never read 0xE8 on it.

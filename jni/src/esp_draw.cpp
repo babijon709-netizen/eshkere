@@ -538,10 +538,6 @@ void DrawEspOverlay() {
         // соседние цели иначе слипались бы в одно пятно.
         const float size = radius * 0.16f;
         if (radius > 8.f && !bearings.empty()) {
-            // Сам круг — тонкий и полупрозрачный: он нужен, чтобы стрелки
-            // читались как кольцо, а не как россыпь значков вокруг прицела.
-            dl->AddCircle(ImVec2(ccx, ccy), radius, IM_COL32(255, 255, 255, 36), 96, 1.f);
-
             for (const EspBearing& b : bearings) {
                 if (b.dead) continue;
                 // Союзники на кольце — только когда включён их показ (тот же

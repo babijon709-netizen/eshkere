@@ -162,6 +162,7 @@ inline constexpr std::uint64_t PLAYER_INPUT_TICK = game_offsets::PLAYER_INPUT_TI
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_ATTACK_HELD = game_offsets::PLAYER_INPUT_HANDLER_ATTACK_HELD;
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_A = game_offsets::PLAYER_INPUT_HANDLER_OVERRIDE_A;
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_B = game_offsets::PLAYER_INPUT_HANDLER_OVERRIDE_B;
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE = game_offsets::PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
 inline constexpr std::uint64_t NULLABLE_HAS_VALUE = game_offsets::NULLABLE_HAS_VALUE;
 inline constexpr std::uint64_t NULLABLE_VALUE = game_offsets::NULLABLE_VALUE;
 inline constexpr std::uint64_t NULLABLE_STRIDE = game_offsets::NULLABLE_STRIDE;

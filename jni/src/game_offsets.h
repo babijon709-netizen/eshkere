@@ -249,6 +249,7 @@ inline constexpr std::uint64_t PLAYER_INPUT_TICK                  = 0x60; // Pla
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_ATTACK_HELD   = 0x68; // bool: атака зажата
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_A    = 0x6C; // Nullable<Vector2> qNf
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_B    = 0x78; // Nullable<Vector2> qNP
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE = 0x84; // Nullable<bool> Jjb/Oua
 // Layout Nullable<T> в il2cpp: bool hasValue по +0 (в метадате поле идёт
 // первым), значение — по +4 (Vector2 выравнивается по 4).
 inline constexpr std::uint64_t NULLABLE_HAS_VALUE = 0x0;

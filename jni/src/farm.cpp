@@ -210,7 +210,7 @@ constexpr float kGiveUpBlind   = 25.f;   // то же, но остаток не 
 // Так шаги не складываются и камера не перелетает узел.
 constexpr float kLookWaitMax   = 0.025f; // с: ждём не дольше одного-двух кадров игры
 constexpr float kMemAckEps     = 0.10f;  // град: допуск «накопитель = наша запись»
-constexpr float kMemStepWalk   = 15.0f;  // град: предел одного шага на подходе
+constexpr float kMemStepWalk   = 42.0f;  // град: предел одного шага на подходе
 constexpr float kMemStepBody   = 4.0f;   // град: предел шага, когда узел в прицеле
 constexpr float kMemDeadDeg    = 0.05f;  // град: мельче — не шлём
 // Шаг доводки. Следующую запись шлём только после того, как поза камеры показала
@@ -221,7 +221,7 @@ constexpr float kMemDeadDeg    = 0.05f;  // град: мельче — не шл
 constexpr float kAimStepFine   = 0.60f;  // доля остатка в мелком шаге
 constexpr float kAimJumpGate   = 2.00f;  // град: крупнее — закрываем одним движением
 constexpr float kAimJumpGain   = 1.00f;  // ...во весь остаток
-constexpr float kAimJumpMax    = 20.0f;  // град: предел одного такого движения
+constexpr float kAimJumpMax    = 50.0f;  // град: предел одного такого движения
                                          // (крестик появляется, когда камера ещё
                                          // стоит на корпусе — закрываем одним
                                          // движением, а не серией шагов; перелёта
@@ -768,8 +768,8 @@ static void UpdateFarmInner(float dt) {
                     float moveYaw = atSpot ? steerYaw : tgt.yaw;
                     if (fabsf(moveYaw) < 3.f) moveYaw = 0.f;
                     const float a = moveYaw * 0.017453293f;
-                    wantX = sinf(a) * 0.85f;
-                    wantY = cosf(a) * 0.85f;
+                    wantX = sinf(a);
+                    wantY = cosf(a);
                 } else {
                     const float a = steerYaw * 0.017453293f;
                     wantX = sinf(a);

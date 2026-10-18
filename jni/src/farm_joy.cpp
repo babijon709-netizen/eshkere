@@ -335,7 +335,7 @@ bool resolve_sprint(SprintTarget& t) {
     int why = WHY_OK;
     if (!resolve_handler(handler, klass, owner, why)) { t.why = why; return false; }
     const uint64_t ld = rd_ptr(handler + PLAYER_INPUT_HANDLER_INPUT_ACTIONS);
-    if (ld < 0x10000 || !object_class_name_is(ld, "LD", false)) return false;
+    if (ld < 0x10000) return false;
     const uint64_t action = rd_ptr(ld + LD_SPRINT_ACTION);
     if (action < 0x10000 || !object_class_name_is(action, "InputAction", false)) return false;
     const int index = (int)rd<std::int32_t>(action + INPUT_ACTION_INDEX);
@@ -464,6 +464,7 @@ bool command(float x, float y) {
 
     if (!alive(s_targets[cur])) revalidate(cur);
     if (!alive(s_targets[C_OVR_A])) revalidate(C_OVR_A);
+    if (!alive(s_targets[C_UI_STICK])) revalidate(C_UI_STICK);
 
     bool wrote = false;
     // Слот A (PlayerInputHandler.qNf +0x6C, Nullable<Vector2>) — основной
@@ -473,7 +474,12 @@ bool command(float x, float y) {
         s_touched[C_OVR_A] = true;
         wrote = true;
     }
-    if (cur != C_OVR_A && alive(s_targets[cur]) && write_target(s_targets[cur], x, y)) {
+    if (alive(s_targets[C_UI_STICK]) && write_target(s_targets[C_UI_STICK], x, y)) {
+        s_touched[C_UI_STICK] = true;
+        wrote = true;
+    }
+    if (cur != C_OVR_A && cur != C_UI_STICK && alive(s_targets[cur]) &&
+        write_target(s_targets[cur], x, y)) {
         s_touched[cur] = true;
         wrote = true;
     }
@@ -524,28 +530,54 @@ bool attack_held(bool& held) {
 
 bool sprint(bool on) {
     if (!on && !s_sprint_on) return true;          // возвращать нечего
+    uint64_t handler = 0, klass = 0, owner = 0;
+    int why = WHY_OK;
+    if (!resolve_handler(handler, klass, owner, why)) {
+        s_sprint_why = why;
+        return false;
+    }
+    // В PlayerInputHandler.BZ / lIb оценщик спринта (0x687F014) вызывается ДО
+    // применения слота A (+0x6C), поэтому видит нулевой вектор стика и ставит
+    // PlayerInput.Sprint = 0. Сразу после слота A игра проверяет Nullable<bool>
+    // по смещению +0x84 (Jjb в 11966, Oua в 11968: hasValue на +0x84, value на
+    // +0x85) и пишет value & 1 в PlayerInput.Sprint (+0x59), откуда KCC.hFr
+    // включает eventHandler->Run.
+    const uint64_t ovr_addr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
+    const unsigned char want_ovr[2] = { on ? 1u : 0u, on ? 1u : 0u };
+    unsigned char cur_ovr[2] = {};
+    bool wrote_ovr = false;
+    if (rd_buf(ovr_addr, cur_ovr, sizeof(cur_ovr)) &&
+        memcmp(cur_ovr, want_ovr, sizeof(want_ovr)) == 0) {
+        wrote_ovr = true;
+    } else if (wr_buf(ovr_addr, want_ovr, sizeof(want_ovr))) {
+        wrote_ovr = true;
+    }
+
     if (!sprint_alive()) {
-        if (!resolve_sprint(s_sprint_chain)) { s_sprint_why = s_sprint_chain.why; return false; }
-        s_sprint_base_known = false;               // объект мог смениться
+        if (resolve_sprint(s_sprint_chain)) {
+            s_sprint_base_known = false;           // объект мог смениться
+        }
     }
-    const uint64_t phase_addr = s_sprint_chain.phase;
-    const uint64_t press_addr = s_sprint_chain.handler + PLAYER_INPUT_SPRINT;
-    if (!s_sprint_base_known) {
-        s_sprint_base_phase  = rd<unsigned char>(phase_addr);
-        s_sprint_base_sprint = rd<unsigned char>(press_addr);
-        s_sprint_base_known  = true;
-    }
-    const unsigned char phase = on ? INPUT_ACTION_PHASE_STARTED : s_sprint_base_phase;
-    // То же самое для бега: sprint(true) вызывается каждый кадр движения.
-    // Фазу трогаем только когда она разошлась с желаемой; в прямом режиме
-    // (s_sprint_direct) игра наше значение не держит, там пишем безусловно.
-    if (s_sprint_direct || rd<unsigned char>(phase_addr) != phase) {
-        if (!wr_buf(phase_addr, &phase, sizeof(phase))) { s_sprint_why = WHY_WRITE; return false; }
-    }
-    if (s_sprint_direct) {
-        const unsigned char press = on ? 1u : s_sprint_base_sprint;
-        if (!wr_buf(press_addr, &press, sizeof(press))) { s_sprint_why = WHY_WRITE; return false; }
-        if (!on) s_sprint_direct = false;
+    if (sprint_alive()) {
+        const uint64_t phase_addr = s_sprint_chain.phase;
+        const uint64_t press_addr = s_sprint_chain.handler + PLAYER_INPUT_SPRINT;
+        if (!s_sprint_base_known) {
+            s_sprint_base_phase  = rd<unsigned char>(phase_addr);
+            s_sprint_base_sprint = rd<unsigned char>(press_addr);
+            s_sprint_base_known  = true;
+        }
+        const unsigned char phase = on ? INPUT_ACTION_PHASE_STARTED : s_sprint_base_phase;
+        if (s_sprint_direct || rd<unsigned char>(phase_addr) != phase) {
+            wr_buf(phase_addr, &phase, sizeof(phase));
+        }
+        if (s_sprint_direct) {
+            const unsigned char press = on ? 1u : s_sprint_base_sprint;
+            wr_buf(press_addr, &press, sizeof(press));
+            if (!on) s_sprint_direct = false;
+        }
+    } else if (!wrote_ovr) {
+        s_sprint_why = WHY_WRITE;
+        return false;
     }
     s_sprint_on = on;
     if (!on) s_sprint_miss = 0;
@@ -567,9 +599,9 @@ void release() {
         zero_target(s_targets[c]);
         s_touched[c] = false;
     }
-    // Безусловная страховка: проверяем оба Nullable<Vector2> слота в
-    // PlayerInputHandler и сбрасываем hasValue=0 по расхождению, даже если
-    // кэш целей устарел на кадре выключения автофарма.
+    // Безусловная страховка: проверяем оба Nullable<Vector2> слота и слот
+    // спринта Nullable<bool> в PlayerInputHandler и сбрасываем hasValue=0 по
+    // расхождению, даже если кэш целей устарел на кадре выключения автофарма.
     uint64_t handler = 0, klass = 0, owner = 0;
     int why = WHY_OK;
     if (resolve_handler(handler, klass, owner, why)) {
@@ -584,6 +616,13 @@ void release() {
                 memcmp(cur_buf, zero, sizeof(zero)) != 0) {
                 wr_buf(handler + off, zero, sizeof(zero));
             }
+        }
+        const uint64_t sprint_ovr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
+        const unsigned char zero_b[2] = {};
+        unsigned char cur_b[2] = {};
+        if (rd_buf(sprint_ovr, cur_b, sizeof(cur_b)) &&
+            memcmp(cur_b, zero_b, sizeof(zero_b)) != 0) {
+            wr_buf(sprint_ovr, zero_b, sizeof(zero_b));
         }
     }
 }

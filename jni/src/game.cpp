@@ -4608,7 +4608,7 @@ static uint64_t model_root_at_offset(uint64_t player, uint64_t offset) {
 }
 
 // Определена ниже: имя кости нужно до того, как найдено само имя GameObject.
-static int  match_bone_name(const char* raw_name);
+int match_bone_name(const char* raw_name);
 
 // Перебор полей PlayerManager в поисках модели: у модели под трансформом лежит
 // риг, то есть поддерево, в котором читаются знакомые имена костей. У любого
@@ -4762,7 +4762,7 @@ static void normalize_bone_name(const char* in, char* out, size_t cap) {
     out[n] = '\0';
 }
 
-static int match_bone_name(const char* raw_name) {
+int match_bone_name(const char* raw_name) {
     char normalized[48];
     normalize_bone_name(raw_name, normalized, sizeof(normalized));
     if (!normalized[0]) return -1;
@@ -5569,6 +5569,217 @@ static bool build_skeleton_from_names(uint64_t player, CachedSkeleton& skeleton)
     skeleton.bone_count = valid_bones;
     skeleton.valid = true;
     return true;
+}
+
+static bool name_contains_zombie_token(const char* name) {
+    if (!name || !name[0]) return false;
+    char lower[48] = {};
+    size_t n = 0;
+    for (; name[n] && n + 1 < sizeof(lower); ++n) {
+        unsigned char c = (unsigned char)name[n];
+        lower[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+    }
+    lower[n] = '\0';
+    return strstr(lower, "zombie") != nullptr ||
+           strstr(lower, "zomb") != nullptr ||
+           strstr(lower, "infected") != nullptr ||
+           strstr(lower, "undead") != nullptr ||
+           strstr(lower, "ghoul") != nullptr ||
+           strstr(lower, "walker") != nullptr;
+}
+
+bool resolve_humanoid_rig_bones(uint64_t root_native_transform,
+                                uint64_t death_handler,
+                                uint64_t& out_head,
+                                uint64_t& out_neck,
+                                uint64_t& out_chest,
+                                uint64_t& out_hips,
+                                bool* out_is_zombie) {
+    out_head = 0;
+    out_neck = 0;
+    out_chest = 0;
+    out_hips = 0;
+    if (out_is_zombie) *out_is_zombie = false;
+    if (!root_native_transform) return false;
+
+    static std::vector<uint64_t> nodes;
+    collect_transform_subtree(root_native_transform, nodes, 512);
+    if (nodes.size() >= 8 && !g_go_name_offset_valid) {
+        discover_gameobject_name_offset(nodes);
+    }
+
+    if (g_go_name_offset_valid && !nodes.empty()) {
+        uint64_t hips_candidates[4] = {};
+        int hips_candidate_count = 0;
+        uint64_t fallback_head = 0, fallback_neck = 0, fallback_chest = 0, fallback_hips = 0;
+        for (uint64_t node : nodes) {
+            char name[48];
+            if (!read_transform_name(node, name, sizeof(name))) continue;
+            if (out_is_zombie && !*out_is_zombie && name_contains_zombie_token(name)) {
+                *out_is_zombie = true;
+            }
+            const int bone = match_bone_name(name);
+            if (bone == BONE_HIPS) {
+                if (!fallback_hips) fallback_hips = node;
+                if (hips_candidate_count < 4) hips_candidates[hips_candidate_count++] = node;
+            } else if (bone == BONE_HEAD && !fallback_head) {
+                fallback_head = node;
+            } else if (bone == BONE_NECK && !fallback_neck) {
+                fallback_neck = node;
+            } else if ((bone == BONE_SPINE2 || bone == BONE_SPINE1 || bone == BONE_SPINE) &&
+                       (!fallback_chest || bone == BONE_SPINE2)) {
+                fallback_chest = node;
+            }
+        }
+
+        auto find_child_bone = [&](uint64_t parent, int bone_id) -> uint64_t {
+            if (!parent) return 0;
+            uint64_t children[64];
+            int count = read_transform_children(parent, children, 64);
+            for (int i = 0; i < count; ++i) {
+                char name[48];
+                if (!read_transform_name(children[i], name, sizeof(name))) continue;
+                if (match_bone_name(name) == bone_id) return children[i];
+            }
+            return 0;
+        };
+
+        int best_score = 0;
+        for (int c = 0; c < hips_candidate_count; ++c) {
+            uint64_t hips = hips_candidates[c];
+            uint64_t cursor = hips;
+            int score = 1;
+            for (int slot = BONE_SPINE; slot <= BONE_SPINE2; ++slot) {
+                uint64_t next = find_child_bone(cursor, slot);
+                if (next) { cursor = next; ++score; }
+            }
+            uint64_t chest = (cursor != hips) ? cursor : 0;
+            uint64_t neck = find_child_bone(cursor, BONE_NECK);
+            if (neck) ++score;
+            uint64_t head = find_child_bone(neck ? neck : cursor, BONE_HEAD);
+            if (head) score += 2;
+            if (score > best_score) {
+                best_score = score;
+                out_hips = hips;
+                out_chest = chest;
+                out_neck = neck;
+                out_head = head;
+            }
+        }
+        if (!out_head)  out_head  = fallback_head;
+        if (!out_neck)  out_neck  = fallback_neck;
+        if (!out_chest) out_chest = fallback_chest;
+        if (!out_hips)  out_hips  = fallback_hips;
+    }
+
+    // Structural fallback via NPCHumanoidDeathHandler.m_CollidersToDisable (Collider[])
+    // when bone names are stripped or unavailable on this build/device.
+    if (!out_head && valid_obj(death_handler)) {
+        const uint64_t col_arr = rd_ptr(death_handler + NPC_DEATH_COLLIDERS);
+        const int32_t col_cnt = valid_obj(col_arr)
+            ? rd<int32_t>(col_arr + IL2CPP_ARRAY_LENGTH) : 0;
+        constexpr int kMaxSet = 24;
+        uint64_t set_transform[kMaxSet] = {};
+        int set_count = 0;
+        if (col_cnt >= 5 && col_cnt <= 32) {
+            for (int32_t i = 0; i < col_cnt && set_count < kMaxSet; ++i) {
+                uint64_t col = rd_ptr(col_arr + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8);
+                uint64_t tr = native_component_transform(managed_object_native(col));
+                if (!skeleton_transform_ptr_valid(tr)) continue;
+                bool dup = false;
+                for (int j = 0; j < set_count; ++j) if (set_transform[j] == tr) { dup = true; break; }
+                if (!dup) set_transform[set_count++] = tr;
+            }
+        }
+        if (set_count >= 5 && resolve_skeleton_layout(set_transform[0])) {
+            auto hierarchy_arrays = [&](uint64_t hierarchy, uint64_t& matrices, uint64_t& indices) -> bool {
+                matrices = rd_ptr(hierarchy + g_skeleton_layout.matrices_offset);
+                indices = rd_ptr(hierarchy + g_skeleton_layout.indices_offset);
+                if (g_skeleton_layout.matrices_indirect) matrices = rd_ptr(matrices);
+                if (g_skeleton_layout.indices_indirect) indices = rd_ptr(indices);
+                return matrices && indices;
+            };
+            uint64_t set_data[kMaxSet] = {};
+            int32_t set_index[kMaxSet] = {};
+            int32_t chains[kMaxSet][48] = {};
+            int chain_length[kMaxSet] = {};
+            Vec3 world[kMaxSet] = {};
+            int write = 0;
+            for (int i = 0; i < set_count; ++i) {
+                uint64_t bone_data = rd_ptr(set_transform[i] + g_skeleton_layout.data_offset);
+                int32_t index = rd<int32_t>(set_transform[i] + g_skeleton_layout.index_offset);
+                uint64_t matrices = 0, indices = 0;
+                Vec3 pos{};
+                if (!bone_data || index < 0 || index > 100000 ||
+                    !hierarchy_arrays(bone_data, matrices, indices) ||
+                    !read_transform_hierarchy_arrays(matrices, indices, index, pos))
+                    continue;
+                set_transform[write] = set_transform[i];
+                set_data[write] = bone_data;
+                set_index[write] = index;
+                world[write] = pos;
+                chain_length[write] = read_parent_chain_remote(indices, index, chains[write], 48);
+                ++write;
+            }
+            set_count = write;
+            if (set_count >= 5) {
+                auto set_slot_of_index = [&](int32_t idx, uint64_t h) -> int {
+                    for (int i = 0; i < set_count; ++i)
+                        if (set_index[i] == idx && set_data[i] == h) return i;
+                    return -1;
+                };
+                int nearest[kMaxSet];
+                int descendants[kMaxSet];
+                for (int i = 0; i < set_count; ++i) { nearest[i] = -1; descendants[i] = 0; }
+                for (int i = 0; i < set_count; ++i) {
+                    for (int step = 0; step < chain_length[i]; ++step) {
+                        int anc = set_slot_of_index(chains[i][step], set_data[i]);
+                        if (anc < 0) continue;
+                        if (nearest[i] < 0) nearest[i] = anc;
+                        ++descendants[anc];
+                    }
+                }
+                int pelvis_slot = -1;
+                for (int i = 0; i < set_count; ++i)
+                    if (pelvis_slot < 0 || descendants[i] > descendants[pelvis_slot]) pelvis_slot = i;
+                int chest_slot = -1;
+                if (pelvis_slot >= 0 && descendants[pelvis_slot] >= 2) {
+                    for (int i = 0; i < set_count; ++i) {
+                        if (i == pelvis_slot || nearest[i] != pelvis_slot) continue;
+                        if (descendants[i] >= 2 && (chest_slot < 0 || descendants[i] > descendants[chest_slot]))
+                            chest_slot = i;
+                    }
+                    while (chest_slot >= 0) {
+                        int next = -1;
+                        for (int i = 0; i < set_count; ++i)
+                            if (nearest[i] == chest_slot && descendants[i] >= 2) { next = i; break; }
+                        if (next < 0) break;
+                        chest_slot = next;
+                    }
+                }
+                if (pelvis_slot >= 0 && chest_slot >= 0) {
+                    int head_slot = -1;
+                    for (int i = 0; i < set_count; ++i) {
+                        if (i == pelvis_slot || i == chest_slot || nearest[i] != chest_slot) continue;
+                        if (descendants[i] == 0 && (head_slot < 0 || world[i].y > world[head_slot].y))
+                            head_slot = i;
+                    }
+                    if (!out_hips)  out_hips  = set_transform[pelvis_slot];
+                    if (!out_chest) out_chest = set_transform[chest_slot];
+                    if (head_slot >= 0) {
+                        out_head = set_transform[head_slot];
+                        uint64_t neck = skeleton_child_on_chain(
+                            set_transform[chest_slot], set_data[head_slot],
+                            chains[head_slot], chain_length[head_slot]);
+                        if (neck && neck != out_head && !out_neck) out_neck = neck;
+                    }
+                }
+            }
+        }
+    }
+
+    if (out_head) resolve_skeleton_layout(out_head);
+    return out_head != 0 || out_neck != 0 || out_chest != 0 || out_hips != 0;
 }
 
 // Build with both strategies and keep the richer skeleton. The name path
@@ -6951,16 +7162,16 @@ void update_aim_ballistics(uint64_t player) {
 }
 
 bool aim_ballistic_origin(Vec3& origin) {
-    if (g_aim_ref_valid && aim_ballistics::finite(g_aim_ref_origin)) {
-        origin = g_aim_ref_origin;
-        return true;
-    }
     if (g_cam_pose_valid && aim_ballistics::finite(g_cam_pos)) {
         origin = g_cam_pos;
         return true;
     }
     if (g_frame_cam_basis_valid && aim_ballistics::finite(g_frame_cam_pos)) {
         origin = g_frame_cam_pos;
+        return true;
+    }
+    if (g_aim_ref_valid && aim_ballistics::finite(g_aim_ref_origin)) {
+        origin = g_aim_ref_origin;
         return true;
     }
     return false;
@@ -8737,9 +8948,7 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
                 ? src.pos_age : 0.0f;
             const float confidence = aim_ballistics::motion_confidence(age);
             g_aim_velocity = aim_ballistics::scale(measured, confidence);
-            const float lead = g_aim_lead_seconds +
-                aim_ballistics::motion_age_lead(age < kBotPosLeadMax ? age : kBotPosLeadMax);
-            g_aim_lead = aim_ballistics::scale(measured, lead);
+            g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
             if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
             else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
         } else {
@@ -8751,8 +8960,16 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         if (src.head_valid) {
             // Точная кость головы модели: без оценки по росту от ног.
             head = {src.hx, src.hy, src.hz};
-            neck = head;  neck.y -= kBotNeckDrop;
-            chest = head; chest.y -= kBotChestDrop;
+            if (src.neck_valid) {
+                neck = {src.nx, src.ny, src.nz};
+            } else {
+                neck = head; neck.y -= kBotNeckDrop;
+            }
+            if (src.chest_valid) {
+                chest = {src.cx, src.cy, src.cz};
+            } else {
+                chest = head; chest.y -= kBotChestDrop;
+            }
         } else {
             head = feet;  head.y += kBotHeadH;
             neck = feet;  neck.y += kBotNeckH;

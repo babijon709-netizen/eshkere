@@ -201,9 +201,16 @@ struct MarkerEntity {
     // скорость для упреждения. head_transform = 0, если NPCBrainHumanoid или
     // модель не нашлись — тогда аим считает точку от ног и роста, как раньше.
     uint64_t head_transform = 0;
+    uint64_t neck_transform = 0;
+    uint64_t chest_transform = 0;
+    uint64_t hips_transform = 0;
     Vec3     head_position{};
     bool     head_valid = false;
     double   head_last_ok = 0.0;
+    Vec3     neck_position{};
+    bool     neck_valid = false;
+    Vec3     chest_position{};
+    bool     chest_valid = false;
     uint64_t event_handler = 0; // hsN на NPCBrainHumanoid (+0x68)
     uint64_t aim_target = 0;    // AimTarget MonoBehaviour
     uint64_t aim_collider = 0;  // Collider для проверки видимости через hwR
@@ -219,6 +226,7 @@ struct MarkerEntity {
     unsigned char color_rgb[3] = {255, 255, 255};
 };
 static std::vector<MarkerEntity> g_marker_entities;
+static void marker_track_bot_head(MarkerEntity& entity, double now);
 
 static bool marker_bot_dead(MarkerEntity& entity) {
     return entity.kind == ESP_MARKER_BOT && entity.life.refresh(
@@ -362,7 +370,7 @@ static bool marker_for_entity_type(int32_t type, MarkerLook& look) {
         case MineableEntityType::LootboxBaloon:
         case MineableEntityType::LootboxBaloonBig: look = kSmashBox; return true;
         case MineableEntityType::RoadSign: look = kRoadSign;  return true;
-        case MineableEntityType::Human:    look = bot_look("Бот"); return true;
+        case MineableEntityType::Human:    look = bot_look("Зомби"); return true;
         case MineableEntityType::Bear:     look = animal_look("Медведь");  return true;
         case MineableEntityType::Boar:     look = animal_look("Кабан");    return true;
         case MineableEntityType::Deer:     look = animal_look("Олень");    return true;
@@ -602,24 +610,85 @@ static bool vehicle_look_from_object_name(const char* raw, MarkerLook& look) {
     });
 }
 
+static bool is_zombie_name(const char* raw) {
+    if (!raw || !raw[0]) return false;
+    char lower[48] = {};
+    size_t n = 0;
+    for (; raw[n] && n + 1 < sizeof(lower); ++n) {
+        unsigned char c = (unsigned char)raw[n];
+        lower[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+    }
+    lower[n] = '\0';
+    return strstr(lower, "zombie") != nullptr ||
+           strstr(lower, "zomb") != nullptr ||
+           strstr(lower, "infected") != nullptr ||
+           strstr(lower, "undead") != nullptr ||
+           strstr(lower, "ghoul") != nullptr ||
+           strstr(lower, "walker") != nullptr ||
+           strstr(lower, "mummy") != nullptr;
+}
+
+static bool object_class_or_parent_name_is(uint64_t obj, const char* expected) {
+    if (!valid_obj(obj) || !expected || !expected[0]) return false;
+    uint64_t klass = rd_ptr(obj);
+    for (int depth = 0; depth < 6 && valid_obj(klass); ++depth) {
+        bool readable = false;
+        std::string name = read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAME), &readable);
+        if (readable && name == expected) return true;
+        klass = rd_ptr(klass + 0x58);
+    }
+    return false;
+}
+
 // Hostile NPCs with an empty entityType. Same matching rules as the animals:
 // whole words, plus a prefix match for 4+ letter tokens ("scientistpatrol").
 static bool bot_look_from_object_name(const char* raw, MarkerLook& look) {
-    static const struct { const char* word; } kBots[] = {
-        {"bot"}, {"bots"}, {"npc"}, {"npcs"}, {"scientist"}, {"bandit"},
+    if (is_zombie_name(raw)) {
+        look = bot_look("Зомби");
+        return true;
+    }
+    static const struct { const char* word; const char* label; } kBots[] = {
+        {"zombie",    "Зомби"},
+        {"zombies",   "Зомби"},
+        {"infected",  "Зомби"},
+        {"undead",    "Зомби"},
+        {"ghoul",     "Зомби"},
+        {"walker",    "Зомби"},
+        {"scientist", "Учёный"},
+        {"bandit",    "Бандит"},
+        {"humanoid",  "Зомби"},
+        {"npc",       "Зомби"},
+        {"npcs",      "Зомби"},
+        {"bot",       "Бот"},
+        {"bots",      "Бот"},
     };
-    return for_each_name_token(raw, [&](const char* word) {
+    const char* matched_label = nullptr;
+    for_each_name_token(raw, [&](const char* word) {
         size_t wlen = strlen(word);
         for (const auto& bot : kBots) {
-            if (strcmp(word, bot.word) == 0) { look = bot_look("Бот"); return true; }
-            size_t blen = strlen(bot.word);
-            if (blen >= 4 && wlen > blen && strncmp(word, bot.word, blen) == 0) {
-                look = bot_look("Бот");
-                return true;
+            bool hit = (strcmp(word, bot.word) == 0);
+            if (!hit) {
+                size_t blen = strlen(bot.word);
+                if (blen >= 4 && wlen > blen && strncmp(word, bot.word, blen) == 0)
+                    hit = true;
+            }
+            if (hit) {
+                matched_label = bot.label;
+                if (strcmp(bot.label, "Зомби") == 0 &&
+                    strcmp(bot.word, "npc") != 0 &&
+                    strcmp(bot.word, "npcs") != 0 &&
+                    strcmp(bot.word, "humanoid") != 0) {
+                    return true;
+                }
             }
         }
         return false;
     });
+    if (matched_label) {
+        look = bot_look(matched_label);
+        return true;
+    }
+    return false;
 }
 
 // Road signs: the smashable family (LootDestroyable) labels everything it
@@ -1531,6 +1600,13 @@ static MarkerScanResult rebuild_marker_entities() {
                          is_vehicle_structure_name(root_name))) {
                         known = false;
                     }
+                    if (known && look.kind == ESP_MARKER_BOT) {
+                        MarkerLook named_bot{};
+                        if (object_name[0] && bot_look_from_object_name(object_name, named_bot))
+                            look = named_bot;
+                        else if (root_name[0] && bot_look_from_object_name(root_name, named_bot))
+                            look = named_bot;
+                    }
                 }
                 if (!known && g_markers_scrap_enabled && object_name[0]) known = barrel_look_from_object_name(object_name, look);
                 if (!known && g_markers_scrap_enabled && root_name[0])   known = barrel_look_from_object_name(root_name, look);
@@ -1569,20 +1645,37 @@ static MarkerScanResult rebuild_marker_entities() {
                     for (int32_t h = 0; h < behaviour_count; ++h) {
                         if (!valid_obj(behaviours[h])) continue;
                         if (!death_handler &&
-                            object_class_name_is(behaviours[h], "NPCHumanoidDeathHandler"))
+                            object_class_or_parent_name_is(behaviours[h], "NPCHumanoidDeathHandler"))
                             death_handler = behaviours[h];
                         if (!bot_brain &&
-                            object_class_name_is(behaviours[h], "NPCBrainHumanoid"))
+                            (object_class_or_parent_name_is(behaviours[h], "NPCBrainHumanoid") ||
+                             object_class_or_parent_name_is(behaviours[h], "NPCBrain")))
                             bot_brain = behaviours[h];
                         if (death_handler && bot_brain) break;
                     }
                 }
                 entity.life.handler = death_handler;
+                uint64_t mi_head = 0;
                 if (bot_brain) {
-                    const uint64_t model_info = rd_ptr(bot_brain + NPC_BRAIN_MODEL_INFO);
-                    if (valid_obj(model_info))
-                        entity.head_transform =
-                            managed_object_native(rd_ptr(model_info + MODELINFO_HEAD));
+                    uint64_t model_info = rd_ptr(bot_brain + NPC_BRAIN_MODEL_INFO);
+                    if (!valid_obj(model_info) ||
+                        (!object_class_or_parent_name_is(model_info, "NPCHumanoidModelInfo") &&
+                         !object_class_or_parent_name_is(model_info, "PlayerModelInfo"))) {
+                        uint64_t found_mi = 0;
+                        for (uint64_t off = 0x100; off <= 0x188; off += 8) {
+                            const uint64_t cand = rd_ptr(bot_brain + off);
+                            if (!valid_obj(cand)) continue;
+                            if (object_class_or_parent_name_is(cand, "NPCHumanoidModelInfo") ||
+                                object_class_or_parent_name_is(cand, "PlayerModelInfo")) {
+                                found_mi = cand;
+                                break;
+                            }
+                        }
+                        if (found_mi) model_info = found_mi;
+                    }
+                    if (valid_obj(model_info)) {
+                        mi_head = managed_object_native(rd_ptr(model_info + MODELINFO_HEAD));
+                    }
                     const uint64_t eh = rd_ptr(bot_brain + NPC_BRAIN_ENTITY);
                     if (valid_obj(eh)) entity.event_handler = eh;
                 }
@@ -1600,18 +1693,45 @@ static MarkerScanResult rebuild_marker_entities() {
                 for (const MarkerEntity& old : g_marker_entities) {
                     if (old.id != component || old.identity != identity) continue;
                     if (old.life.handler == death_handler) entity.life.dead = old.life.dead;
-                    // Голова и скорость переживают рескан: без этого после
-                    // каждого цикла (~1-2 с) упреждение пропадало бы на время
-                    // набора оценки заново.
-                    if (old.head_transform && old.head_transform == entity.head_transform) {
+                    if (old.head_transform) {
+                        entity.head_transform = old.head_transform;
+                        entity.neck_transform = old.neck_transform;
+                        entity.chest_transform = old.chest_transform;
+                        entity.hips_transform = old.hips_transform;
                         entity.head_position = old.head_position;
                         entity.head_valid = old.head_valid;
                         entity.head_last_ok = old.head_last_ok;
+                        entity.neck_position = old.neck_position;
+                        entity.neck_valid = old.neck_valid;
+                        entity.chest_position = old.chest_position;
+                        entity.chest_valid = old.chest_valid;
                     }
                     if (old.aim_target) entity.aim_target = old.aim_target;
                     if (old.aim_collider && !entity.aim_collider) entity.aim_collider = old.aim_collider;
                     entity.lead = old.lead;
                     break;
+                }
+                uint64_t root_tr = native_component_transform(managed_object_native(identity));
+                if (!root_tr) root_tr = native_component_transform(managed_object_native(component));
+                entity.transform = root_tr;
+                if (!entity.head_transform || !entity.neck_transform) {
+                    uint64_t r_head = 0, r_neck = 0, r_chest = 0, r_hips = 0;
+                    bool rig_is_zombie = false;
+                    if (resolve_humanoid_rig_bones(root_tr, death_handler,
+                                                   r_head, r_neck, r_chest, r_hips,
+                                                   &rig_is_zombie)) {
+                        if (r_head)  entity.head_transform  = r_head;
+                        if (r_neck)  entity.neck_transform  = r_neck;
+                        if (r_chest) entity.chest_transform = r_chest;
+                        if (r_hips)  entity.hips_transform  = r_hips;
+                        if (rig_is_zombie) look.label = "Зомби";
+                    }
+                }
+                if (!entity.head_transform && mi_head) {
+                    entity.head_transform = mi_head;
+                }
+                if (is_zombie_name(object_name) || is_zombie_name(root_name)) {
+                    look.label = "Зомби";
                 }
                 marker_bot_dead(entity);
             }
@@ -1622,9 +1742,11 @@ static MarkerScanResult rebuild_marker_entities() {
             entity.color_rgb[0] = look.rgb[0];
             entity.color_rgb[1] = look.rgb[1];
             entity.color_rgb[2] = look.rgb[2];
-            entity.transform = native_component_transform(managed_object_native(component));
-            if (!entity.transform) // component without its own renderer: use the identity
-                entity.transform = native_component_transform(managed_object_native(identity));
+            if (!entity.transform) {
+                entity.transform = native_component_transform(managed_object_native(component));
+                if (!entity.transform) // component without its own renderer: use the identity
+                    entity.transform = native_component_transform(managed_object_native(identity));
+            }
             if (entity.kind == ESP_MARKER_BOT && (!entity.aim_target || !entity.aim_collider)) {
                 uint64_t at = 0, ac = 0;
                 if (resolve_entity_aim_target_and_collider(entity.transform, entity.event_handler, at, ac)) {
@@ -1638,6 +1760,9 @@ static MarkerScanResult rebuild_marker_entities() {
                 entity.position_valid = true;
                 entity.position_last_ok = mono_seconds();
                 entity.position_fail_frames = 0;
+                if (entity.kind == ESP_MARKER_BOT) {
+                    marker_track_bot_head(entity, entity.position_last_ok);
+                }
             } else if (entity.position_valid &&
                        mono_seconds() - entity.position_last_ok <= 0.35) {
                 ++entity.position_fail_frames;
@@ -1701,18 +1826,66 @@ void reset_marker_caches() {
 static void marker_track_bot_head(MarkerEntity& entity, double now) {
     if (!entity.head_transform || !entity.position_valid) return;
     Vec3 head{};
-    const bool ok = marker_world_position(entity.head_transform, head) &&
-                    vec3_is_finite(head) &&
-                    head.y > entity.position.y + 0.4F && head.y < entity.position.y + 2.6F &&
-                    (head.x - entity.position.x) * (head.x - entity.position.x) +
-                    (head.z - entity.position.z) * (head.z - entity.position.z) <
-                        2.5F * 2.5F;
+    bool ok = marker_world_position(entity.head_transform, head) &&
+              vec3_is_finite(head) &&
+              head.y > entity.position.y + 0.45F && head.y < entity.position.y + 2.45F &&
+              (head.x - entity.position.x) * (head.x - entity.position.x) +
+              (head.z - entity.position.z) * (head.z - entity.position.z) <
+                  1.50F * 1.50F;
+    if (ok && entity.hips_transform) {
+        Vec3 hips{};
+        if (marker_world_position(entity.hips_transform, hips) && vec3_is_finite(hips)) {
+            const float hdx = head.x - hips.x;
+            const float hdz = head.z - hips.z;
+            if (head.y <= hips.y + 0.15F || hdx * hdx + hdz * hdz > 0.85F * 0.85F)
+                ok = false;
+        }
+    }
     if (ok) {
+        Vec3 raw_head = head;
+        entity.neck_valid = false;
+        if (entity.neck_transform) {
+            Vec3 neck{};
+            if (marker_world_position(entity.neck_transform, neck) &&
+                vec3_is_finite(neck) &&
+                neck.y > entity.position.y + 0.35F && neck.y <= raw_head.y + 0.08F) {
+                const Vec3 d = {raw_head.x - neck.x, raw_head.y - neck.y, raw_head.z - neck.z};
+                const float len = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+                if (len > 0.02F && len < 0.45F) {
+                    const float inv = 1.0F / len;
+                    // Смещаем точку от основания черепа (шарнира Head) вдоль оси
+                    // шея->голова в геометрический центр головы: у зомби и ботов
+                    // голова наклонена вбок/вперёд, поэтому сам шарнир Head сидит
+                    // сбоку-снизу от центра черепа.
+                    head.x += d.x * inv * 0.07F;
+                    head.y += d.y * inv * 0.07F;
+                    head.z += d.z * inv * 0.07F;
+                }
+                entity.neck_position = {
+                    (raw_head.x + neck.x) * 0.5F,
+                    (raw_head.y + neck.y) * 0.5F,
+                    (raw_head.z + neck.z) * 0.5F
+                };
+                entity.neck_valid = true;
+            }
+        }
+        entity.chest_valid = false;
+        if (entity.chest_transform) {
+            Vec3 chest{};
+            if (marker_world_position(entity.chest_transform, chest) &&
+                vec3_is_finite(chest) &&
+                chest.y > entity.position.y + 0.25F && chest.y < raw_head.y + 0.05F) {
+                entity.chest_position = chest;
+                entity.chest_valid = true;
+            }
+        }
         entity.head_position = head;
         entity.head_valid = true;
         entity.head_last_ok = now;
-    } else if (entity.head_valid && now - entity.head_last_ok > 0.35) {
+    } else if (entity.head_valid && now - entity.head_last_ok > 0.12) {
         entity.head_valid = false;
+        entity.neck_valid = false;
+        entity.chest_valid = false;
     }
 }
 
@@ -1723,8 +1896,10 @@ static void marker_track_bot_head(MarkerEntity& entity, double now) {
 // cooldown simply ticks twice and far bots re-read twice as often — harmless.
 static void marker_track_position(MarkerEntity& entity) {
     bool want_read = !entity.position_valid;
-    if (entity.kind == ESP_MARKER_ANIMAL || entity.kind == ESP_MARKER_BOT ||
-        entity.kind == ESP_MARKER_VEHICLE) {
+    if (entity.kind == ESP_MARKER_BOT) {
+        want_read = true;
+        entity.pos_cooldown = 1;
+    } else if (entity.kind == ESP_MARKER_ANIMAL || entity.kind == ESP_MARKER_VEHICLE) {
         if (--entity.pos_cooldown <= 0) {
             want_read = true;
             float ddx = entity.position.x - g_frame_local_pos.x;
@@ -1744,6 +1919,8 @@ static void marker_track_position(MarkerEntity& entity) {
             !(entity.position_valid && sampled.y < entity.position.y - 1.25F &&
               ((sampled.x - entity.position.x) * (sampled.x - entity.position.x) +
                (sampled.z - entity.position.z) * (sampled.z - entity.position.z)) < 4.0F)) {
+            const Vec3 prev_pos = entity.position;
+            const bool had_prev = entity.position_valid;
             entity.position = sampled;
             entity.position_valid = true;
             entity.position_last_ok = mono_seconds();
@@ -1756,7 +1933,24 @@ static void marker_track_position(MarkerEntity& entity) {
                 botlead::update(entity.lead, entity.position, entity.position_last_ok);
             }
             if (entity.kind == ESP_MARKER_BOT) {
+                const double prev_head_ok = entity.head_last_ok;
                 marker_track_bot_head(entity, entity.position_last_ok);
+                if (had_prev && entity.head_valid && entity.head_last_ok == prev_head_ok) {
+                    const Vec3 dp = {sampled.x - prev_pos.x, sampled.y - prev_pos.y, sampled.z - prev_pos.z};
+                    entity.head_position.x += dp.x;
+                    entity.head_position.y += dp.y;
+                    entity.head_position.z += dp.z;
+                    if (entity.neck_valid) {
+                        entity.neck_position.x += dp.x;
+                        entity.neck_position.y += dp.y;
+                        entity.neck_position.z += dp.z;
+                    }
+                    if (entity.chest_valid) {
+                        entity.chest_position.x += dp.x;
+                        entity.chest_position.y += dp.y;
+                        entity.chest_position.z += dp.z;
+                    }
+                }
             }
         } else if (entity.position_valid &&
                    mono_seconds() - entity.position_last_ok <= 0.35) {
@@ -2173,6 +2367,18 @@ std::vector<BotAimEnt> esp_bot_aim_list() {
             bot.hx = entity.head_position.x;
             bot.hy = entity.head_position.y;
             bot.hz = entity.head_position.z;
+        }
+        bot.neck_valid = entity.neck_valid;
+        if (bot.neck_valid) {
+            bot.nx = entity.neck_position.x;
+            bot.ny = entity.neck_position.y;
+            bot.nz = entity.neck_position.z;
+        }
+        bot.chest_valid = entity.chest_valid;
+        if (bot.chest_valid) {
+            bot.cx = entity.chest_position.x;
+            bot.cy = entity.chest_position.y;
+            bot.cz = entity.chest_position.z;
         }
         if (botlead::fresh(entity.lead, now)) {
             bot.vel_valid = true;

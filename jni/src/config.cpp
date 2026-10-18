@@ -316,10 +316,12 @@ static void WriteExt2Trailer(std::ostream& f) {
 
 static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
     t = CfgExt2Trailer{};
+    t.esp_pumpkin_col = cfg::esp::pumpkin_col;
     uint8_t buf[sizeof(CfgExt2Trailer)];
     f.read((char*)buf, sizeof(buf));
     size_t got = (size_t)f.gcount();
-    if (got != sizeof(buf)) return false;
+    constexpr size_t kPrePumpkinSize = sizeof(CfgExt2Trailer) - sizeof(ImVec4);
+    if (got != sizeof(buf) && got != kPrePumpkinSize) return false;
     XorBuf(buf, got);
     memcpy(&t, buf, got);
     return t.magic == kCfgExt2Magic && t.version == 1;

@@ -247,6 +247,10 @@ struct BotAimEnt {
     float x = 0.f, y = 0.f, z = 0.f;
     bool  head_valid = false;
     float hx = 0.f, hy = 0.f, hz = 0.f;
+    bool  neck_valid = false;
+    float nx = 0.f, ny = 0.f, nz = 0.f;
+    bool  chest_valid = false;
+    float cx = 0.f, cy = 0.f, cz = 0.f;
     bool  vel_valid = false;
     float vx = 0.f, vy = 0.f, vz = 0.f;
     // Сколько секунд назад позиция была прочитана. Дальние боты перечитываются

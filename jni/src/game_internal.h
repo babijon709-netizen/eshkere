@@ -225,6 +225,14 @@ bool layout_scan_in_progress();
 bool publish_camera_only_frame(float sw, float sh);
 bool object_class_name_is(uint64_t obj, const char* expected, bool accept_when_unreadable = false);
 bool read_transform_name(uint64_t transform, char* out, size_t cap);
+int  match_bone_name(const char* raw_name);
+bool resolve_humanoid_rig_bones(uint64_t root_native_transform,
+                                uint64_t death_handler,
+                                uint64_t& out_head,
+                                uint64_t& out_neck,
+                                uint64_t& out_chest,
+                                uint64_t& out_hips,
+                                bool* out_is_zombie = nullptr);
 bool read_local_melee_reach(MeleeReach& out);
 bool aim_angles_for(const Vec3& world, const Vec2& screen, float sw, float sh, float& yaw_deg, float& pitch_deg);
 bool farm_cam_source_ok(const Vec3& p);

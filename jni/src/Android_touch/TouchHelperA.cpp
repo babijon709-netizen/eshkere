@@ -854,7 +854,8 @@ bool Touch_IsInitialized() {
 }
 
 bool Touch_TryUpgradeInject() {
-    if (!Touch_initialized || !Touch_readOnly || fdNum <= 0) return Touch_CanInject();
+    if (!Touch_initialized || !Touch_readOnly || fdNum <= 0)
+        return Touch_initialized && !Touch_readOnly;
     if (devMaxX <= 0 || devMaxY <= 0) return false;
     if (!Touch_CreateUinput(s_real_touch_fd, s_min_event_num, devMaxX, devMaxY))
         return false;

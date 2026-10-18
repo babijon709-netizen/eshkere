@@ -155,6 +155,7 @@ struct MeleeReach {
     // только у FPTool/FPChainsaw — у прочих FPMelee на 0x160 свои поля.
     int   tool_purposes = 0;
     bool  purposes_valid = false;
+    bool  continuous_tool = false;
     // Что прямо сейчас видит прицел. Игра сама кастует лучи (RaycastManager) и
     // кладёт результат в активности PlayerEventHandler (Gum); FPMelee.ZkX
     // берёт distance именно оттуда. По нему видно, не перекрыт ли узел: луч

@@ -1249,6 +1249,7 @@ bool esp_farm_get_target(FarmTarget& out) {
         out.melee_reach = reach.total;
         out.melee_ray = reach.ray_length;
         out.tool_purposes = reach.purposes_valid ? reach.tool_purposes : 0;
+        out.continuous_tool = reach.continuous_tool;
         if (reach.time_between_attacks > 0.0F)
             out.attack_period = reach.time_between_attacks + reach.pause_after_attack;
         // Перекрыт ли узел: луч игры упёрся заметно раньше нашей точки

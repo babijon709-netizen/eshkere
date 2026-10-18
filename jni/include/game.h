@@ -374,6 +374,7 @@ struct FarmTarget {
     // MineableObject.m_CurrentHealth/m_MaxHealth/m_Experience).
     int   tool_purposes = 0;      // флаги ToolPurpose (1 дерево, 2 камень, 4 животные); 0 = неизвестно
     float attack_period = 0.f;    // секунд между ударами этого орудия; 0 = неизвестно
+    bool  continuous_tool = false; // бензопила / бур (отбойный молоток): непрерывное зажатие атаки
     float node_health = -1.f;     // текущее здоровье цели
     float node_health_max = -1.f; // его же максимум (для процентов)
     int   node_experience = 0;    // сколько опыта даёт узел

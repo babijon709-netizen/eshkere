@@ -613,9 +613,12 @@ static void UpdateFarmInner(float dt) {
     // урон по узлу пойдёт, серия просто не вырастет, зато watchdog не сдаст
     // живой узел в чёрный список.
     const bool aimOnSpot = fabsf(steerYaw) <= swingTol && fabsf(steerPitch) <= swingTol;
+    const bool continuousTool = tgt.continuous_tool ||
+                                (tgt.attack_period > 0.f && tgt.attack_period <= 0.25f);
     const bool aimSettled = lookSpot
-        ? (aimOnSpot || (s_spotAimStuck > kSpotStuckTime &&
-                         fabsf(tgt.yaw) <= kSwingBodyYaw))
+        ? (aimOnSpot ||
+           (continuousTool && (tgt.ray_self || fabsf(tgt.yaw) <= kSwingBodyYaw)) ||
+           (s_spotAimStuck > kSpotStuckTime && fabsf(tgt.yaw) <= kSwingBodyYaw))
         : (fabsf(tgt.yaw) <= kSwingBodyYaw);
 
     // ---- камера: пишем накопитель MouseLook ----------------------------------
@@ -909,27 +912,49 @@ static void UpdateFarmInner(float dt) {
         const bool blindSwing = blindNoRay || blindMiss;
         const bool swingByRay = tgt.ray_self || blindSwing;
         const bool swingBlocked = !swingByRay || tgt.ray_blocked;
-        s_swingTimer -= (int)roundf(dt * 1000.f);
-        if (s_swingTimer <= 0 && (!aimSettled || swingBlocked || nodeDying) && !s_swingOn) {
-            s_swingTimer = 0;              // ждём камеру/обход/узел, не теряя такт
-        } else if (s_swingTimer <= 0) {
-            if (!s_swingOn) {
-                // Зажимаем кнопку атаки в памяти хендлера ввода — тот же путь,
-                // которым идёт зажатая кнопка атаки на экране. Экрана и зоны
-                // огня для удара больше не нужно.
+        if (continuousTool) {
+            if (!aimSettled || swingBlocked || nodeDying) {
+                if (s_swingOn) {
+                    farmjoy::attack(false);
+                    s_swingOn = false;
+                }
+                s_swingTimer = 0;
+            } else {
                 farmjoy::attack(true);
                 s_swingOn = true;
-                s_swingTimer = (int)holdMs;
-                if (!tgt.ray_valid || rayMiss) {   // замах вслепую — под контроль
-                    s_blindHp = tgt.node_health;
-                    ++s_blindSwings;
+                s_swingTimer = 0;
+                if (!tgt.ray_valid || rayMiss) {
+                    if (s_blindSwings == 0 || healthDropped) {
+                        s_blindHp = tgt.node_health;
+                        ++s_blindSwings;
+                    }
                 } else {
-                    s_blindSwings = 0;     // луч жив — слепой режим кончился
+                    s_blindSwings = 0;
                 }
-            } else {
-                farmjoy::attack(false);
-                s_swingOn = false;
-                s_swingTimer = (int)idleMs;
+            }
+        } else {
+            s_swingTimer -= (int)roundf(dt * 1000.f);
+            if (s_swingTimer <= 0 && (!aimSettled || swingBlocked || nodeDying) && !s_swingOn) {
+                s_swingTimer = 0;              // ждём камеру/обход/узел, не теряя такт
+            } else if (s_swingTimer <= 0) {
+                if (!s_swingOn) {
+                    // Зажимаем кнопку атаки в памяти хендлера ввода — тот же путь,
+                    // которым идёт зажатая кнопка атаки на экране. Экрана и зоны
+                    // огня для удара больше не нужно.
+                    farmjoy::attack(true);
+                    s_swingOn = true;
+                    s_swingTimer = (int)holdMs;
+                    if (!tgt.ray_valid || rayMiss) {   // замах вслепую — под контроль
+                        s_blindHp = tgt.node_health;
+                        ++s_blindSwings;
+                    } else {
+                        s_blindSwings = 0;     // луч жив — слепой режим кончился
+                    }
+                } else {
+                    farmjoy::attack(false);
+                    s_swingOn = false;
+                    s_swingTimer = (int)idleMs;
+                }
             }
         }
     } else {

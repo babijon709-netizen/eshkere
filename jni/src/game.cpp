@@ -7435,10 +7435,27 @@ int esp_local_aim_source() {
 // FPBuildingHammer, FPTorch). Проверка обязательна: у прочих FPObject на 0x128
 // свои поля (у FPCrossbow/FPSnowball там m_MaxDistance — сотни метров).
 static const char* const kMeleeFamily[] = {
-    "FPTool", "FPChainsaw", "FPMelee", "FPSpear", "FPBuildingHammer", "FPTorch"};
+    "FPTool", "FPChainsaw", "FPMelee", "FPSpear", "FPBuildingHammer", "FPTorch",
+    "FPJackhammer", "FPDrill", "FPMotorTool"};
 static uint64_t s_melee_klass = 0;
 static bool     s_melee_klass_ok = false;
 static char     s_melee_klass_name[24] = {};
+
+static bool str_contains_ci(const char* hay, const char* needle) {
+    if (!hay || !needle || !needle[0]) return false;
+    const size_t nlen = strlen(needle);
+    for (const char* p = hay; *p; ++p) {
+        size_t i = 0;
+        for (; i < nlen && p[i]; ++i) {
+            char a = p[i], b = needle[i];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) break;
+        }
+        if (i == nlen) return true;
+    }
+    return false;
+}
 
 bool read_local_melee_reach(MeleeReach& out) {
     out = MeleeReach{};
@@ -7459,15 +7476,54 @@ bool read_local_melee_reach(MeleeReach& out) {
         s_melee_klass = klass;
         s_melee_klass_ok = false;
         s_melee_klass_name[0] = '\0';
-        const std::string name = read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAME));
-        if (!name.empty() && name.size() < sizeof(s_melee_klass_name)) {
-            for (const char* family : kMeleeFamily) {
-                if (name == family) { s_melee_klass_ok = true; break; }
+        uint64_t cur_k = klass;
+        for (int depth = 0; depth < 4 && valid_obj(cur_k); ++depth) {
+            const std::string name = read_remote_string(rd_ptr(cur_k + IL2CPP_CLASS_NAME));
+            if (depth == 0 && !name.empty() && name.size() < sizeof(s_melee_klass_name)) {
+                memcpy(s_melee_klass_name, name.c_str(), name.size() + 1);
             }
-            memcpy(s_melee_klass_name, name.c_str(), name.size() + 1);
+            for (const char* family : kMeleeFamily) {
+                if (name == family) {
+                    s_melee_klass_ok = true;
+                    if (!s_melee_klass_name[0])
+                        strncpy(s_melee_klass_name, family, sizeof(s_melee_klass_name) - 1);
+                    break;
+                }
+            }
+            if (s_melee_klass_ok) break;
+            cur_k = rd_ptr(cur_k + 0x58); // Il2CppClass.parent
         }
     }
-    if (!s_melee_klass_ok) return false;
+
+    char item_short[48] = {};
+    char obj_name[48] = {};
+    {
+        const uint64_t item = rd_ptr(weapon + FPOBJECT_ITEM);
+        const uint64_t data = valid_obj(item) ? rd_ptr(item + ITEM_DATA) : 0;
+        if (valid_obj(data)) {
+            read_managed_string(rd_ptr(data + ITEMDATA_SHORTNAME), item_short, sizeof(item_short));
+            if (!item_short[0])
+                read_managed_string(rd_ptr(data + ITEMDATA_NAME), item_short, sizeof(item_short));
+        }
+        read_managed_string(rd_ptr(weapon + FPOBJECT_OBJECT_NAME), obj_name, sizeof(obj_name));
+        if (!obj_name[0])
+            managed_component_gameobject_name(weapon, obj_name, sizeof(obj_name));
+    }
+    const bool is_chainsaw =
+        strcmp(s_melee_klass_name, "FPChainsaw") == 0 ||
+        str_contains_ci(item_short, "chainsaw") ||
+        str_contains_ci(obj_name, "chainsaw") ||
+        str_contains_ci(item_short, "ripper") ||
+        str_contains_ci(obj_name, "ripper");
+    const bool is_jackhammer =
+        strcmp(s_melee_klass_name, "FPJackhammer") == 0 ||
+        strcmp(s_melee_klass_name, "FPDrill") == 0 ||
+        str_contains_ci(item_short, "jackhammer") ||
+        str_contains_ci(obj_name, "jackhammer") ||
+        str_contains_ci(item_short, "drill") ||
+        str_contains_ci(obj_name, "drill");
+
+    if (!s_melee_klass_ok && !is_chainsaw && !is_jackhammer) return false;
 
     float reach = 0.0F, radius = 0.0F;
     if (!rd_exact(weapon + FPMELEE_MAX_REACH, reach) ||
@@ -7481,6 +7537,7 @@ bool read_local_melee_reach(MeleeReach& out) {
     out.max_reach = reach;
     out.hit_radius = radius;
     out.total = reach + radius;
+    out.continuous_tool = is_chainsaw || is_jackhammer;
     strncpy(out.tool, s_melee_klass_name, sizeof(out.tool) - 1);
 
     // Длина луча, которым игра ищет точку взаимодействия (префаб
@@ -7499,14 +7556,19 @@ bool read_local_melee_reach(MeleeReach& out) {
     // так же, как дальность, — из живого орудия, с проверкой правдоподобия.
     float tba = 0.0F, pause = 0.0F;
     if (rd_exact(weapon + FPMELEE_TIME_BETWEEN_ATTACKS, tba) &&
-        std::isfinite(tba) && tba > 0.05F && tba < 10.0F)
+        std::isfinite(tba) && tba >= 0.01F && tba < 10.0F)
         out.time_between_attacks = tba;
     if (rd_exact(weapon + FPMELEE_PAUSE_AFTER_ATTACK, pause) &&
         std::isfinite(pause) && pause >= 0.0F && pause < 10.0F)
         out.pause_after_attack = pause;
+    if (out.time_between_attacks > 0.0F && out.time_between_attacks <= 0.22F &&
+        out.pause_after_attack <= 0.05F) {
+        out.continuous_tool = true;
+    }
 
     // Умения орудия (какой ресурс оно вообще может добывать).
-    if (!strcmp(s_melee_klass_name, "FPTool") || !strcmp(s_melee_klass_name, "FPChainsaw")) {
+    if (!strcmp(s_melee_klass_name, "FPTool") || !strcmp(s_melee_klass_name, "FPChainsaw") ||
+        is_chainsaw || is_jackhammer) {
         int32_t purposes = 0;
         if (rd_exact(weapon + FPTOOL_TOOL_PURPOSES, purposes)) {
             const int32_t known = (int32_t)ToolPurpose::CutWood |
@@ -7514,6 +7576,15 @@ bool read_local_melee_reach(MeleeReach& out) {
                                   (int32_t)ToolPurpose::CutAnimals;
             if (purposes != 0 && (purposes & ~known) == 0) {
                 out.tool_purposes = (int)purposes;
+                out.purposes_valid = true;
+            }
+        }
+        if (!out.purposes_valid) {
+            if (is_chainsaw) {
+                out.tool_purposes = (int)ToolPurpose::CutWood;
+                out.purposes_valid = true;
+            } else if (is_jackhammer) {
+                out.tool_purposes = (int)ToolPurpose::BreakRocks;
                 out.purposes_valid = true;
             }
         }

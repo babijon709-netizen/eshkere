@@ -579,9 +579,6 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
 // ============================ Тач-аим ======================================
 static void UpdateAimTouch(float dt) {
     static float s_fx = 0.f, s_fy = 0.f;
-    static unsigned long long s_lastTgtId = 0;
-    static float s_lastSx = 0.f, s_lastSy = 0.f;
-    static float s_vx = 0.f, s_vy = 0.f;
 
     const bool menuOpen = g_sheet.visible || (g_pop.visible && !g_pop.closing);
     bool active = g_state.aim_touch && g_esp_attached && !menuOpen &&
@@ -598,7 +595,6 @@ static void UpdateAimTouch(float dt) {
         AimReleaseFinger(s_fingerDown);
         g_aimActive = false;
         s_touchPick.reset();
-        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
@@ -615,7 +611,6 @@ static void UpdateAimTouch(float dt) {
         AimReleaseFinger(s_fingerDown);
         g_aimActive = false;
         s_touchPick.reset();
-        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
@@ -626,28 +621,12 @@ static void UpdateAimTouch(float dt) {
         g_aimActive = false;
         s_touchPick.reset();
         AimReleaseFinger(s_fingerDown);
-        s_lastTgtId = 0; s_vx = 0.f; s_vy = 0.f;
         return;
     }
 
-    if (best.id == s_lastTgtId && dt > 1e-4f) {
-        const float rawVx = (best.sx - s_lastSx) / dt;
-        const float rawVy = (best.sy - s_lastSy) / dt;
-        if (std::isfinite(rawVx) && std::isfinite(rawVy) &&
-            fabsf(rawVx) < 4000.f && fabsf(rawVy) < 4000.f) {
-            s_vx = s_vx * 0.60f + rawVx * 0.40f;
-            s_vy = s_vy * 0.60f + rawVy * 0.40f;
-        }
-    } else {
-        s_vx = 0.f; s_vy = 0.f;
-    }
-    s_lastTgtId = best.id;
-    s_lastSx = best.sx;
-    s_lastSy = best.sy;
-
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
     const float ex = best.sx - crossX, ey = best.sy - crossY;
-    if (fabsf(ex) < 0.6f && fabsf(ey) < 0.6f) return;
+    if (fabsf(ex) < 2.5f && fabsf(ey) < 2.5f) return;
 
     if (!s_fingerDown) {
         s_fx = ptX;
@@ -659,21 +638,13 @@ static void UpdateAimTouch(float dt) {
     float sm = g_state.gun_str;
     if (!(sm >= 1.f)) sm = 1.f;
     if (sm > 10.f) sm = 10.f;
-    const float smNorm = (sm - 1.f) / 9.f;
-    const float rate = 14.f + smNorm * 58.f;
+    const float rate = 4.f + (sm - 1.f) * (24.f / 9.f);
     float k = 1.f - expf(-rate * dt);
-    const float errPx = sqrtf(ex * ex + ey * ey);
-    if (errPx < 42.f) {
-        const float innerFloor = 0.35f + smNorm * 0.55f;
-        if (k < innerFloor) k = innerFloor;
-    }
-    if (k > 0.94f) k = 0.94f;
+    if (k > 0.85f) k = 0.85f;
 
-    float maxStep = (3800.f + (sm - 1.f) * 900.f) * dt;
-    if (maxStep > 320.f) maxStep = 320.f;
-    const float ff = (errPx < 90.f) ? (0.35f + 0.45f * smNorm) : 0.f;
-    float dx = ex * k + s_vx * dt * ff;
-    float dy = ey * k + s_vy * dt * ff;
+    float maxStep = (2500.f + (sm - 1.f) * 500.f) * dt;
+    if (maxStep > 150.f) maxStep = 150.f;
+    float dx = ex * k, dy = ey * k;
     if (dx > maxStep) dx = maxStep;
     if (dx < -maxStep) dx = -maxStep;
     if (dy > maxStep) dy = maxStep;
@@ -682,26 +653,19 @@ static void UpdateAimTouch(float dt) {
     // Shift the archived touch zone with the configured base point.
     const float xOffset = ptX - 0.72f * sw;
     const float yOffset = ptY - 0.48f * sh;
-    float xMin = 0.52f * sw + xOffset, xMax = 0.96f * sw + xOffset;
-    float yMin = 0.16f * sh + yOffset, yMax = 0.84f * sh + yOffset;
+    float xMin = 0.55f * sw + xOffset, xMax = 0.95f * sw + xOffset;
+    float yMin = 0.20f * sh + yOffset, yMax = 0.80f * sh + yOffset;
     xMin = std::max(xMin, 0.02f * sw);
     xMax = std::min(xMax, 0.98f * sw);
     yMin = std::max(yMin, 0.02f * sh);
     yMax = std::min(yMax, 0.98f * sh);
 
-    const float nextX = s_fx + dx;
-    const float nextY = s_fy + dy;
-    if (nextX < xMin || nextX > xMax || nextY < yMin || nextY > yMax) {
-        const float clampedX = std::max(xMin, std::min(xMax, nextX));
-        const float clampedY = std::max(yMin, std::min(yMax, nextY));
-        if (fabsf(clampedX - s_fx) > 1.0f || fabsf(clampedY - s_fy) > 1.0f) {
-            Touch_Move(clampedX, clampedY);
-        }
+    s_fx += dx;
+    s_fy += dy;
+    if (s_fx < xMin || s_fx > xMax || s_fy < yMin || s_fy > yMax) {
         AimReleaseFinger(s_fingerDown);
         return;
     }
-    s_fx = nextX;
-    s_fy = nextY;
     Touch_Move(s_fx, s_fy);
 }
 

@@ -749,6 +749,8 @@ static void LoadCfgByName(const char* name, bool announce) {
         b01(g_state.esp_chams); b01(g_state.esp_weapon); b01(g_state.esp_tracer);
         b01(g_state.esp_skeleton); b01(g_state.esp_ore); b01(g_state.esp_animal);
         b01(g_state.esp_team); b01(g_state.ui_dark_mode);
+        g_state.viewmodel.no_ballistics = false;
+        g_state.a_no_ballistics = 0.f;
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
             g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;

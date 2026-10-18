@@ -537,7 +537,9 @@ void esp_viewmodel_reset(bool restore) {
     ++epoch;
 }
 
-void esp_viewmodel_tick(const ViewmodelSettings& settings) {
+void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
+    ViewmodelSettings settings = raw_settings;
+    settings.no_ballistics = false;
     using namespace go_active;
     std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
     const bool want_fast_fire = g_state.fast_fire;

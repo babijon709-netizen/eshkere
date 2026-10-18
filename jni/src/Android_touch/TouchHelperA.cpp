@@ -8,6 +8,10 @@
 #include <cmath>
 #include <ctime>
 #include <cstring>
+#include <poll.h>
+#include <vector>
+#include <algorithm>
+#include <atomic>
 #include <linux/input.h>
 #include <linux/uinput.h>
 
@@ -49,6 +53,8 @@ struct targ {
     int fdNum;
     float S2TX;
     float S2TY;
+    int minX;
+    int minY;
     int singleTouch;   // 1: устройство type-A (ABS_X/ABS_Y+BTN_TOUCH) — тачпад ВМ
 };
 
@@ -420,13 +426,37 @@ static void Touch_ToOverlay(int devX, int devY, float& x, float& y) {
     }
 }
 
+static pthread_t s_threads[maxE]{};
+static bool s_thread_alive[maxE]{};
+static int s_real_touch_fd = -1;
+static int s_min_event_num = -1;
+static std::atomic<bool> g_touch_phys_down{false};
+static std::atomic<bool> g_touch_press_unseen{false};
+static std::atomic<float> g_touch_last_x{0.f};
+static std::atomic<float> g_touch_last_y{0.f};
+
+void Touch_FrameStep() {
+    if (!Touch_initialized) return;
+    ImGuiIO &io = ImGui::GetIO();
+    if (g_touch_press_unseen.exchange(false, std::memory_order_acq_rel)) {
+        io.MousePos = {g_touch_last_x.load(std::memory_order_relaxed),
+                       g_touch_last_y.load(std::memory_order_relaxed)};
+        io.MouseDown[0] = true;
+    } else if (!g_touch_phys_down.load(std::memory_order_acquire)) {
+        io.MouseDown[0] = false;
+    }
+}
+
 static void *TypeA(void *arg) {
     targ tmp = *(targ *) arg;
     int i = tmp.fdNum;
     float S2TX = tmp.S2TX;
     float S2TY = tmp.S2TY;
+    const int minX = tmp.minX;
+    const int minY = tmp.minY;
     const bool single = tmp.singleTouch != 0;
     int latest = 0;
+    bool seenTrackingId = false;
     input_event inputEvent[64]{0};
 
     if (single) {
@@ -435,7 +465,17 @@ static void *TypeA(void *arg) {
     }
 
     while (Touch_initialized) {
-        auto readSize = (int32_t) read(origfd[i], inputEvent, sizeof(inputEvent));
+        const int fd = origfd[i];
+        if (fd <= 0) break;
+        struct pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        const int pr = poll(&pfd, 1, 50);
+        if (!Touch_initialized) break;
+        if (pr <= 0 || !(pfd.revents & POLLIN)) {
+            continue;
+        }
+        auto readSize = (int32_t) read(fd, inputEvent, sizeof(inputEvent));
         if (readSize <= 0 || (readSize % sizeof(input_event)) != 0) {
             continue;
         }
@@ -446,8 +486,8 @@ static void *TypeA(void *arg) {
                 // type-A: координаты в ABS_X/ABS_Y, нажатие — BTN_TOUCH; общий
                 // хвост по SYN_REPORT ниже работает как для мультитача.
                 if (ie.type == EV_ABS) {
-                    if (ie.code == ABS_X) { Finger[i][0].x = (int) (ie.value * S2TX); continue; }
-                    if (ie.code == ABS_Y) { Finger[i][0].y = (int) (ie.value * S2TY); continue; }
+                    if (ie.code == ABS_X) { Finger[i][0].x = (int) ((ie.value - minX) * S2TX); continue; }
+                    if (ie.code == ABS_Y) { Finger[i][0].y = (int) ((ie.value - minY) * S2TY); continue; }
                 }
                 if (ie.type == EV_KEY && ie.code == BTN_TOUCH) {
                     const bool down = ie.value != 0;
@@ -457,6 +497,26 @@ static void *TypeA(void *arg) {
                     continue;
                 }
             }
+            if (ie.type == EV_KEY && ie.code == BTN_TOUCH && !single) {
+                const bool down = ie.value != 0;
+                if (!seenTrackingId) {
+                    if (down) {
+                        if (!Finger[i][latest].isDown) Finger[i][latest].blockClassified = false;
+                        Finger[i][latest].id = (i * 2 + 1) * maxF + latest;
+                        Finger[i][latest].isDown = true;
+                    } else {
+                        for (int s = 0; s < maxF; ++s) {
+                            if (Finger[i][s].id == kAimFingerId ||
+                                (Finger[i][s].id >= 61000 && Finger[i][s].id <= 61002))
+                                continue;
+                            Finger[i][s].isDown = false;
+                            Finger[i][s].blocked = false;
+                            Finger[i][s].blockClassified = false;
+                        }
+                    }
+                }
+                continue;
+            }
             if (ie.type == EV_ABS) {
                 if (ie.code == ABS_MT_SLOT) {
                     latest = ie.value;
@@ -465,6 +525,7 @@ static void *TypeA(void *arg) {
                     continue;
                 }
                 if (ie.code == ABS_MT_TRACKING_ID) {
+                    seenTrackingId = true;
                     if (ie.value == -1) {
                         Finger[i][latest].isDown = false;
                         Finger[i][latest].blocked = false;
@@ -478,44 +539,72 @@ static void *TypeA(void *arg) {
                 }
                 if (ie.code == ABS_MT_POSITION_X) {
                     Finger[i][latest].id = (i * 2 + 1) * maxF + latest;
-                    Finger[i][latest].x = (int) (ie.value * S2TX);
+                    Finger[i][latest].x = (int) ((ie.value - minX) * S2TX);
+                    if (!seenTrackingId) Finger[i][latest].isDown = true;
                     continue;
                 }
                 if (ie.code == ABS_MT_POSITION_Y) {
                     Finger[i][latest].id = (i * 2 + 1) * maxF + latest;
-                    Finger[i][latest].y = (int) (ie.value * S2TY);
+                    Finger[i][latest].y = (int) ((ie.value - minY) * S2TY);
+                    if (!seenTrackingId) Finger[i][latest].isDown = true;
+                    continue;
+                }
+                if (!single && ie.code == ABS_X) {
+                    Finger[i][latest].x = (int) ((ie.value - minX) * S2TX);
+                    continue;
+                }
+                if (!single && ie.code == ABS_Y) {
+                    Finger[i][latest].y = (int) ((ie.value - minY) * S2TY);
                     continue;
                 }
             }
             if (ie.code == SYN_REPORT) {
                 ImGuiIO &io = ImGui::GetIO();
-                int uiSlot = -1;
-                for (int s = 0; s < maxF; ++s) {
-                    if (Finger[i][s].isDown) {
-                        if (!Finger[i][s].blockClassified) {
-                            float sx = 0.f, sy = 0.f;
-                            Touch_ToOverlay(Finger[i][s].x, Finger[i][s].y, sx, sy);
-                            Finger[i][s].blocked = Touch_IsBlocked(sx, sy);
-                            Finger[i][s].blockClassified = true;
+                int bestDev = -1;
+                int bestSlot = -1;
+                for (int d = 0; d < fdNum; ++d) {
+                    for (int s = 0; s < maxF; ++s) {
+                        const int fid = Finger[d][s].id;
+                        if (fid == kAimFingerId || (fid >= 61000 && fid <= 61002))
+                            continue;
+                        if (Finger[d][s].isDown) {
+                            if (!Finger[d][s].blockClassified) {
+                                float sx = 0.f, sy = 0.f;
+                                Touch_ToOverlay(Finger[d][s].x, Finger[d][s].y, sx, sy);
+                                Finger[d][s].blocked = Touch_IsBlocked(sx, sy);
+                                Finger[d][s].blockClassified = true;
+                            }
+                            if (Finger[d][s].blocked) {
+                                if (bestDev < 0 || !Finger[bestDev][bestSlot].blocked ||
+                                    (d == i && s == latest)) {
+                                    bestDev = d;
+                                    bestSlot = s;
+                                }
+                            } else if (bestDev < 0 ||
+                                       (!Finger[bestDev][bestSlot].blocked && d == i && s == latest)) {
+                                bestDev = d;
+                                bestSlot = s;
+                            }
+                        } else {
+                            Finger[d][s].blocked = false;
+                            Finger[d][s].blockClassified = false;
                         }
-                        if (Finger[i][s].blocked && (uiSlot < 0 || s == latest)) {
-                            uiSlot = s;
-                        }
-                    } else {
-                        Finger[i][s].blocked = false;
-                        Finger[i][s].blockClassified = false;
                     }
                 }
-                if (uiSlot < 0 && Finger[i][latest].isDown) {
-                    uiSlot = latest;
-                }
-                if (uiSlot >= 0 && Finger[i][uiSlot].isDown) {
+                if (bestDev >= 0 && bestSlot >= 0 && Finger[bestDev][bestSlot].isDown) {
                     float x = 0.f, y = 0.f;
-                    Touch_ToOverlay(Finger[i][uiSlot].x, Finger[i][uiSlot].y, x, y);
+                    Touch_ToOverlay(Finger[bestDev][bestSlot].x, Finger[bestDev][bestSlot].y, x, y);
+                    g_touch_last_x.store(x, std::memory_order_relaxed);
+                    g_touch_last_y.store(y, std::memory_order_relaxed);
+                    g_touch_phys_down.store(true, std::memory_order_release);
+                    g_touch_press_unseen.store(true, std::memory_order_release);
                     io.MousePos = {x, y};
                     io.MouseDown[0] = true;
                 } else {
-                    io.MouseDown[0] = false;
+                    g_touch_phys_down.store(false, std::memory_order_release);
+                    if (!g_touch_press_unseen.load(std::memory_order_acquire)) {
+                        io.MouseDown[0] = false;
+                    }
                 }
                 if (!Touch_readOnly) {
                     Upload();
@@ -527,131 +616,63 @@ static void *TypeA(void *arg) {
     return nullptr;
 }
 
-bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
+static bool Touch_CreateUinput(int real_touch_fd, int minCnt, int screenX, int screenY) {
     char temp[128];
-    DIR *dir = opendir("/dev/input/");
-    dirent *ptr = NULL;
-    int eventCount = 0;
-    while ((ptr = readdir(dir)) != NULL) {
-        if (strstr(ptr->d_name, "event"))
-            eventCount++;
-    }
-    struct input_absinfo abs, absX[maxE], absY[maxE];
-    static int s_single[maxE];
-    int fd, i, tmp1, tmp2;
-    int screenX, screenY, minCnt = eventCount + 1;
-    int minKind = 0;
-    int real_touch_fd = -1;   // fd настоящего тачскрина, выбранного ниже
-    fdNum = 0;
-    for (i = 0; i <= eventCount; i++) {
-        sprintf(temp, "/dev/input/event%d", i);
-        fd = open(temp, O_RDWR);
-        if (fd < 0) {
-            continue;
-        }
-        const int kind = checkDeviceIsTouch(fd);
-        if (kind != 0) {
-            // Диапазоны — с тех осей, что устройство реально сообщает:
-            // на ВМ-тачпаде ABS_MT_* может не быть вовсе.
-            tmp1 = ioctl(fd, EVIOCGABS(kind == 1 ? ABS_MT_POSITION_X : ABS_X), &absX[fdNum]);
-            tmp2 = ioctl(fd, EVIOCGABS(kind == 1 ? ABS_MT_POSITION_Y : ABS_Y), &absY[fdNum]);
-            if (tmp1 == 0 && tmp2 == 0 &&
-                absX[fdNum].maximum > 0 && absY[fdNum].maximum > 0) {
-                origfd[fdNum] = fd;
-                s_single[fdNum] = (kind == 2) ? 1 : 0;
-                if (!readOnly) {
-                    ioctl(fd, EVIOCGRAB, GRAB);
-                }
-                if (i < minCnt) {
-                    screenX = absX[fdNum].maximum;
-                    screenY = absY[fdNum].maximum;
-                    minCnt = i;
-                    minKind = kind;
-                    real_touch_fd = fd;
-                }
-                fdNum++;
-                if (fdNum >= maxE)
-                    break;
-            } else {
-                close(fd);
-            }
-        } else {
-            close(fd);
-        }
-    }
-
-    if (minCnt > eventCount) {
-        puts("Failed init touch!");
+    struct uinput_user_dev ui_dev;
+    nowfd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+    if (nowfd <= 0) {
+        nowfd = 0;
         return false;
     }
-    printf("touch: event%d %s\n", minCnt, minKind == 2 ? "single-touch (vm pad)" : "multitouch");
 
-    if (!readOnly) {
-        struct uinput_user_dev ui_dev;
-        nowfd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-        if (nowfd <= 0) {
-            for (int k = 0; k < fdNum; ++k) { ioctl(origfd[k], EVIOCGRAB, UNGRAB); close(origfd[k]); origfd[k] = 0; }
-            fdNum = 0;
-            return false;
-        }
+    int string_len = rand() % 10 + 5;
+    char string[string_len];
+    memset(&ui_dev, 0, sizeof(ui_dev));
 
-        int string_len = rand() % 10 + 5;
-        char string[string_len];
-        memset(&ui_dev, 0, sizeof(ui_dev));
+    genRandomString(string, string_len);
+    strncpy(ui_dev.name, string, UINPUT_MAX_NAME_SIZE);
 
-        genRandomString(string, string_len);
-        strncpy(ui_dev.name, string, UINPUT_MAX_NAME_SIZE);
+    ui_dev.id.bustype = 0;
+    ui_dev.id.vendor = rand() % 10 + 5;
+    ui_dev.id.product = rand() % 10 + 5;
+    ui_dev.id.version = rand() % 10 + 5;
 
-        ui_dev.id.bustype = 0;
-        ui_dev.id.vendor = rand() % 10 + 5;
-        ui_dev.id.product = rand() % 10 + 5;
-        ui_dev.id.version = rand() % 10 + 5;
+    ioctl(nowfd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
 
-        ioctl(nowfd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
+    ioctl(nowfd, UI_SET_EVBIT, EV_ABS);
+    ioctl(nowfd, UI_SET_ABSBIT, ABS_X);
+    ioctl(nowfd, UI_SET_ABSBIT, ABS_Y);
+    ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_POSITION_X);
+    ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
+    ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
+    ioctl(nowfd, UI_SET_EVBIT, EV_SYN);
+    ioctl(nowfd, UI_SET_EVBIT, EV_KEY);
+    ioctl(nowfd, UI_SET_KEYBIT, BTN_TOOL_FINGER);
+    ioctl(nowfd, UI_SET_KEYBIT, BTN_TOUCH);
 
-        ioctl(nowfd, UI_SET_EVBIT, EV_ABS);
-        ioctl(nowfd, UI_SET_ABSBIT, ABS_X);
-        ioctl(nowfd, UI_SET_ABSBIT, ABS_Y);
-        ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_POSITION_X);
-        ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
-        ioctl(nowfd, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
-        ioctl(nowfd, UI_SET_EVBIT, EV_SYN);
-        ioctl(nowfd, UI_SET_EVBIT, EV_KEY);
-        ioctl(nowfd, UI_SET_KEYBIT, BTN_TOOL_FINGER);
-        ioctl(nowfd, UI_SET_KEYBIT, BTN_TOUCH);
+    genRandomString(string, string_len);
+    ioctl(nowfd, UI_SET_PHYS, string);
 
-        genRandomString(string, string_len);
-        ioctl(nowfd, UI_SET_PHYS, string);
+    if (real_touch_fd >= 0) {
+        struct input_id real_id{};
+        char real_name[UINPUT_MAX_NAME_SIZE] = {};
+        char real_phys[UINPUT_MAX_NAME_SIZE] = {};
+        if (ioctl(real_touch_fd, EVIOCGID, &real_id) == (int)sizeof(real_id))
+            ui_dev.id = real_id;
+        if (ioctl(real_touch_fd, EVIOCGNAME(sizeof(real_name) - 1), real_name) > 0 &&
+            real_name[0])
+            strncpy(ui_dev.name, real_name, UINPUT_MAX_NAME_SIZE - 1);
+        if (ioctl(real_touch_fd, EVIOCGPHYS(sizeof(real_phys) - 1), real_phys) > 0 &&
+            real_phys[0])
+            ioctl(nowfd, UI_SET_PHYS, real_phys);
+    }
 
-        // Имя, phys и идентификаторы виртуального устройства. Выше они
-        // случайные, и это ровно то, что видно с устройства: список ввода
-        // через InputManager читается ЛЮБЫМ приложением без разрешений, а
-        // «uinput с именем kQ7zpa, vendor=7, bustype=0» — подпись инжектора.
-        // Функция, которая притворяется пальцем, не имеет права выглядеть как
-        // инжектор, поэтому берём identity настоящего тачскрина с того же fd,
-        // что открыт выше: тогда у нашего пальца тот же name/phys/bustype,
-        // что у пальца пользователя. Спросить не удалось — остаемся на
-        // прежнем поведении (ничего не ломается).
-        if (real_touch_fd >= 0) {
-            struct input_id real_id{};
-            char real_name[UINPUT_MAX_NAME_SIZE] = {};
-            char real_phys[UINPUT_MAX_NAME_SIZE] = {};
-            if (ioctl(real_touch_fd, EVIOCGID, &real_id) == (int)sizeof(real_id))
-                ui_dev.id = real_id;
-            if (ioctl(real_touch_fd, EVIOCGNAME(sizeof(real_name) - 1), real_name) > 0 &&
-                real_name[0])
-                strncpy(ui_dev.name, real_name, UINPUT_MAX_NAME_SIZE - 1);
-            if (ioctl(real_touch_fd, EVIOCGPHYS(sizeof(real_phys) - 1), real_phys) > 0 &&
-                real_phys[0])
-                ioctl(nowfd, UI_SET_PHYS, real_phys);
-        }
-
+    if (minCnt >= 0) {
         sprintf(temp, "/dev/input/event%d", minCnt);
-        fd = open(temp, O_RDWR);
-        if (fd) {
+        int fd = open(temp, O_RDWR);
+        if (fd < 0) fd = open(temp, O_RDONLY);
+        if (fd >= 0) {
             struct input_id id;
-            // EVIOCGID возвращает размер структуры, а не 0 — прежняя проверка
-            // «!ioctl(...)» не срабатывала никогда, и id оставались rand()'ом.
             if (ioctl(fd, EVIOCGID, &id) == (int)sizeof(id)) {
                 ui_dev.id.bustype = id.bustype;
                 ui_dev.id.vendor = id.vendor;
@@ -677,22 +698,127 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
                     }
             }
             free(bits);
+            close(fd);
         }
-        ui_dev.absmin[ABS_MT_POSITION_X] = 0;
-        ui_dev.absmax[ABS_MT_POSITION_X] = screenX;
-        ui_dev.absmin[ABS_MT_POSITION_Y] = 0;
-        ui_dev.absmax[ABS_MT_POSITION_Y] = screenY;
-        ui_dev.absmin[ABS_X] = 0;
-        ui_dev.absmax[ABS_X] = screenX;
-        ui_dev.absmin[ABS_Y] = 0;
-        ui_dev.absmax[ABS_Y] = screenY;
-        ui_dev.absmin[ABS_MT_TRACKING_ID] = 0;
-        ui_dev.absmax[ABS_MT_TRACKING_ID] = 65535;
-        write(nowfd, &ui_dev, sizeof(ui_dev));
+    }
+    ui_dev.absmin[ABS_MT_POSITION_X] = 0;
+    ui_dev.absmax[ABS_MT_POSITION_X] = screenX;
+    ui_dev.absmin[ABS_MT_POSITION_Y] = 0;
+    ui_dev.absmax[ABS_MT_POSITION_Y] = screenY;
+    ui_dev.absmin[ABS_X] = 0;
+    ui_dev.absmax[ABS_X] = screenX;
+    ui_dev.absmin[ABS_Y] = 0;
+    ui_dev.absmax[ABS_Y] = screenY;
+    ui_dev.absmin[ABS_MT_TRACKING_ID] = 0;
+    ui_dev.absmax[ABS_MT_TRACKING_ID] = 65535;
+    write(nowfd, &ui_dev, sizeof(ui_dev));
 
-        if (ioctl(nowfd, UI_DEV_CREATE)) {
-            close(nowfd); nowfd = 0;
-            for (int k = 0; k < fdNum; ++k) { ioctl(origfd[k], EVIOCGRAB, UNGRAB); close(origfd[k]); origfd[k] = 0; }
+    if (ioctl(nowfd, UI_DEV_CREATE)) {
+        close(nowfd);
+        nowfd = 0;
+        return false;
+    }
+    return true;
+}
+
+bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
+    char temp[128];
+    DIR *dir = opendir("/dev/input/");
+    if (!dir) return false;
+    dirent *ptr = NULL;
+    std::vector<int> evNums;
+    while ((ptr = readdir(dir)) != NULL) {
+        int ev = -1;
+        if (sscanf(ptr->d_name, "event%d", &ev) == 1 && ev >= 0) {
+            evNums.push_back(ev);
+        }
+    }
+    closedir(dir);
+    std::sort(evNums.begin(), evNums.end());
+
+    struct CandDev {
+        int fd;
+        int evNum;
+        int kind;
+        input_absinfo ax;
+        input_absinfo ay;
+    };
+    std::vector<CandDev> cands;
+    bool haveMultiTouch = false;
+    for (int ev : evNums) {
+        sprintf(temp, "/dev/input/event%d", ev);
+        int fd = open(temp, O_RDWR);
+        if (fd < 0) fd = open(temp, O_RDONLY);
+        if (fd < 0) continue;
+        const int kind = checkDeviceIsTouch(fd);
+        if (kind != 0) {
+            input_absinfo ax{}, ay{};
+            int tmp1 = ioctl(fd, EVIOCGABS(kind == 1 ? ABS_MT_POSITION_X : ABS_X), &ax);
+            int tmp2 = ioctl(fd, EVIOCGABS(kind == 1 ? ABS_MT_POSITION_Y : ABS_Y), &ay);
+            if ((tmp1 != 0 || ax.maximum <= ax.minimum) && kind == 1)
+                tmp1 = ioctl(fd, EVIOCGABS(ABS_X), &ax);
+            if ((tmp2 != 0 || ay.maximum <= ay.minimum) && kind == 1)
+                tmp2 = ioctl(fd, EVIOCGABS(ABS_Y), &ay);
+            if (tmp1 == 0 && tmp2 == 0 &&
+                ax.maximum > ax.minimum && ay.maximum > ay.minimum) {
+                if (kind == 1) haveMultiTouch = true;
+                cands.push_back({fd, ev, kind, ax, ay});
+                continue;
+            }
+        }
+        close(fd);
+    }
+
+    struct input_absinfo absX[maxE]{}, absY[maxE]{};
+    static int s_single[maxE]{};
+    int screenX = 0, screenY = 0, minCnt = 999999;
+    int minKind = 0;
+    int real_touch_fd = -1;
+    fdNum = 0;
+    for (const CandDev& c : cands) {
+        if (haveMultiTouch && c.kind != 1) {
+            close(c.fd);
+            continue;
+        }
+        if (fdNum >= maxE) {
+            close(c.fd);
+            continue;
+        }
+        origfd[fdNum] = c.fd;
+        absX[fdNum] = c.ax;
+        absY[fdNum] = c.ay;
+        s_single[fdNum] = (c.kind == 2) ? 1 : 0;
+        if (!readOnly) {
+            ioctl(c.fd, EVIOCGRAB, GRAB);
+        }
+        const int spanX = c.ax.maximum - c.ax.minimum;
+        const int spanY = c.ay.maximum - c.ay.minimum;
+        if (c.evNum < minCnt && spanX > 0 && spanY > 0) {
+            screenX = spanX;
+            screenY = spanY;
+            minCnt = c.evNum;
+            minKind = c.kind;
+            real_touch_fd = c.fd;
+        }
+        fdNum++;
+    }
+
+    if (fdNum <= 0 || screenX <= 0 || screenY <= 0) {
+        puts("Failed init touch!");
+        return false;
+    }
+    printf("touch: event%d %s\n", minCnt, minKind == 2 ? "single-touch (vm pad)" : "multitouch");
+
+    s_real_touch_fd = real_touch_fd;
+    s_min_event_num = minCnt;
+
+    if (!readOnly) {
+        if (!Touch_CreateUinput(real_touch_fd, minCnt, screenX, screenY)) {
+            for (int k = 0; k < fdNum; ++k) {
+                ioctl(origfd[k], EVIOCGRAB, UNGRAB);
+                close(origfd[k]);
+                origfd[k] = 0;
+            }
             fdNum = 0;
             return false;
         }
@@ -700,23 +826,42 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
     Touch_initialized = true;
     Touch_readOnly = readOnly;
 
-    pthread_t t;
-    for (i = 0; i < fdNum; i++) {
+    for (int i = 0; i < fdNum; i++) {
+        const int spanX = absX[i].maximum - absX[i].minimum;
+        const int spanY = absY[i].maximum - absY[i].minimum;
         targF[i].fdNum = i;
-        targF[i].S2TX = (float) screenX / (float) absX[i].maximum;
-        targF[i].S2TY = (float) screenY / (float) absY[i].maximum;
+        targF[i].S2TX = (spanX > 0) ? ((float) screenX / (float) spanX) : 1.f;
+        targF[i].S2TY = (spanY > 0) ? ((float) screenY / (float) spanY) : 1.f;
+        targF[i].minX = absX[i].minimum;
+        targF[i].minY = absY[i].minimum;
         targF[i].singleTouch = s_single[i];
-        pthread_create(&t, NULL, TypeA, &targF[i]);
+        s_thread_alive[i] = (pthread_create(&s_threads[i], NULL, TypeA, &targF[i]) == 0);
     }
 
     ::screenWidth = w;
-    ::screenHeight = h,
+    ::screenHeight = h;
     ::orientation = orientation_;
     devMaxX = screenX;
     devMaxY = screenY;
     Touch_UpdateScale();
 
     system("chmod 000 -R /proc/bus/input/*");
+    return true;
+}
+
+bool Touch_IsInitialized() {
+    return Touch_initialized && fdNum > 0;
+}
+
+bool Touch_TryUpgradeInject() {
+    if (!Touch_initialized || !Touch_readOnly || fdNum <= 0) return Touch_CanInject();
+    if (devMaxX <= 0 || devMaxY <= 0) return false;
+    if (!Touch_CreateUinput(s_real_touch_fd, s_min_event_num, devMaxX, devMaxY))
+        return false;
+    for (int k = 0; k < fdNum; ++k) {
+        if (origfd[k] > 0) ioctl(origfd[k], EVIOCGRAB, GRAB);
+    }
+    Touch_readOnly = false;
     return true;
 }
 void UpdateScreenData(int w, int h, uint32_t orientation_) {
@@ -788,7 +933,12 @@ static int checkDeviceIsTouch(int fd) {
 
 void Touch_Close() {
     if (Touch_initialized) {
+        Touch_initialized = false;
         for (int i = 0; i < maxE; ++i) {
+            if (s_thread_alive[i]) {
+                pthread_join(s_threads[i], nullptr);
+                s_thread_alive[i] = false;
+            }
             if (origfd[i] > 0) {
                 if (!Touch_readOnly)
                     ioctl(origfd[i], EVIOCGRAB, UNGRAB);
@@ -801,10 +951,13 @@ void Touch_Close() {
             close(nowfd);
             nowfd = 0;
         }
+        s_real_touch_fd = -1;
+        s_min_event_num = -1;
         fdNum = 0;
+        g_touch_phys_down.store(false, std::memory_order_release);
+        g_touch_press_unseen.store(false, std::memory_order_release);
         memset(Finger, 0, sizeof(Finger));
         memset(input.event, 0, sizeof(input.event));
-        Touch_initialized = false;
     }
 }
 

@@ -20,6 +20,9 @@ void Touch_Up_N(int finger);
 // created). False in read-only fallback mode — everything that injects
 // touches (aimbot, auto-farm) silently does nothing then.
 bool Touch_CanInject();
+bool Touch_IsInitialized();
+bool Touch_TryUpgradeInject();
+void Touch_FrameStep();
 
 // Диагностика: сколько раз Upload() собрал пакет синтетического тача, сколько
 // миллисекунд на это ушло суммарно и сколько вызовов обошлось без отправки

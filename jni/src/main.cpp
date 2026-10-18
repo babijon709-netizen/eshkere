@@ -354,7 +354,10 @@ int main(int argc, char* argv[]) {
         while (s_touchRetryRun.load() && main_thread_flag.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(3));
             if (Touch_CanInject()) continue;
-            Touch_Close();
+            if (Touch_IsInitialized()) {
+                Touch_TryUpgradeInject();
+                continue;
+            }
             if (!Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, false))
                 Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
         }

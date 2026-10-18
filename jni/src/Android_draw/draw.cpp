@@ -302,6 +302,7 @@ void drawBegin() {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplAndroid_NewFrame();
+    Touch_FrameStep();
     {
         // ImGui canvas обязан совпадать с квадратным Surface из main.cpp.
         // Так поворот устройства не меняет систему координат EGL и portrait

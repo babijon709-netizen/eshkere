@@ -543,7 +543,8 @@ bool sprint(bool on) {
     // +0x85) и пишет value & 1 в PlayerInput.Sprint (+0x59), откуда KCC.hFr
     // включает eventHandler->Run.
     const uint64_t ovr_addr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
-    const unsigned char want_ovr[2] = { on ? 1u : 0u, on ? 1u : 0u };
+    const unsigned char v = on ? 1u : 0u;
+    const unsigned char want_ovr[2] = { v, v };
     unsigned char cur_ovr[2] = {};
     bool wrote_ovr = false;
     if (rd_buf(ovr_addr, cur_ovr, sizeof(cur_ovr)) &&

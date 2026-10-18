@@ -100,7 +100,7 @@ struct EspBox {
 // labelled pill at the object's screen position. All come from the same
 // networked source (Oxide.MineableObject in Mirror's client registry),
 // so one struct covers them.
-enum EspMarkerKind { ESP_MARKER_ORE = 0, ESP_MARKER_ANIMAL = 1, ESP_MARKER_LOOT = 2, ESP_MARKER_PICKUP = 3, ESP_MARKER_BOT = 4, ESP_MARKER_VEHICLE = 5, ESP_MARKER_SCRAP = 6, ESP_MARKER_TURRET = 7, ESP_MARKER_BACKPACK = 8, ESP_MARKER_SLEEPER = 9, ESP_MARKER_HOUSE = 10, ESP_MARKER_CUPBOARD = 11 };
+enum EspMarkerKind { ESP_MARKER_ORE = 0, ESP_MARKER_ANIMAL = 1, ESP_MARKER_LOOT = 2, ESP_MARKER_PICKUP = 3, ESP_MARKER_BOT = 4, ESP_MARKER_VEHICLE = 5, ESP_MARKER_SCRAP = 6, ESP_MARKER_TURRET = 7, ESP_MARKER_BACKPACK = 8, ESP_MARKER_SLEEPER = 9, ESP_MARKER_HOUSE = 10, ESP_MARKER_CUPBOARD = 11, ESP_MARKER_PUMPKIN = 12 };
 struct EspMarker {
     unsigned long long id = 0;  // marker component pointer; stable across readable frames
     float x = 0.0F, y = 0.0F;   // screen position (top-centre of the pill)
@@ -175,7 +175,7 @@ void        esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pick
                                     bool vehicles, bool bots, bool scrap = false,
                                     bool turrets = false, bool backpacks = false,
                                     bool sleepers = false, bool house = false,
-                                    bool cupboards = false);
+                                    bool cupboards = false, bool pumpkins = false);
 // Типы руды для меток: общий тумблер «Руда» включает их целиком, а эти три
 // решают, какие именно камни через него проходят (камень / железо / сера).
 // Смена значений перезапускает скан маркеров — снятая галочка гасит метки

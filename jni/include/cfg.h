@@ -22,6 +22,7 @@ namespace cfg { namespace esp {
     inline ImVec4 backpack_col      = {0.95f, 0.70f, 0.25f, 1.f};
     inline ImVec4 sleeper_col       = {0.65f, 0.45f, 1.00f, 1.f};
     inline ImVec4 cupboard_col      = {1.00f, 0.45f, 0.55f, 1.f};
+    inline ImVec4 pumpkin_col       = {1.00f, 0.50f, 0.10f, 1.f};
     inline ImVec4 ore_stone_col     = {0.75f, 0.75f, 0.75f, 1.f};
     inline ImVec4 ore_metal_col     = {1.00f, 0.55f, 0.16f, 1.f};
     inline ImVec4 ore_sulfur_col    = {1.00f, 0.88f, 0.20f, 1.f};
@@ -48,6 +49,7 @@ namespace cfg { namespace esp {
     inline bool bot            = false;
     inline bool vehicle        = false;
     inline bool scrap          = false;
+    inline bool pumpkin        = false;
     inline bool  vis_check        = false;
     inline bool  fill             = false;
     inline float stroke           = 2.f;

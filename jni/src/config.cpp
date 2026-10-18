@@ -263,6 +263,7 @@ struct CfgExt2Trailer {
     ImVec4   esp_ore_metal_col;
     ImVec4   esp_ore_sulfur_col;
     ImVec4   esp_arrow_col;
+    ImVec4   esp_pumpkin_col;
 };
 static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
 
@@ -284,7 +285,8 @@ static void WriteExt2Trailer(std::ostream& f) {
               (g_state.aim_pos       ? (1u << 11) : 0u) |
               (cfg::esp::vis_check   ? (1u << 12) : 0u) |
               (cfg::esp::fill        ? (1u << 13) : 0u) |
-              (g_state.farm_on       ? (1u << 14) : 0u);
+              (g_state.farm_on       ? (1u << 14) : 0u) |
+              (g_state.esp_pumpkins  ? (1u << 15) : 0u);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
     t.esp_radar_size   = g_state.esp_radar_size;
     t.esp_radar_range  = g_state.esp_radar_range;
@@ -305,6 +307,7 @@ static void WriteExt2Trailer(std::ostream& f) {
     t.esp_ore_metal_col  = cfg::esp::ore_metal_col;
     t.esp_ore_sulfur_col = cfg::esp::ore_sulfur_col;
     t.esp_arrow_col      = cfg::esp::arrow_col;
+    t.esp_pumpkin_col    = cfg::esp::pumpkin_col;
     uint8_t buf[sizeof(t)];
     memcpy(buf, &t, sizeof(t));
     XorBuf(buf, sizeof(buf));
@@ -767,6 +770,7 @@ static void LoadCfgByName(const char* name, bool announce) {
             cfg::esp::vis_check    = (ext2.flags & (1u << 12)) != 0;
             cfg::esp::fill         = (ext2.flags & (1u << 13)) != 0;
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
+            g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
 
             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);
@@ -789,13 +793,14 @@ static void LoadCfgByName(const char* name, bool announce) {
             cfg::esp::ore_metal_col  = ext2.esp_ore_metal_col;
             cfg::esp::ore_sulfur_col = ext2.esp_ore_sulfur_col;
             cfg::esp::arrow_col      = ext2.esp_arrow_col;
+            cfg::esp::pumpkin_col    = ext2.esp_pumpkin_col;
             col(cfg::aim::fov_col);
             col(cfg::esp::bot_col);        col(cfg::esp::vehicle_col);
             col(cfg::esp::scrap_col);      col(cfg::esp::turret_col);
             col(cfg::esp::backpack_col);   col(cfg::esp::sleeper_col);
             col(cfg::esp::cupboard_col);   col(cfg::esp::ore_stone_col);
             col(cfg::esp::ore_metal_col);  col(cfg::esp::ore_sulfur_col);
-            col(cfg::esp::arrow_col);
+            col(cfg::esp::arrow_col);      col(cfg::esp::pumpkin_col);
         }
 
         cfg::aim::enabled       = g_state.aim_touch;
@@ -822,6 +827,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         cfg::esp::bot           = g_state.esp_bots;
         cfg::esp::vehicle       = g_state.esp_vehicles;
         cfg::esp::scrap         = g_state.esp_scrap;
+        cfg::esp::pumpkin       = g_state.esp_pumpkins;
 
         g_state.sl_esp_thick           = {};
         g_state.sl_esp_arrow_ring      = {};

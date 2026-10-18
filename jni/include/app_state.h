@@ -68,6 +68,7 @@ struct AppState {
     bool  esp_turrets = false, esp_backpacks = false, esp_sleepers = false;
     // Шкафы (Tool Cupboard): метка с числом авторизованных и остатком защиты.
     bool  esp_cupboards = false;
+    bool  esp_pumpkins = false;
     ViewmodelSettings viewmodel;
     bool fast_fire = false, fast_reload = false;
     bool fake_lag = false;
@@ -155,7 +156,7 @@ struct AppState {
     float a_esp_bots = 0, a_esp_vehicles = 0, a_esp_scrap = 0, a_esp_house_boxes = 0;
     float a_esp_arrows = 0, a_esp_arrows_off = 0, a_esp_arrows_dist = 0;
     float a_esp_radar = 0;
-    float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0;
+    float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0, a_esp_pumpkins = 0;
     float a_always_day = 0, a_no_grass = 0;
     float a_ui_dark = 1;
     float a_farm_on = 0, a_farm_wood = 1, a_farm_stone = 0, a_farm_metal = 0, a_farm_sulfur = 0;

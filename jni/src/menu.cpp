@@ -448,8 +448,9 @@ float TabContent(int tab, float dt, float cW) {
                 {"##vbp", XS("Рюкзаки"),  &g_state.esp_backpacks,    &g_state.a_esp_backpacks,    &cfg::esp::backpack_col},
                 {"##vsl", XS("Спящие"),   &g_state.esp_sleepers,     &g_state.a_esp_sleepers,     &cfg::esp::sleeper_col},
                 {"##vcb", XS("Шкафы"),    &g_state.esp_cupboards,    &g_state.a_esp_cupboards,    &cfg::esp::cupboard_col},
+                {"##vpm", XS("Тыквы"),    &g_state.esp_pumpkins,     &g_state.a_esp_pumpkins,     &cfg::esp::pumpkin_col},
             };
-            constexpr int NW = 12;
+            constexpr int NW = 13;
             CardBg(rowH * NW);
             for (int i = 0; i < NW; i++)
                 EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == NW-1);
@@ -1839,6 +1840,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_backpacks, g_state.esp_backpacks,   dt);
     Tick(g_state.a_esp_sleepers, g_state.esp_sleepers,     dt);
     Tick(g_state.a_esp_cupboards, g_state.esp_cupboards,   dt);
+    Tick(g_state.a_esp_pumpkins, g_state.esp_pumpkins,     dt);
     Tick(g_state.a_always_day,  g_state.always_day,         dt);
     Tick(g_state.a_no_grass,    g_state.no_grass,            dt);
     Tick(g_state.a_esp_team,   g_state.esp_team,           dt);
@@ -1903,6 +1905,7 @@ void RenderMenu() {
     cfg::esp::bot           = g_state.esp_bots;
     cfg::esp::vehicle       = g_state.esp_vehicles;
     cfg::esp::scrap         = g_state.esp_scrap;
+    cfg::esp::pumpkin       = g_state.esp_pumpkins;
 
     if (g_cfgLoadedIdx >= 0 && g_cfgLoadedIdx < kMaxConfigs)
         g_cfgLoadAnim[g_cfgLoadedIdx] += (1.f - g_cfgLoadAnim[g_cfgLoadedIdx]) * 10.f * dt;

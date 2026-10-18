@@ -45,6 +45,7 @@ static bool g_markers_backpack_enabled = false;
 static bool g_markers_sleeper_enabled = false;
 static bool g_markers_house_enabled = false;
 static bool g_markers_cupboard_enabled = false;
+static bool g_markers_pumpkin_enabled = false;
 // Аим по ботам: скан и позиции ботов живут, даже когда их маркеры выключены.
 static bool g_bot_aim_enabled = false;
 static float g_marker_max_distance = 150.0F;
@@ -58,7 +59,8 @@ static bool marker_visuals_enabled() {
            g_markers_vehicle_enabled || g_markers_bot_enabled ||
            g_markers_scrap_enabled || g_markers_turret_enabled ||
            g_markers_backpack_enabled || g_markers_sleeper_enabled ||
-           g_markers_house_enabled || g_markers_cupboard_enabled;
+           g_markers_house_enabled || g_markers_cupboard_enabled ||
+           g_markers_pumpkin_enabled;
 }
 // Когда можно начинать следующий проход скана маркеров, в mono_seconds().
 // Раньше здесь был счётчик кадров (180, при пустом списке 30) из расчёта на
@@ -120,11 +122,11 @@ enum class MarkerScanResult { Complete, Pending, Unavailable };
 void esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
                              bool vehicles, bool bots, bool scrap, bool turrets,
                              bool backpacks, bool sleepers, bool house,
-                             bool cupboards) {
+                             bool cupboards, bool pumpkins) {
     // Loot, pickups, scrap and house boxes are filtered during the registry walk.
     if (loot != g_markers_loot_enabled || pickups != g_markers_pickup_enabled ||
         scrap != g_markers_scrap_enabled || house != g_markers_house_enabled ||
-        cupboards != g_markers_cupboard_enabled) {
+        cupboards != g_markers_cupboard_enabled || pumpkins != g_markers_pumpkin_enabled) {
         g_marker_next_scan = 0.0;
         marker_scan_abort();   // половина списка собрана по старым фильтрам
     }
@@ -140,6 +142,7 @@ void esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
     g_markers_sleeper_enabled = sleepers;
     g_markers_house_enabled = house;
     g_markers_cupboard_enabled = cupboards;
+    g_markers_pumpkin_enabled = pumpkins;
     // Машины и боты всегда сканируются и фильтруются при отрисовке.
 }
 
@@ -360,7 +363,6 @@ static bool marker_for_entity_type(int32_t type, MarkerLook& look) {
         case MineableEntityType::LootboxBaloonBig: look = kSmashBox; return true;
         case MineableEntityType::RoadSign: look = kRoadSign;  return true;
         case MineableEntityType::Human:    look = bot_look("Бот"); return true;
-        case MineableEntityType::Vehicle:  look = vehicle_look("Машина"); return true;
         case MineableEntityType::Bear:     look = animal_look("Медведь");  return true;
         case MineableEntityType::Boar:     look = animal_look("Кабан");    return true;
         case MineableEntityType::Deer:     look = animal_look("Олень");    return true;
@@ -540,8 +542,57 @@ static bool is_vehicle_word(const char* word) {
            strcmp(word, "vehicle") == 0 || strcmp(word, "vehicles") == 0;
 }
 
-// Cars whose entityType is empty: prefab name only.
+static bool is_vehicle_structure_word(const char* word) {
+    if (is_vehicle_word(word)) return true;
+    static const char* const kVehWords[] = {
+        "sedan", "hatchback", "jeep", "suv", "truck", "trucks",
+        "van", "minivan", "bus", "tractor", "bulldozer", "excavator",
+        "ambulance", "policecar", "firetruck", "taxi", "uaz", "lada",
+        "niva", "buggy", "buggies", "wagon", "wreck", "wrecked", "junkcar",
+        "carwreck", "abandonedcar",
+    };
+    for (const char* vw : kVehWords) {
+        if (strcmp(word, vw) == 0) return true;
+    }
+    return false;
+}
+
+static bool is_vehicle_structure_name(const char* raw) {
+    return for_each_name_token(raw, is_vehicle_structure_word);
+}
+
+static bool is_static_or_loot_vehicle_name(const char* raw) {
+    return for_each_name_token(raw, [](const char* word) {
+        static const char* const kStaticWords[] = {
+            "wreck", "wrecked", "broken", "junk", "junkcar", "carwreck",
+            "ruin", "ruined", "abandoned", "static", "prop", "decor",
+            "loot", "lootable", "lootbox", "crate", "box", "container",
+            "barrel", "mineable", "salvage", "scrap", "spawner",
+            "building", "structure", "monument", "station", "destroyed",
+            "damaged", "rusted", "rusty", "old", "corpse",
+        };
+        for (const char* sw : kStaticWords) {
+            if (strcmp(word, sw) == 0) return true;
+        }
+        return false;
+    });
+}
+
+static bool pumpkin_look_from_object_name(const char* raw, MarkerLook& look) {
+    return for_each_name_token(raw, [&](const char* word) {
+        if (strncmp(word, "pumpkin", 7) == 0 ||
+            strcmp(word, "halloween") == 0 ||
+            strcmp(word, "jackolantern") == 0) {
+            look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
+            return true;
+        }
+        return false;
+    });
+}
+
+// Cars whose entityType is empty: prefab name only, excluding static/lootable wrecks.
 static bool vehicle_look_from_object_name(const char* raw, MarkerLook& look) {
+    if (is_static_or_loot_vehicle_name(raw)) return false;
     return for_each_name_token(raw, [&](const char* word) {
         if (is_vehicle_word(word)) {
             look = vehicle_look("Машина");
@@ -724,6 +775,11 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
 
 static bool loot_marker(uint64_t component, const char* object_name, const char* root_name,
                         const char* panel, MarkerLook& look) {
+    if (is_vehicle_structure_name(object_name) ||
+        is_vehicle_structure_name(root_name) ||
+        is_vehicle_structure_name(panel)) {
+        return false;
+    }
     // Контейнер, встроенный в постройку, — поставлен игроком. Раньше такие
     // скрывались целиком; теперь ЯЩИКИ в домах показываются («Большой
     // ящик»/«Обычный ящик», тумблер «Ящики в домах»), а прочая мебель (печки,
@@ -1120,7 +1176,9 @@ uint8_t marker_class_of(uint64_t klass) {
         if (name.rfind("Mineable", 0) == 0 ||
             recovered_name == manes_aim_source::EntityName::CompositeStone)
             kind = MARKER_CLASS_MINEABLE;
-        else if (name == "LootObject" || name == "PumpkinTrick")
+        else if (name == "PumpkinTrick" || name.find("Pumpkin") != std::string::npos)
+            kind = MARKER_CLASS_PUMPKIN;
+        else if (name == "LootObject")
             kind = MARKER_CLASS_LOOT;
         else if (recovered_name == manes_aim_source::EntityName::ItemPickup)
             kind = MARKER_CLASS_PICKUP;
@@ -1295,6 +1353,18 @@ static MarkerScanResult rebuild_marker_entities() {
         // и обработчик смерти: оба — соседи Mineable-компонента в behaviours.
         uint64_t bot_brain = 0;
         bool bot_components_searched = false;
+        bool id_has_mineable = false;
+        bool id_has_loot = false;
+        bool id_has_barrel = false;
+        bool id_has_vehicle = false;
+        for (int32_t b = 0; b < behaviour_count; ++b) {
+            if (!valid_obj(behaviours[b])) continue;
+            const uint8_t bc = marker_class_of(rd_ptr(behaviours[b]));
+            if (bc == MARKER_CLASS_MINEABLE) id_has_mineable = true;
+            else if (bc == MARKER_CLASS_LOOT) id_has_loot = true;
+            else if (bc == MARKER_CLASS_BARREL) id_has_barrel = true;
+            else if (bc == MARKER_CLASS_VEHICLE) id_has_vehicle = true;
+        }
         // Mirror collects behaviours with GetComponentsInChildren, so one
         // identity can carry a whole rock cluster: every Mineable* component
         // becomes its own marker, positioned by its own GameObject.
@@ -1319,9 +1389,10 @@ static MarkerScanResult rebuild_marker_entities() {
                 char none_name[48] = {};
                 if (!managed_component_gameobject_name(component, none_name, sizeof(none_name)) ||
                     !(sleeper_look_from_object_name(none_name, look) ||
-                      backpack_look_from_object_name(none_name, look)))
+                      backpack_look_from_object_name(none_name, look) ||
+                      (g_markers_pumpkin_enabled && pumpkin_look_from_object_name(none_name, look))))
                     continue;
-                known = true;   // рюкзак/спящий с переименованным классом
+                known = true;   // рюкзак/спящий/тыква с переименованным классом
             }
             // Имя класса компонента может быть недоступно (см. marker_class_of):
             // тогда семейство неизвестно, и объект опознаётся по имени GameObject —
@@ -1338,6 +1409,11 @@ static MarkerScanResult rebuild_marker_entities() {
             } else if (component_class == MARKER_CLASS_SLEEPER) {
                 look = special_look(ESP_MARKER_SLEEPER, "Спящий");
                 known = true;
+            } else if (component_class == MARKER_CLASS_PUMPKIN) {
+                if (g_markers_pumpkin_enabled) {
+                    look = special_look(ESP_MARKER_PUMPKIN, "Тыква");
+                    known = true;
+                }
             } else if (component_class == MARKER_CLASS_CUPBOARD) {
                 // Шкаф: класс знаем точно, имена GameObject не нужны. Подпись
                 // динамическая (авторизованные + часы защиты) — как у пикапов:
@@ -1359,6 +1435,16 @@ static MarkerScanResult rebuild_marker_entities() {
             if (component_class == MARKER_CLASS_LOOT || family_unknown)
                 read_managed_string(rd_ptr(component + LOOTOBJECT_PANEL_NAME),
                                     loot_panel, sizeof(loot_panel));
+            if (!known && g_markers_pumpkin_enabled &&
+                (family_unknown || component_class == MARKER_CLASS_LOOT ||
+                 component_class == MARKER_CLASS_MINEABLE ||
+                 component_class == MARKER_CLASS_BARREL ||
+                 component_class == MARKER_CLASS_PICKUP)) {
+                if (pumpkin_look_from_object_name(object_name, look) ||
+                    pumpkin_look_from_object_name(root_name, look) ||
+                    pumpkin_look_from_object_name(loot_panel, look))
+                    known = true;
+            }
             if (!known && (family_unknown || component_class == MARKER_CLASS_LOOT ||
                            component_class == MARKER_CLASS_MINEABLE ||
                            component_class == MARKER_CLASS_BARREL)) {
@@ -1402,6 +1488,7 @@ static MarkerScanResult rebuild_marker_entities() {
                 }
             }
             if (!known && (component_class == MARKER_CLASS_LOOT || family_unknown) &&
+                !id_has_vehicle &&
                 (g_markers_loot_enabled || g_markers_scrap_enabled || g_markers_house_enabled)) {
                 known = loot_marker(component, object_name, root_name, loot_panel, look);
                 if (known && look.kind == ESP_MARKER_SCRAP && !g_markers_scrap_enabled) known = false;
@@ -1410,14 +1497,13 @@ static MarkerScanResult rebuild_marker_entities() {
                 // список живёт вместе с loot-семьёй и не требует перескана.
             }
             if (!known && component_class == MARKER_CLASS_VEHICLE) {
-                // Машина — только если И класс, И имя говорят «машина»:
-                // общий Vehicle-класс висит и на коптерах, а гаражные
-                // постройки — тоже «car-что-то». entityType здесь не читаем:
-                // оффсет у немаинбл-компонента указывает в чужое поле.
-                // Тумблера нет, как у руды и ботов: опознаётся всегда,
-                // фильтруется при отрисовке (esp_get_markers).
-                if ((object_name[0] && skip_object_name(object_name)) ||
-                    (root_name[0] && skip_object_name(root_name)))
+                // Машина — только если И класс, И имя говорят «машина», а у
+                // сущности нет компонентов добычи/лута (иначе это постройка/остов
+                // машины, который ведёт себя как ящик или декор).
+                if (id_has_mineable || id_has_loot || id_has_barrel)
+                    continue;
+                if ((object_name[0] && (skip_object_name(object_name) || is_static_or_loot_vehicle_name(object_name))) ||
+                    (root_name[0] && (skip_object_name(root_name) || is_static_or_loot_vehicle_name(root_name))))
                     continue;
                 if (object_name[0]) known = vehicle_look_from_object_name(object_name, look);
                 if (!known && root_name[0]) known = vehicle_look_from_object_name(root_name, look);
@@ -1439,12 +1525,22 @@ static MarkerScanResult rebuild_marker_entities() {
                 if (!known) {
                     int32_t entity_type = rd<int32_t>(component + MINEABLE_ENTITY_TYPE);
                     known = marker_for_entity_type(entity_type, look);
+                    if (known && look.kind == ESP_MARKER_LOOT &&
+                        (id_has_vehicle ||
+                         is_vehicle_structure_name(object_name) ||
+                         is_vehicle_structure_name(root_name))) {
+                        known = false;
+                    }
                 }
                 if (!known && g_markers_scrap_enabled && object_name[0]) known = barrel_look_from_object_name(object_name, look);
                 if (!known && g_markers_scrap_enabled && root_name[0])   known = barrel_look_from_object_name(root_name, look);
-                // Бестиповые машины / боты / знаки: только по имени префаба.
-                if (!known && object_name[0]) known = vehicle_look_from_object_name(object_name, look);
-                if (!known && root_name[0])   known = vehicle_look_from_object_name(root_name, look);
+                // Бестиповые машины (только если класс компонента не удалось прочитать
+                // и у сущности нет Mineable/Loot/Barrel соседей) / боты / знаки.
+                if (!known && family_unknown && !id_has_mineable && !id_has_loot && !id_has_barrel &&
+                    !is_static_or_loot_vehicle_name(object_name) && !is_static_or_loot_vehicle_name(root_name)) {
+                    if (object_name[0]) known = vehicle_look_from_object_name(object_name, look);
+                    if (!known && root_name[0]) known = vehicle_look_from_object_name(root_name, look);
+                }
                 if (!known && object_name[0]) known = bot_look_from_object_name(object_name, look);
                 if (!known && root_name[0])   known = bot_look_from_object_name(root_name, look);
                 if (!known && g_markers_scrap_enabled && object_name[0]) known = roadsign_look_from_object_name(object_name, look);
@@ -1892,6 +1988,7 @@ std::vector<EspMarker> esp_get_markers() {
         if (entity.kind == ESP_MARKER_SLEEPER && !g_markers_sleeper_enabled) continue;
         if (entity.kind == ESP_MARKER_HOUSE && !g_markers_house_enabled) continue;
         if (entity.kind == ESP_MARKER_CUPBOARD && !g_markers_cupboard_enabled) continue;
+        if (entity.kind == ESP_MARKER_PUMPKIN && !g_markers_pumpkin_enabled) continue;
         if (marker_bot_dead(entity)) continue;
         // Ore nodes never move, so their position is only read on a rescan.
         // Animals and bots DO move — throttled re-reads, see marker_track_position.
@@ -1947,6 +2044,7 @@ std::vector<EspMarker> esp_get_markers() {
                   : (entity.kind == ESP_MARKER_SLEEPER)  ? 0.8F
                   : (entity.kind == ESP_MARKER_BACKPACK) ? 0.5F
                   : (entity.kind == ESP_MARKER_CUPBOARD) ? 1.0F
+                  : (entity.kind == ESP_MARKER_PUMPKIN)  ? 0.5F
                   : (entity.kind == ESP_MARKER_HOUSE)    ? 0.6F : 0.9F;
         if (!w2s(g_frame_vp, anchor, g_frame_sw, g_frame_sh, screen, false) ||
             !std::isfinite(screen.x) || !std::isfinite(screen.y)) {

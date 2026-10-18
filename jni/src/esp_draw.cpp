@@ -89,7 +89,8 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
                                 g_state.esp_vehicles, g_state.esp_bots,
                                 g_state.esp_scrap, g_state.esp_turrets,
                                 g_state.esp_backpacks, g_state.esp_sleepers,
-                                g_state.esp_house_boxes, g_state.esp_cupboards);
+                                g_state.esp_house_boxes, g_state.esp_cupboards,
+                                g_state.esp_pumpkins);
         // Аим по ботам — тем же условием, что кости для аима: работает и
         // когда маркеры ботов выключены.
         esp_set_bot_aim_enabled(g_state.esp_bots || g_state.aim_touch ||
@@ -465,7 +466,7 @@ void DrawEspOverlay() {
     // One pill with the resource / animal / bot / vehicle name at the object's
     // position; the scan itself is done by the game layer and reuses this
     // frame's camera.
-    if (g_state.esp_ore || g_state.esp_animal || g_state.esp_loot || g_state.esp_pickup || g_state.esp_bots || g_state.esp_vehicles || g_state.esp_scrap || g_state.esp_turrets || g_state.esp_backpacks || g_state.esp_sleepers || g_state.esp_house_boxes || g_state.esp_cupboards) {
+    if (g_state.esp_ore || g_state.esp_animal || g_state.esp_loot || g_state.esp_pickup || g_state.esp_bots || g_state.esp_vehicles || g_state.esp_scrap || g_state.esp_turrets || g_state.esp_backpacks || g_state.esp_sleepers || g_state.esp_house_boxes || g_state.esp_cupboards || g_state.esp_pumpkins) {
         // Smaller than the player labels (there are many more of them), with the
         // distance on a second line underneath.
         constexpr float kMarkerScale = 0.78f;
@@ -494,6 +495,7 @@ void DrawEspOverlay() {
                        : marker.kind == ESP_MARKER_BACKPACK ? cfg::esp::backpack_col
                        : marker.kind == ESP_MARKER_SLEEPER  ? cfg::esp::sleeper_col
                        : marker.kind == ESP_MARKER_CUPBOARD ? cfg::esp::cupboard_col
+                       : marker.kind == ESP_MARKER_PUMPKIN  ? cfg::esp::pumpkin_col
                        : marker.kind == ESP_MARKER_HOUSE    ? cfg::esp::loot_col
                                                            : cfg::esp::animal_col);
             EspPill(marker.x, marker.y, marker.name, col, kMarkerScale);

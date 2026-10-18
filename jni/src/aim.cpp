@@ -545,7 +545,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
             pick.filterUsesCamera = haveCamera;
             pick.filterModeSet = true;
         }
-        float timeConstant = 0.045f;
+        float timeConstant = 0.010f;
         if (best.world_dist > 0.0f && best.world_dist < 12.0f) timeConstant *= 0.75f;
         if (haveCamera) {
             filteredYaw = WrapDeg180(cameraYaw + filteredYaw);

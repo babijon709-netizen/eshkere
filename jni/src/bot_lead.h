@@ -14,13 +14,14 @@
 
 namespace botlead {
 
-constexpr float  kMinStepMeters   = 0.02F;  // шаг меньше — позицию игра не меняла
-constexpr double kMinSpanSeconds  = 0.02;   // мельче — это шум dt, а не движение
+constexpr float  kMinStepMeters   = 0.015F; // шаг меньше — позицию игра не меняла
+constexpr double kMinSpanSeconds  = 0.015;  // мельче — это шум dt, а не движение
 // Дальние боты перечитываются раз в 6/15 кадров, то есть 0.25 с на 60 к/с и до
 // 0.5 с на 30 — окно должно это покрывать, иначе оценка не набиралась бы вовсе.
 constexpr double kMaxSpanSeconds  = 0.9;    // разрыв больше — шаг не измеряем
-constexpr float  kMaxSpeed        = 12.0F;  // быстрее человек не бегает: телепорт
-constexpr double kFreshSeconds    = 0.3;    // столько без движения — оценка мертва
+constexpr float  kMaxSpeed        = 22.0F;  // фильтр телепорта (включая 2-тиковые пачки)
+constexpr float  kClampRunSpeed   = 12.0F;  // потолок скорости двух сжатых тиков
+constexpr double kFreshSeconds    = 0.25;   // столько без движения — оценка мертва
 
 struct Track {
     Vec3   vel{};          // сглаженная скорость, м/с
@@ -48,12 +49,19 @@ inline void update(Track& track, const Vec3& position, double now) {
     if (mx * mx + my * my + mz * mz > kMinStepMeters * kMinStepMeters) {
         if (span >= kMinSpanSeconds) {
             if (span < kMaxSpanSeconds) {
-                const Vec3 v = {(float)(mx / span), (float)(my / span), (float)(mz / span)};
+                Vec3 v = {(float)(mx / span), (float)(my / span), (float)(mz / span)};
                 const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
                 if (std::isfinite(speed) && speed < kMaxSpeed) {
-                    track.vel.x = track.vel.x * 0.5F + v.x * 0.5F;
-                    track.vel.y = track.vel.y * 0.5F + v.y * 0.5F;
-                    track.vel.z = track.vel.z * 0.5F + v.z * 0.5F;
+                    if (speed > kClampRunSpeed) {
+                        const float s = kClampRunSpeed / speed;
+                        v.x *= s; v.y *= s; v.z *= s;
+                    }
+                    const float prev2 = track.vel.x * track.vel.x + track.vel.z * track.vel.z;
+                    const float dot_xz = track.vel.x * v.x + track.vel.z * v.z;
+                    const float alpha = (prev2 < 0.04F || dot_xz < 0.0F) ? 0.85F : 0.65F;
+                    track.vel.x = track.vel.x * (1.0F - alpha) + v.x * alpha;
+                    track.vel.y = track.vel.y * (1.0F - alpha) + v.y * alpha;
+                    track.vel.z = track.vel.z * (1.0F - alpha) + v.z * alpha;
                 }
             }
             track.ref = position; track.ref_t = now;

@@ -6205,6 +6205,35 @@ static void prune_mount_latch(const std::vector<uint64_t>& players) {
     }
 }
 
+static bool player_authoritative_velocity(uint64_t player, Vec3& out) {
+    out = {};
+    if (!valid_obj(player)) return false;
+    const PlayerAux& aux = player_aux(player);
+    if (valid_obj(aux.kcc)) {
+        Vec3 rv{};
+        if (rd_exact(aux.kcc + KCC_MOVE + KCC_MOVE_REAL_VELOCITY, rv) && vec3_is_finite(rv)) {
+            const float s2 = rv.x * rv.x + rv.y * rv.y + rv.z * rv.z;
+            if (s2 > 0.0025F && s2 < 625.0F) {
+                out = rv;
+                return true;
+            }
+        }
+    }
+    const uint64_t eh = rd_ptr(player + PLAYER_EVENT_HANDLER);
+    if (valid_obj(eh)) {
+        const uint64_t sync_vel = rd_ptr(eh + 0xB0);
+        Vec3 rv{};
+        if (valid_obj(sync_vel) && rd_exact(sync_vel + SYNC_VALUE_OFFSET, rv) && vec3_is_finite(rv)) {
+            const float s2 = rv.x * rv.x + rv.y * rv.y + rv.z * rv.z;
+            if (s2 > 0.0025F && s2 < 625.0F) {
+                out = rv;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
     PlayerTrack& track = g_player_track[player];
     if (--track.uid_recheck <= 0) {
@@ -6221,31 +6250,60 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
             track.uid_recheck = track.uid[0] ? 120 : 20;
         }
     }
-    // Velocity, measured between the moments the position actually changed.
-    // A remote player's position only arrives on the network tick, so most
-    // frames repeat the previous one; differencing those would read zero.
+    // Velocity: prefer authoritative KCC.Move.RealVelocity / EventHandler.Velocity
+    // on unmounted players, with a 2-tick-burst-tolerant finite-difference
+    // fallback for vehicles and uninitialized KCC states.
     {
         const double now = mono_seconds();
+        const bool mounted = player_is_mounted(player) || player_mount_engaged(player);
+        Vec3 auth_vel{};
+        const bool have_auth = !mounted && player_authoritative_velocity(player, auth_vel);
+        const float auth_speed2 = have_auth
+            ? (auth_vel.x * auth_vel.x + auth_vel.y * auth_vel.y + auth_vel.z * auth_vel.z)
+            : 0.0F;
+
         if (!track.have_vel_ref) {
-            track.vel_ref = position; track.vel_ref_t = now; track.have_vel_ref = true;
+            track.vel_ref = position;
+            track.vel_ref_t = now;
+            track.have_vel_ref = true;
+            if (have_auth && auth_speed2 > 0.0025F) {
+                track.vel = auth_vel;
+            }
         } else {
             const float mx = position.x - track.vel_ref.x;
             const float my = position.y - track.vel_ref.y;
             const float mz = position.z - track.vel_ref.z;
             const float moved = mx * mx + my * my + mz * mz;
             const double span = now - track.vel_ref_t;
-            if (moved > 0.0004F) {                     // moved more than 2 cm
-                if (span >= 0.02) {
+            if (have_auth && auth_speed2 > 0.0025F) {
+                const float prev2 = track.vel.x * track.vel.x + track.vel.z * track.vel.z;
+                const float dot_xz = track.vel.x * auth_vel.x + track.vel.z * auth_vel.z;
+                const float alpha = (prev2 < 0.04F || dot_xz < 0.0F) ? 0.90F : 0.75F;
+                track.vel.x = track.vel.x * (1.0F - alpha) + auth_vel.x * alpha;
+                track.vel.y = track.vel.y * (1.0F - alpha) + auth_vel.y * alpha;
+                track.vel.z = track.vel.z * (1.0F - alpha) + auth_vel.z * alpha;
+                if (moved > 0.0002F || span >= 0.03125) {
+                    track.vel_ref = position;
+                    track.vel_ref_t = now;
+                }
+            } else if (moved > 0.000225F) {            // moved more than 1.5 cm
+                if (span >= 0.015) {
                     if (span < 0.5) {
-                        const Vec3 v = { (float)(mx / span), (float)(my / span), (float)(mz / span) };
+                        Vec3 v = { (float)(mx / span), (float)(my / span), (float)(mz / span) };
                         const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-                        if (std::isfinite(speed) && speed < 12.0F) {
+                        const float max_speed = mounted ? 30.0F : 22.0F;
+                        const float clamp_speed = mounted ? 25.0F : 6.8F;
+                        if (std::isfinite(speed) && speed < max_speed) {
+                            if (speed > clamp_speed) {
+                                const float s = clamp_speed / speed;
+                                v.x *= s; v.y *= s; v.z *= s;
+                            }
                             track.vel = playermotion::blend_velocity(track.vel, v);
                         }
                     }
                     track.vel_ref = position; track.vel_ref_t = now;
                 }
-            } else if (span > 0.3) {                   // stood still: stop leading
+            } else if ((have_auth && auth_speed2 <= 0.0025F && span > 0.075) || span > 0.22) {
                 track.vel = {};
                 track.vel_ref = position; track.vel_ref_t = now;
             }
@@ -6957,7 +7015,7 @@ bool aim_read_projectile(uint64_t weapon, uint64_t offset, bool allow_structural
     uint64_t projectile = 0;
     if (!aim_read_pointer_exact(weapon + offset, projectile) || !valid_obj(projectile))
         return false;
-    const int identity = aim_object_identity(projectile, "ShaftedProjectile", "Oxide");
+    const int identity = aim_object_identity(projectile, "ShaftedProjectile", nullptr);
     if (identity == 0) return false;
 
     float max_distance = 0.0f, launch_speed = 0.0f;
@@ -7012,7 +7070,7 @@ void update_aim_ballistics(uint64_t player) {
     static uint64_t cached_weapon_class = 0;
     static double cached_at = 0.0;
     static aim_ballistics::Parameters cached_params{};
-    constexpr double kCacheSeconds = 0.35;
+    constexpr double kCacheSeconds = 1.0;
     const double now = mono_seconds();
 
     g_aim_ballistic_params = {};
@@ -7064,8 +7122,14 @@ void update_aim_ballistics(uint64_t player) {
         return;
     }
     if (!valid_obj(weapon)) {
-        clear_cache();
-        return;
+        uint64_t fallback_weapon = 0;
+        if (aim_read_pointer_exact(fp + FPMANAGER_CURRENT_WEAPON, fallback_weapon) &&
+            valid_obj(fallback_weapon)) {
+            weapon = fallback_weapon;
+        } else {
+            clear_cache();
+            return;
+        }
     }
     uint64_t weapon_class = 0;
     if (!aim_read_pointer_exact(weapon, weapon_class) || !valid_obj(weapon_class)) {
@@ -7090,17 +7154,17 @@ void update_aim_ballistics(uint64_t player) {
 
     enum class Kind { None, Hitscan, Bow, Crossbow, Rocket, Explosive, Snowball, Spear };
     Kind kind = Kind::None;
-    if (aim_object_identity(weapon, "FPHitscan", "Oxide") == 1) kind = Kind::Hitscan;
-    else if (aim_object_identity(weapon, "FPBow", "Oxide") == 1) kind = Kind::Bow;
-    else if (aim_object_identity(weapon, "FPCrossbow", kAimFirstPersonNamespace) == 1)
+    if (aim_object_identity(weapon, "FPHitscan", "Oxide") != 0) kind = Kind::Hitscan;
+    else if (aim_object_identity(weapon, "FPBow", "Oxide") != 0) kind = Kind::Bow;
+    else if (aim_object_identity(weapon, "FPCrossbow", kAimFirstPersonNamespace) != 0)
         kind = Kind::Crossbow;
-    else if (aim_object_identity(weapon, "FPRocketLauncher", "Oxide") == 1)
+    else if (aim_object_identity(weapon, "FPRocketLauncher", "Oxide") != 0)
         kind = Kind::Rocket;
-    else if (aim_object_identity(weapon, "FPExplosiveCharge", "Oxide") == 1)
+    else if (aim_object_identity(weapon, "FPExplosiveCharge", "Oxide") != 0)
         kind = Kind::Explosive;
-    else if (aim_object_identity(weapon, "FPSnowball", kAimFirstPersonNamespace) == 1)
+    else if (aim_object_identity(weapon, "FPSnowball", kAimFirstPersonNamespace) != 0)
         kind = Kind::Snowball;
-    else if (aim_object_identity(weapon, "FPSpear", "Oxide") == 1)
+    else if (aim_object_identity(weapon, "FPSpear", "Oxide") != 0)
         kind = Kind::Spear;
 
     uint64_t config_offset = 0, projectile_offset = 0;
@@ -7128,7 +7192,7 @@ void update_aim_ballistics(uint64_t player) {
     if (projectile_offset)
         projectile_ok = aim_read_projectile(weapon, projectile_offset, false, projectile_read);
 
-    if (kind == Kind::None) {
+    if (!config_ok && !projectile_ok) {
         const uint64_t config_candidates[] = {
             FPHITSCAN_CONFIG, FPCROSSBOW_CONFIG, FPROCKETLAUNCHER_CONFIG
         };
@@ -7189,7 +7253,7 @@ void esp_set_aim_lead(float seconds) {
     // Автоматическая задержка контура для touch/memory; это не flight time.
     // Баллистический flight time считается solver-ом из оружия и дистанции.
     if (seconds < 0.0F) seconds = 0.0F;
-    if (seconds > 0.15F) seconds = 0.15F;
+    if (seconds > 0.35F) seconds = 0.35F;
     g_aim_lead_seconds = seconds;
 }
 
@@ -7202,11 +7266,20 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     Vec3 origin{};
     const bool haveOrigin = aim_ballistic_origin(origin);
     bool ballisticSolved = false;
-    if (g_state.aim_touch && g_aim_ballistic_params.valid && haveOrigin) {
+    if (g_state.aim_touch && haveOrigin) {
+        aim_ballistics::Parameters params = g_aim_ballistic_params;
+        if (!params.valid) {
+            params.muzzle_speed = 140.0f;
+            params.gravity = 1.0f;
+            params.air_drag = 0.02f;
+            params.underwater_drag = 0.5f;
+            params.max_range = 500.0f;
+            params.valid = true;
+        }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, g_aim_velocity,
                                   g_aim_inherited_velocity,
-                                  g_aim_ballistic_params, solution)) {
+                                  params, solution)) {
             float range = aim_ballistics::length(aim_ballistics::sub(world, origin));
             if (aim_ballistics::finite(range) && range < 1.0f) range = 1.0f;
             if (aim_ballistics::finite(range)) {
@@ -7235,7 +7308,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
                world_in.y + g_aim_lead.y,
                world_in.z + g_aim_lead.z};
     const Vec3 aim_world = g_state.aim_mode == AIM_MODE_SILENT
-        ? silent_world : world_in;
+        ? silent_world : world;
     box.aim_world[slot][0] = aim_world.x;
     box.aim_world[slot][1] = aim_world.y;
     box.aim_world[slot][2] = aim_world.z;
@@ -8943,7 +9016,7 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         // вперёд от той точки, которую мы ещё держим в кэше.
         if (src.vel_valid) {
             Vec3 measured{src.vx, src.vy, src.vz};
-            if (fabsf(measured.y) < 1.8f) measured.y *= 0.35f;
+            if (fabsf(measured.y) < 0.45f) measured.y *= 0.35f;
             const float age = aim_ballistics::finite(src.pos_age) && src.pos_age > 0.0f
                 ? src.pos_age : 0.0f;
             const float confidence = aim_ballistics::motion_confidence(age);
@@ -10780,6 +10853,15 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (read_ok) {
             read_flags |= PositionDirectValid;
             source = 'D';
+            Vec3 kcc_pos{};
+            if (player_kcc_position(player_aux(player), kcc_pos, !have_confirmed)) {
+                if (!g_use_direct_player_position) kcc_pos.y += 1.60F;
+                if (vec3_horiz2(kcc_pos, candidate) > 0.01F) {
+                    candidate = kcc_pos;
+                    read_flags |= PositionKccTried | PositionKccOk;
+                    source = 'K';
+                }
+            }
         }
         if (g_use_direct_player_position && g_player_position_offset != 0) {
             ++s_direct_dead_players;
@@ -11004,6 +11086,14 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         // трансформа, привязанного к сиденью; состояние видно в логе по
         // префиксу «транспорт:».
         apply_mounted_position(s_transforms[i], feet);
+        {
+            const float mdx = feet.x - positions[i].x;
+            const float mdy = feet.y - positions[i].y;
+            const float mdz = feet.z - positions[i].z;
+            if (mdx * mdx + mdy * mdy + mdz * mdz > 0.01F) {
+                track_player(s_transforms[i], feet);
+            }
+        }
         diagnostic.position = feet;
 
         float distance = -1.0F;
@@ -11190,7 +11280,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             auto vt = g_player_track.find(s_transforms[i]);
             if (vt != g_player_track.end() && vt->second.have_vel_ref) {
                 Vec3 velocity = vt->second.vel;
-                if (fabsf(velocity.y) < 1.8f) velocity.y *= 0.35f;
+                if (fabsf(velocity.y) < 0.45f) velocity.y *= 0.35f;
                 const double age = mono_seconds() - vt->second.vel_ref_t;
                 if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity)) {
                     const float age_seconds = static_cast<float>(age);
@@ -11319,14 +11409,22 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 float dx = hb.x - feet.x, dz = hb.z - feet.z;
                 if (dy > 0.5F && dy < 2.4F && (dx * dx + dz * dz) < 1.0F) {
                     bool agree = true;
-                    if (box.aim_valid[0]) {
-                        // Compare against the rig head point in screen space:
-                        // reject if wildly different (different body).
+                    auto sk = g_skeletons.find(s_transforms[i]);
+                    if (sk != g_skeletons.end() &&
+                        sk->second.bone_world_age[BONE_HEAD] >= 1 &&
+                        sk->second.bone_world_age[BONE_HEAD] <= kSkeletonAimMaxAge) {
+                        const Vec3& rig_head = sk->second.bone_world[BONE_HEAD];
+                        const float rdx = hb.x - rig_head.x;
+                        const float rdy = hb.y - rig_head.y;
+                        const float rdz = hb.z - rig_head.z;
+                        agree = (rdx * rdx + rdy * rdy + rdz * rdz) < 0.45F * 0.45F;
+                    } else if (box.bone_valid[BONE_HEAD]) {
                         Vec2 hs{};
                         if (w2s(vp, hb, sw, sh, hs, false)) {
-                            float ex = hs.x - box.aim_pts[0][0], ey = hs.y - box.aim_pts[0][1];
-                            float bh = fabsf(box.y2 - box.y1);
-                            agree = (ex * ex + ey * ey) < (bh * 0.25F) * (bh * 0.25F) + 4.0F;
+                            const float ex = hs.x - box.bones[BONE_HEAD][0];
+                            const float ey = hs.y - box.bones[BONE_HEAD][1];
+                            const float bh = fabsf(box.y2 - box.y1);
+                            agree = (ex * ex + ey * ey) < (bh * 0.30F) * (bh * 0.30F) + 9.0F;
                         }
                     }
                     if (agree && set_aim_point(box, 0, hb, vp, sw, sh) && box.aim_source == 0) box.aim_source = 1;

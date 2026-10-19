@@ -616,26 +616,30 @@ static void *TypeA(void *arg) {
     return nullptr;
 }
 
-static bool Touch_CreateUinput(int real_touch_fd, int minCnt, int screenX, int screenY) {
-    char temp[128];
-    struct uinput_user_dev ui_dev;
+static bool Touch_CreateUinput(int real_touch_fd, int screenX, int screenY) {
+    // Предварительная чистка перед установкой (KERNEL.md §4.11): если с
+    // прошлой попытки остался uinput-дескриптор, уничтожаем его до нового.
+    if (nowfd > 0) {
+        ioctl(nowfd, UI_DEV_DESTROY);
+        close(nowfd);
+        nowfd = 0;
+    }
+
+    struct uinput_user_dev ui_dev{};
     nowfd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (nowfd <= 0) {
         nowfd = 0;
         return false;
     }
 
-    int string_len = rand() % 10 + 5;
-    char string[string_len];
-    memset(&ui_dev, 0, sizeof(ui_dev));
-
-    genRandomString(string, string_len);
-    strncpy(ui_dev.name, string, UINPUT_MAX_NAME_SIZE);
-
-    ui_dev.id.bustype = 0;
-    ui_dev.id.vendor = rand() % 10 + 5;
-    ui_dev.id.product = rand() % 10 + 5;
-    ui_dev.id.version = rand() % 10 + 5;
+    // Имя, phys и id копируем с настоящего тачскрина по уже открытому fd
+    // (KERNEL.md §4.12) — никакого rand(), чтобы устройство в списке ввода
+    // не отличалось от штатного контроллера.
+    strncpy(ui_dev.name, "fts_ts", UINPUT_MAX_NAME_SIZE - 1);
+    ui_dev.id.bustype = BUS_I2C;
+    ui_dev.id.vendor  = 0x0001;
+    ui_dev.id.product = 0x0001;
+    ui_dev.id.version = 0x0100;
 
     ioctl(nowfd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
 
@@ -650,9 +654,6 @@ static bool Touch_CreateUinput(int real_touch_fd, int minCnt, int screenX, int s
     ioctl(nowfd, UI_SET_KEYBIT, BTN_TOOL_FINGER);
     ioctl(nowfd, UI_SET_KEYBIT, BTN_TOUCH);
 
-    genRandomString(string, string_len);
-    ioctl(nowfd, UI_SET_PHYS, string);
-
     if (real_touch_fd >= 0) {
         struct input_id real_id{};
         char real_name[UINPUT_MAX_NAME_SIZE] = {};
@@ -665,41 +666,26 @@ static bool Touch_CreateUinput(int real_touch_fd, int minCnt, int screenX, int s
         if (ioctl(real_touch_fd, EVIOCGPHYS(sizeof(real_phys) - 1), real_phys) > 0 &&
             real_phys[0])
             ioctl(nowfd, UI_SET_PHYS, real_phys);
-    }
 
-    if (minCnt >= 0) {
-        sprintf(temp, "/dev/input/event%d", minCnt);
-        int fd = open(temp, O_RDWR);
-        if (fd < 0) fd = open(temp, O_RDONLY);
-        if (fd >= 0) {
-            struct input_id id;
-            if (ioctl(fd, EVIOCGID, &id) == (int)sizeof(id)) {
-                ui_dev.id.bustype = id.bustype;
-                ui_dev.id.vendor = id.vendor;
-                ui_dev.id.product = id.product;
-                ui_dev.id.version = id.version;
-            }
-            uint8_t *bits = NULL;
-            ssize_t bits_size = 0;
-            int res, j, k;
-            while (1) {
-                res = ioctl(fd, EVIOCGBIT(EV_KEY, bits_size), bits);
-                if (res < bits_size)
-                    break;
-                bits_size = res + 16;
-                bits = (uint8_t *) realloc(bits, bits_size * 2);
-            }
-            for (j = 0; j < res; j++) {
-                for (k = 0; k < 8; k++)
-                    if (bits[j] & 1 << k) {
-                        if (j * 8 + k == BTN_TOUCH || j * 8 + k == BTN_TOOL_FINGER)
-                            continue;
-                        ioctl(nowfd, UI_SET_KEYBIT, j * 8 + k);
-                    }
-            }
-            free(bits);
-            close(fd);
+        uint8_t *bits = NULL;
+        ssize_t bits_size = 0;
+        int res, j, k;
+        while (1) {
+            res = ioctl(real_touch_fd, EVIOCGBIT(EV_KEY, bits_size), bits);
+            if (res < bits_size)
+                break;
+            bits_size = res + 16;
+            bits = (uint8_t *) realloc(bits, bits_size * 2);
         }
+        for (j = 0; j < res; j++) {
+            for (k = 0; k < 8; k++)
+                if (bits[j] & 1 << k) {
+                    if (j * 8 + k == BTN_TOUCH || j * 8 + k == BTN_TOOL_FINGER)
+                        continue;
+                    ioctl(nowfd, UI_SET_KEYBIT, j * 8 + k);
+                }
+        }
+        free(bits);
     }
     ui_dev.absmin[ABS_MT_POSITION_X] = 0;
     ui_dev.absmax[ABS_MT_POSITION_X] = screenX;
@@ -813,7 +799,7 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
     s_min_event_num = minCnt;
 
     if (!readOnly) {
-        if (!Touch_CreateUinput(real_touch_fd, minCnt, screenX, screenY)) {
+        if (!Touch_CreateUinput(real_touch_fd, screenX, screenY)) {
             for (int k = 0; k < fdNum; ++k) {
                 ioctl(origfd[k], EVIOCGRAB, UNGRAB);
                 close(origfd[k]);
@@ -845,7 +831,6 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
     devMaxY = screenY;
     Touch_UpdateScale();
 
-    system("chmod 000 -R /proc/bus/input/*");
     return true;
 }
 
@@ -857,7 +842,7 @@ bool Touch_TryUpgradeInject() {
     if (!Touch_initialized || !Touch_readOnly || fdNum <= 0)
         return Touch_initialized && !Touch_readOnly;
     if (devMaxX <= 0 || devMaxY <= 0) return false;
-    if (!Touch_CreateUinput(s_real_touch_fd, s_min_event_num, devMaxX, devMaxY))
+    if (!Touch_CreateUinput(s_real_touch_fd, devMaxX, devMaxY))
         return false;
     for (int k = 0; k < fdNum; ++k) {
         if (origfd[k] > 0) ioctl(origfd[k], EVIOCGRAB, GRAB);
@@ -930,6 +915,28 @@ static int checkDeviceIsTouch(int fd) {
     caps.direct = checkDeviceHasProp(fd, INPUT_PROP_DIRECT);
     caps.pointer = checkDeviceHasProp(fd, INPUT_PROP_POINTER);
     return (int)touchfilter::classify(caps);
+}
+
+// Аварийное освобождение EVIOCGRAB и UI_DEV_DESTROY без join и без аллокаций:
+// для обработчиков сигналов и дедлайн-выхода (не перехватить только SIGKILL и
+// SIGSTOP, где ядро само закроет все дескрипторы процесса).
+void Touch_EmergencyRelease() {
+    Touch_initialized = false;
+    for (int i = 0; i < maxE; ++i) {
+        const int fd = origfd[i];
+        if (fd > 0) {
+            origfd[i] = 0;
+            if (!Touch_readOnly)
+                ioctl(fd, EVIOCGRAB, UNGRAB);
+            close(fd);
+        }
+    }
+    const int ufd = nowfd;
+    if (ufd > 0) {
+        nowfd = 0;
+        ioctl(ufd, UI_DEV_DESTROY);
+        close(ufd);
+    }
 }
 
 void Touch_Close() {

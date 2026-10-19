@@ -4,6 +4,10 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly);
 void UpdateScreenData(int w, int h, uint32_t orientation_);
 
 void Touch_Close();
+// Аварийное снятие EVIOCGRAB и UI_DEV_DESTROY без join и без аллокаций —
+// безопасно из обработчика сигналов и дедлайн-выхода (не перехватить только
+// SIGKILL и SIGSTOP).
+void Touch_EmergencyRelease();
 void Touch_Down(float x, float y);
 void Touch_Move(float x, float y);
 void Touch_Up();

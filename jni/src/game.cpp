@@ -9650,7 +9650,11 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
                 cam_pos_arr, g_frame_cam_basis_valid,
                 out_arr);
             probe_tgt = {out_arr[0], out_arr[1], out_arr[2]};
-            if (next_slot != 0) {
+            const auto v3_diff2 = [](const Vec3& a, const Vec3& b) {
+                const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+                return dx * dx + dy * dy + dz * dz;
+            };
+            if (next_slot != 0 && (!head_ok || v3_diff2(head_pos, probe_tgt) > 1e-4F)) {
                 wr_buf(data + MARKER_DATA_HEAD_POS, &probe_tgt, sizeof(probe_tgt));
             }
         }
@@ -9676,7 +9680,12 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
             const Vec3 cur_ray_tgt = rd_v3(c + MARKER_CTX_RAY_TARGET);
             const bool cur_tgt_ok  = vec3_is_finite(cur_ray_tgt) && !position_near_world_origin(cur_ray_tgt);
             if (have_base_torso && (next_slot != 0 || !cur_tgt_ok)) {
-                wr_buf(c + MARKER_CTX_RAY_TARGET, &probe_tgt, sizeof(probe_tgt));
+                const float dx = cur_ray_tgt.x - probe_tgt.x;
+                const float dy = cur_ray_tgt.y - probe_tgt.y;
+                const float dz = cur_ray_tgt.z - probe_tgt.z;
+                if (!cur_tgt_ok || (dx * dx + dy * dy + dz * dz) > 1e-4F) {
+                    wr_buf(c + MARKER_CTX_RAY_TARGET, &probe_tgt, sizeof(probe_tgt));
+                }
                 any_ctx_ready = true;
             } else if (cur_tgt_ok) {
                 any_ctx_ready = true;

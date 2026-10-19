@@ -274,13 +274,43 @@ static void ArmShutdownDeadline() {
         // A kernel transport call can be uninterruptible. Once the visible
         // Surface is gone and critical cleanup had its deadline, terminate the
         // process instead of leaving background workers alive for a minute.
-        // iptables-правило лага при этом живёт в ядре и переживало нас:
-        // снимаем его до _exit тем же способом, каким это делают обработчики
-        // сигналов (без join и без ожидания su).
+        // iptables-правило лага и захват тача/uinput снимаем до _exit без join
+        // и без аллокаций (не перехватить только SIGKILL и SIGSTOP).
+        Touch_EmergencyRelease();
         if (g_fakeLag.active()) FakeLag::unblockRaw();
         _exit(0);
     }).detach();
 }
+
+namespace {
+struct sigaction g_crash_old[5]{};
+const int kCrashSignals[5] = { SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
+
+void CrashCleanupHandler(int sig) {
+    // Снимаем всё установленное вне процесса (EVIOCGRAB, UI_DEV_CREATE,
+    // iptables), если процесс падает по фатальному сигналу (не перехватить
+    // только SIGKILL и SIGSTOP).
+    Touch_EmergencyRelease();
+    FakeLag::unblockRaw();
+    for (size_t i = 0; i < sizeof(kCrashSignals) / sizeof(kCrashSignals[0]); ++i) {
+        if (kCrashSignals[i] == sig) {
+            sigaction(sig, &g_crash_old[i], nullptr);
+            break;
+        }
+    }
+    raise(sig);
+}
+
+void InstallCrashSignalCleanup() {
+    struct sigaction sa{};
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = CrashCleanupHandler;
+    sa.sa_flags = SA_RESETHAND;
+    for (size_t i = 0; i < sizeof(kCrashSignals) / sizeof(kCrashSignals[0]); ++i) {
+        sigaction(kCrashSignals[i], &sa, &g_crash_old[i]);
+    }
+}
+} // namespace
 
 int main(int argc, char* argv[]) {
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
@@ -313,9 +343,10 @@ int main(int argc, char* argv[]) {
     // маскировки: это секундная диагностика из терминала, ей нужен вывод.
     stealth::ApplyEarly(argc, argv);
 
-    signal(SIGINT,  [](int) { main_thread_flag.store(false); });
-    signal(SIGTERM, [](int) { main_thread_flag.store(false); });
-    signal(SIGHUP,  [](int) { main_thread_flag.store(false); });
+    signal(SIGINT,  [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
+    signal(SIGTERM, [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
+    signal(SIGHUP,  [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
+    InstallCrashSignalCleanup();
 
     prot::Init();
     screen_config();

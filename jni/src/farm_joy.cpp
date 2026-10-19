@@ -103,8 +103,16 @@ bool write_target(const Target& t, float x, float y) {
     if (!t.ok || !t.addr) return false;
     if (t.nul == NUL_NONE) {
         const float v[2] = {x, y};
-        bool written = wr_buf(t.addr, v, sizeof(v));
-        if (t.addr2) written |= wr_buf(t.addr2, v, sizeof(v));
+        float cur[2] = {};
+        bool written = (rd_buf(t.addr, cur, sizeof(cur)) &&
+                        memcmp(cur, v, sizeof(v)) == 0) ||
+                       wr_buf(t.addr, v, sizeof(v));
+        if (t.addr2) {
+            float cur2[2] = {};
+            written |= (rd_buf(t.addr2, cur2, sizeof(cur2)) &&
+                        memcmp(cur2, v, sizeof(v)) == 0) ||
+                       wr_buf(t.addr2, v, sizeof(v));
+        }
         return written;
     }
     // Nullable<Vector2>: 12 байт — флаг и два float по раскладке.
@@ -117,6 +125,9 @@ bool write_target(const Target& t, float x, float y) {
         memcpy(buf, v, sizeof(v));         // value
         buf[8] = 1;                        // hasValue
     }
+    unsigned char cur[0xC] = {};
+    if (rd_buf(t.addr, cur, sizeof(cur)) && memcmp(cur, buf, sizeof(buf)) == 0)
+        return true;
     return wr_buf(t.addr, buf, sizeof(buf));
 }
 
@@ -127,7 +138,10 @@ void zero_target(const Target& t) {
         write_target(t, 0.0f, 0.0f);
         return;
     }
-    unsigned char buf[0xC] = {};
+    const unsigned char buf[0xC] = {};
+    unsigned char cur[0xC] = {};
+    if (rd_buf(t.addr, cur, sizeof(cur)) && memcmp(cur, buf, sizeof(buf)) == 0)
+        return;
     wr_buf(t.addr, buf, sizeof(buf));
 }
 
@@ -568,12 +582,14 @@ bool sprint(bool on) {
             s_sprint_base_known  = true;
         }
         const unsigned char phase = on ? INPUT_ACTION_PHASE_STARTED : s_sprint_base_phase;
-        if (s_sprint_direct || rd<unsigned char>(phase_addr) != phase) {
+        if (rd<unsigned char>(phase_addr) != phase) {
             wr_buf(phase_addr, &phase, sizeof(phase));
         }
         if (s_sprint_direct) {
             const unsigned char press = on ? 1u : s_sprint_base_sprint;
-            wr_buf(press_addr, &press, sizeof(press));
+            if (rd<unsigned char>(press_addr) != press) {
+                wr_buf(press_addr, &press, sizeof(press));
+            }
             if (!on) s_sprint_direct = false;
         }
     } else if (!wrote_ovr) {

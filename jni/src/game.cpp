@@ -7221,7 +7221,7 @@ void update_aim_ballistics(uint64_t player) {
         return;
     }
     uint32_t instance_size = 0;
-    if (rd_exact(weapon_class + 0x120, instance_size) &&
+    if (rd_exact(weapon_class + 0xF8, instance_size) &&
         instance_size >= 0x80 && instance_size < 0x128) {
         clear_cache();
         return;
@@ -9778,7 +9778,7 @@ static bool weapon_is_melee_class(uint64_t weapon) {
     if (!valid_obj(weapon) || !valid_obj(rd_ptr(weapon + MANAGED_CACHED_PTR))) return false;
     const uint64_t klass = rd_ptr(weapon);
     uint32_t instance_size = 0;
-    if (valid_obj(klass) && rd_exact(klass + 0x120, instance_size)) {
+    if (valid_obj(klass) && rd_exact(klass + 0xF8, instance_size)) {
         if (instance_size >= 0x80 && instance_size < 0x128) return true; // non-weapon FPObject
         if (instance_size >= 0x128) {
             int32_t wtype = 0;

@@ -36,50 +36,33 @@ struct Memory {
         return read(address, p) ? memio::untag(p) : 0;
     }
     static bool class_size_matches(const char* name, uint32_t sz) {
-        if (!name || sz < 0x18 || sz > 0x4000) return false;
-        if (std::strcmp(name, "FPHitscan") == 0) return sz >= 0x290 && sz <= 0x360;
-        if (std::strcmp(name, "FPWeaponBase") == 0) return sz >= 0x128 && sz <= 0x360;
-        if (std::strcmp(name, "FPObject") == 0) return sz >= 0xD8 && sz <= 0x360;
-        if (std::strcmp(name, "HitscanWeaponConfig") == 0) return sz >= 0x70 && sz <= 0xA0;
-        if (std::strcmp(name, "DispersionConfig") == 0) return sz >= 0x3C && sz <= 0x60;
+        if (!name || sz < 0x10 || sz > 0x4000) return false;
+        if (std::strcmp(name, "FPHitscan") == 0) return sz >= 0x280 && sz <= 0x380;
+        if (std::strcmp(name, "FPWeaponBase") == 0) return sz >= 0x128 && sz <= 0x380;
+        if (std::strcmp(name, "HitscanWeaponConfig") == 0) return sz >= 0x70 && sz <= 0xC0;
+        if (std::strcmp(name, "DispersionConfig") == 0) return sz >= 0x3C && sz <= 0x68;
         if (std::strcmp(name, "RecoilConfig") == 0) return sz >= 0x40 && sz <= 0x68;
-        if (std::strcmp(name, "BallisticProfile") == 0) return sz >= 0x1C && sz <= 0x40;
-        if (std::strcmp(name, "ShaftedProjectile") == 0) return sz >= 0xD0 && sz <= 0x200;
-        if (std::strcmp(name, "TransformOffset") == 0) return sz >= 0x58 && sz <= 0xC0;
-        if (std::strcmp(name, "FPMotion") == 0) return sz >= 0xD8 && sz <= 0x160;
-        if (std::strcmp(name, "FPManager") == 0) return sz >= 0x70 && sz <= 0x150;
-        if (std::strcmp(name, "PlayerManager") == 0) return sz >= 0x300;
-        if (std::strcmp(name, "GameControllerBase") == 0) return sz >= 0x60 && sz <= 0x160;
-        if (std::strcmp(name, "BaseCamera") == 0) return sz >= 0x40 && sz <= 0x160;
-        if (std::strcmp(name, "NetworkIdentity") == 0) return sz >= 0x60 && sz <= 0x180;
         return true;
     }
     bool klass_is(uint64_t klass, const char* name) {
         using namespace go_active;
         if (!klass || !name) return false;
-        uint32_t instance_size = 0;
-        if (!read(klass + 0x120, instance_size) || !class_size_matches(name, instance_size))
-            return false;
         char n[64]{}, ns[64]{};
         auto np = ptr(klass + IL2CPP_CLASS_NAME), sp = ptr(klass + IL2CPP_CLASS_NAMESPACE);
         // Указатели имён невалидны — класс структурно мёртв, это не «нет данных».
         if (np < 0x10000 || sp < 0x10000) return false;
         // Строки имён лежат в памяти метаданных, которая на части устройств не
         // читается транспортом (EIO; см. class_identity в game.cpp — там же
-        // прецедент структурного допуска). Не прочиталось — верим структуре:
-        // объект уже пришёл по проверенной цепочке (свой пайплайн игрока или
-        // TypeInfo-слот этого релиза) и прошёл сверку instance_size.
-        if (!g_mem.read_quiet(np, n, sizeof(n)) || !g_mem.read_quiet(sp, ns, sizeof(ns))) return true;
+        // прецедент структурного допуска). Не прочиталось — сверяем instance_size
+        // (Il2CppClass + 0xF8). Прочиталось — только точное имя.
+        if (!g_mem.read_quiet(np, n, sizeof(n)) || !g_mem.read_quiet(sp, ns, sizeof(ns))) {
+            uint32_t instance_size = 0;
+            return read(klass + 0xF8, instance_size) && class_size_matches(name, instance_size);
+        }
         n[63] = ns[63] = 0;
         return std::strcmp(n, name) == 0 && std::strcmp(ns, "Oxide") == 0;
     }
-    bool is(uint64_t object, const char* name) {
-        if (!object || !name || !klass_is(ptr(object), name)) return false;
-        if (std::strcmp(name, "TransformOffset") != 0 &&
-            ptr(object + go_active::MANAGED_CACHED_PTR) < 0x10000)
-            return false;
-        return true;
-    }
+    bool is(uint64_t object, const char* name) { return object && klass_is(ptr(object), name); }
 };
 Memory memory;
 
@@ -237,59 +220,61 @@ struct HeapMemory {
     }
     bool named_klass(uint64_t klass, const char* name, const char* namespaze) {
         if (klass < 0x10000 || !name || !namespaze) return false;
-        uint32_t instance_size = 0;
-        if (!memory.read(klass + 0x120, instance_size) ||
-            !Memory::class_size_matches(name, instance_size))
-            return false;
-        const size_t nl=std::strlen(name)+1, sl=std::strlen(namespaze)+1;
+        uint64_t np=memory.ptr(klass+go_active::IL2CPP_CLASS_NAME);
+        uint64_t sp=memory.ptr(klass+go_active::IL2CPP_CLASS_NAMESPACE);
+        if (np < 0x10000 || sp < 0x10000) return false;   // мёртвый класс, не «нет данных»
         char n[96]{}, ns[96]{};
+        const size_t nl=std::strlen(name)+1, sl=std::strlen(namespaze)+1;
         if (nl>sizeof(n) || sl>sizeof(ns)) return false;
-        uint64_t cur = klass;
-        for (int depth = 0; depth < 4 && cur >= 0x10000; ++depth) {
-            uint64_t np=memory.ptr(cur+go_active::IL2CPP_CLASS_NAME);
-            uint64_t sp=memory.ptr(cur+go_active::IL2CPP_CLASS_NAMESPACE);
-            if (np < 0x10000 || sp < 0x10000) return depth > 0;
-            // Имена классов лежат в памяти метаданных: на части устройств она не
-            // читается транспортом ВООБЩЕ (EIO), а под нагрузкой чтения падают и
-            // на «здоровых» (до 4% за кадр, лог 16.09). При нечитаемом имени
-            // объект уже прошёл жёсткую сверку instance_size в Memory::class_size_matches.
-            if (!g_mem.read_quiet(np,n,nl) || !g_mem.read_quiet(sp,ns,sl)) return true;
-            if (std::memcmp(ns,namespaze,sl)==0) {
-                if (std::memcmp(n,name,nl)==0) return true;
-                n[sizeof(n)-1]=0;
-                if (std::strstr(n,name)!=nullptr) return true;
-            }
-            cur = memory.ptr(cur + 0x58); // Il2CppClass.parent
+        // Имена классов лежат в памяти метаданных: на части устройств она не
+        // читается транспортом ВООБЩЕ (EIO), а под нагрузкой чтения падают и
+        // на «здоровых» (до 4% за кадр, лог 16.09). При нечитаемом имени
+        // проверяем instance_size (Il2CppClass + 0xF8).
+        if (!g_mem.read_quiet(np,n,nl) || !g_mem.read_quiet(sp,ns,sl)) {
+            uint32_t instance_size = 0;
+            return memory.read(klass + 0xF8, instance_size) &&
+                   Memory::class_size_matches(name, instance_size);
         }
-        return false;
-    }
-    static bool fp_weapon_ready(uint64_t object, const char* name) {
-        if (!name || std::strncmp(name, "FP", 2) != 0 || std::strcmp(name, "FPManager") == 0)
-            return true;
-        if (memory.ptr(object + go_active::MANAGED_CACHED_PTR) < 0x10000) return false;
-        uint8_t is_drawn = 0;
-        if (!memory.read(object + 0x38, is_drawn) || is_drawn == 0) return false;
-        if (memory.ptr(object + go_active::FPOBJECT_ITEM) < 0x10000) return false;
-        return true;
+        if (std::memcmp(ns,namespaze,sl)!=0) return false;
+        if (std::memcmp(n,name,nl)==0) return true;
+        n[sizeof(n)-1]=0;
+        return std::strstr(n,name)!=nullptr;
     }
     bool exact(uint64_t object, const char* name, const char* namespaze) {
         if (object < 0x10000 || !name || !namespaze) return false;
-        if (!fp_weapon_ready(object, name)) return false;
         const uint64_t klass=memory.ptr(object);
         if (klass < 0x10000) return false;
         const uint64_t np=memory.ptr(klass+go_active::IL2CPP_CLASS_NAME);
         const uint64_t sp=memory.ptr(klass+go_active::IL2CPP_CLASS_NAMESPACE);
+        if (np < 0x10000 || sp < 0x10000) return false;
         char n[96]{}, ns[96]{};
         const size_t nl=std::strlen(name)+1, sl=std::strlen(namespaze)+1;
-        // Type-specific timing offsets must never use the permissive
-        // metadata-read fallback used by the legacy object-data chain.
-        return np>=0x10000 && sp>=0x10000 && nl<=sizeof(n) && sl<=sizeof(ns) &&
-            g_mem.read_quiet(np,n,nl) && g_mem.read_quiet(sp,ns,sl) &&
-            std::memcmp(n,name,nl)==0 && std::memcmp(ns,namespaze,sl)==0;
+        if (nl > sizeof(n) || sl > sizeof(ns)) return false;
+        if (g_mem.read_quiet(np,n,nl) && g_mem.read_quiet(sp,ns,sl)) {
+            return std::memcmp(n,name,nl)==0 && std::memcmp(ns,namespaze,sl)==0;
+        }
+        uint32_t sz = 0;
+        if (!memory.read(klass + 0xF8, sz)) return false;
+        if (std::strcmp(name, "PlayerManager") == 0) return sz >= 0x380 && sz <= 0x600;
+        if (std::strcmp(name, "NetworkIdentity") == 0) return sz >= 0x90 && sz <= 0x120;
+        if (std::strcmp(name, "FPManager") == 0) return sz >= 0x90 && sz <= 0x110;
+        if (std::strcmp(name, "WaitForSeconds") == 0) return sz == 0x18;
+        if (sz < 0x128 || sz > 0x380) return false;
+        int32_t wt = 0;
+        if (!memory.read(object + 0xDC, wt)) return false;
+        if (std::strcmp(name, "FPHitscan") == 0) return sz >= 0x280 && wt >= 1 && wt <= 7;
+        if (std::strcmp(name, "FPSpear") == 0) return sz >= 0x1B8 && sz <= 0x1E0 && wt == 14;
+        if (std::strcmp(name, "FPBow") == 0) return sz >= 0x190 && sz <= 0x1B4 && wt == 9;
+        if (std::strcmp(name, "FPCrossbow") == 0) return sz >= 0x180 && sz <= 0x198 && wt == 10;
+        if (std::strcmp(name, "FPRocketLauncher") == 0) return sz >= 0x158 && sz <= 0x178 && wt == 8;
+        if (std::strcmp(name, "FPExplosiveCharge") == 0) return sz >= 0x148 && sz <= 0x158 && (wt == 11 || wt == 12);
+        if (std::strcmp(name, "FPSnowball") == 0) return sz >= 0x158 && sz <= 0x168 && wt == 11;
+        if (std::strcmp(name, "FPMelee") == 0 || std::strcmp(name, "FPTool") == 0)
+            return sz >= 0x158 && sz <= 0x1A0 && (wt == 13 || wt == 15);
+        return false;
     }
     bool named(uint64_t object, const char* name, const char* namespaze) {
-        return object>=0x10000 && fp_weapon_ready(object, name) &&
-               named_klass(memory.ptr(object),name,namespaze);
+        return object>=0x10000 && named_klass(memory.ptr(object),name,namespaze);
     }
     bool describe(uint64_t object, char* name, size_t name_size,
                   char* namespaze, size_t namespace_size) {
@@ -319,9 +304,13 @@ struct HeapMemory {
         if (klass < 0x10000) return false;
         const uint64_t np=memory.ptr(klass+go_active::IL2CPP_CLASS_NAME);
         const uint64_t sp=memory.ptr(klass+go_active::IL2CPP_CLASS_NAMESPACE);
+        if (np < 0x10000 || sp < 0x10000) return false;
         char ns=1, name[33]{};
-        if (!np || !sp || !g_mem.read_quiet(sp,&ns,1) || ns ||
-            !g_mem.read_quiet(np,name,sizeof(name))) return false;
+        if (!g_mem.read_quiet(sp,&ns,1) || !g_mem.read_quiet(np,name,sizeof(name))) {
+            uint32_t sz = 0;
+            return memory.read(klass + 0xF8, sz) && sz >= 0x20 && sz <= 0x48;
+        }
+        if (ns) return false;
         for (unsigned i=0;i<sizeof(name);++i) {
             if (!name[i]) return i>0;
             const unsigned char c=(unsigned char)name[i];

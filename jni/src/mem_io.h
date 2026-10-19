@@ -104,7 +104,13 @@ constexpr int kFailStreak = 8;
 // чей-то индекс вместо указателя и т. п.). Такие отказы отделяем от потери
 // доступа: иначе каждый мусорный адрес считался бы «доступ пропал» и тянул за
 // собой переоткрытие /proc/<pid>/mem.
-constexpr uint64_t kJunkAddressFloor = 0x1000;
+constexpr uint64_t kJunkAddressFloor = 0x10000ULL;
+constexpr uint64_t kMaxUserAddress   = 0x0000FFFFFFFFFFFFULL;
+
+inline bool valid_user_range(uint64_t addr, size_t len) {
+    return addr >= kJunkAddressFloor && addr <= kMaxUserAddress &&
+           len > 0 && len <= (kMaxUserAddress - addr + 1);
+}
 
 // Сколько адресов блоков помним как «мы сюда писали» (на деле их 2-3: near clip
 // камеры и час в TOD_CycleParameters).
@@ -324,13 +330,20 @@ public:
     // по байту у границы отображения.
     bool read_quiet(uint64_t addr, void* out, size_t len) {
         if (!addr || !out || !len) return false;
-        return raw_read(normalize(addr), out, len, false);
+        if (!open_.load() || pid_.load() <= 0) return false;
+        addr = normalize(addr);
+        if (!valid_user_range(addr, len)) return false;
+        return raw_read(addr, out, len, false);
     }
 
     bool read(uint64_t addr, void* out, size_t len) {
         if (!addr || !out || !len) return false;
         if (!open_.load() || pid_.load() <= 0) return false;
         addr = normalize(addr);
+        if (!valid_user_range(addr, len)) {
+            note_fail_at(addr);
+            return false;
+        }
         if (len > kBlockSize) return raw_read(addr, out, len);
 
         const uint64_t base = addr & ~(uint64_t)(kBlockSize - 1);
@@ -379,6 +392,7 @@ public:
         if (!addr || !in || !len) return false;
         if (!open_.load() || pid_.load() <= 0) return false;
         addr = normalize(addr);
+        if (!valid_user_range(addr, len)) return false;
         if (!raw_write(addr, in, len)) return false;
         mark_written(addr, len);
         return true;
@@ -426,7 +440,7 @@ private:
             .store(addr + 1, std::memory_order_relaxed);
         read_fails_.fetch_add(1, std::memory_order_relaxed);
         last_errno_.store(errno, std::memory_order_relaxed);
-        if (addr < kJunkAddressFloor) {
+        if (addr < kJunkAddressFloor || addr > kMaxUserAddress) {
             // Такого отображения быть не может: это мусор в адресе. Запоминаем
             // первый такой отказ вместе с фазой, которая читала, и НЕ считаем
             // его потерей доступа (переоткрывать файл тут нечего).
@@ -507,7 +521,7 @@ private:
     // ELF-заголовок по адресу пробы — и заодно проверка доступа к памяти.
     bool probe_readable() {
         uint8_t magic[4] = {};
-        if (!raw_read(probe_addr_, magic, sizeof(magic))) return false;
+        if (!raw_read(probe_addr_, magic, sizeof(magic), false)) return false;
         return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
     }
 
@@ -519,12 +533,15 @@ private:
 
     // Способ доступа мог «протухнуть» (процесс перезапустился с тем же pid,
     // доступ отобрали и вернули, драйвер выгрузили). После серии отказов
-    // переоткрываем транспорт и перепроверяем пробу; если и это не помогло,
-    // привязку снимаем — поток привязки подключится заново.
+    // сначала проверяем пробу БЕЗ закрытия транспорта (обычная серия отказов на
+    // освобождённых объектах при смене сцены/GC не должна сбрасывать pid_ = -1
+    // под ногами фоновых писателей), и только если сама проба не читается —
+    // переоткрываем транспорт.
     void note_fail() {
         if (fail_streak_.fetch_add(1) + 1 < kFailStreak) return;
         fail_streak_.store(0);
         if (!probe_addr_ || pid_.load() <= 0) return;
+        if (probe_readable()) return;
         close_mem();
         if (open_mem() && probe_readable()) {
             reopens_.fetch_add(1, std::memory_order_relaxed);

@@ -1,5 +1,6 @@
 #include "FakeLag.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <signal.h>
@@ -14,12 +15,23 @@ static const char* UNBLOCK_RAW =
     "su -c 'iptables -D INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP' 2>/dev/null;"
     " su -c 'iptables -D INPUT ! -i lo -p udp -m length --length 80:65535 -j DROP' 2>/dev/null";
 
-// Выполняет команду через su -c '...'
+// Выполняет команду без popen/malloc в многопоточном процессе: если уже root
+// (euid == 0), вызываем sh напрямую без лишнего su-процесса.
 static void executeRoot(const char* cmd) {
-    char buf[512];
-    snprintf(buf, sizeof(buf), "su -c '%s'", cmd);
-    FILE* f = popen(buf, "r");
-    if (f) pclose(f);
+    const pid_t pid = fork();
+    if (pid < 0) return;
+    if (pid == 0) {
+        if (geteuid() == 0) {
+            execl("/system/bin/sh", "sh", "-c", cmd, (char*)nullptr);
+        } else {
+            char buf[512];
+            snprintf(buf, sizeof(buf), "su -c '%s'", cmd);
+            execl("/system/bin/sh", "sh", "-c", buf, (char*)nullptr);
+        }
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
 }
 
 namespace {
@@ -29,12 +41,13 @@ namespace {
 // единственной дорогой, «забыл выключить лаг» означало глобальный DROP на
 // входящий UDP до перезагрузки устройства — то есть функция уровня системы,
 // а не чита. Поэтому: (1) перед установкой снимем висящее с прошлого раза
-// правило, (2) на всё ловуемое (SIGINT/TERM/HUP/QUIT/ABRT/SEGV/BUS/ILL)
+// правило, (2) на всё ловуемое (TERM/QUIT/ABRT/SEGV/BUS/ILL; SIGHUP и SIGINT
+// игнорируются, чтобы закрытие терминала MT Manager не убивало процесс)
 // снимаем сами, (3) дедлайн-выход в main.cpp зовёт unblockRaw().
 // Ловить нельзя ровно два — SIGKILL и SIGSTOP.
 std::atomic<bool> g_guards_on{false};
-struct sigaction g_old_actions[8];
-const int kGuarded[8] = { SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
+struct sigaction g_old_actions[6];
+const int kGuarded[6] = { SIGTERM, SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
 
 void guard_handler(int sig) {
     // Повторный сигнал внутри обработчика (например, второй SIGSEGV на

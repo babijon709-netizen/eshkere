@@ -329,6 +329,10 @@ int main(int argc, char* argv[]) {
             return skeldiag::Run(argc - i, argv + i);
     }
 
+    // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +
+    // oom_score_adj = -1000) до создания любых потоков и стража-трейсера.
+    stealth::DaemonizeEarly();
+
     // Страж-трейсер САМЫМ ПЕРВЫМ делом после разбора аргументов: процесс ещё
     // однопоточен (чистый fork), а PTRACE_SEIZE обязан случиться ДО
     // PR_SET_DUMPABLE=0 в ApplyEarly — не-root среда иначе не даст потомку
@@ -343,9 +347,15 @@ int main(int argc, char* argv[]) {
     // маскировки: это секундная диагностика из терминала, ей нужен вывод.
     stealth::ApplyEarly(argc, argv);
 
-    signal(SIGINT,  [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
+    // SIGHUP и SIGINT приходят от закрытия терминала/вкладки в MT Manager —
+    // игнорируем их (выход из оверлея штатно идёт через кнопку закрытия в меню).
+    signal(SIGHUP,  SIG_IGN);
+    signal(SIGINT,  SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
     signal(SIGTERM, [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
-    signal(SIGHUP,  [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
     InstallCrashSignalCleanup();
 
     prot::Init();

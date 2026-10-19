@@ -106,6 +106,7 @@ void Init(){
 
 void Freeze(int screenW, int screenH, int menuX, int menuY, int menuW, int menuH){
     if(!s_ready||s_frozen) return;
+    if(menuW < 2 || menuH < 2 || screenW < 2 || screenH < 2) return;
 
     int mw = menuW;
     int mh = menuH;

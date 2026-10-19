@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -46,10 +47,101 @@ namespace stealth {
 
 inline constexpr const char kComm[] = "vold";   // comm ≤ 15 символов
 
+inline int g_daemon_pipe_wr = -1;
+
+// Вывод процесса из cgroup приложения (MT Manager / терминала) в корневые
+// cgroup'ы и защита от Android LMK (oom_score_adj = -1000). Без этого при
+// закрытии MT Manager (или когда система замораживает/убивает фоновый MT
+// Manager во время игры) ActivityManager killProcessGroup и cgroup freezer
+// убивают или замораживают все PID внутри uid_<mt>/pid_<mt>.
+inline void ProtectProcess(pid_t pid) {
+    char pid_str[32]{};
+    int len = snprintf(pid_str, sizeof(pid_str), "%d\n", (int)pid);
+    if (len <= 0) return;
+
+    static const char* const kCgroupFiles[] = {
+        "/sys/fs/cgroup/cgroup.procs",
+        "/acct/cgroup.procs",
+        "/acct/tasks",
+        "/dev/cpuctl/cgroup.procs",
+        "/dev/cpuctl/tasks",
+        "/dev/cpuset/cgroup.procs",
+        "/dev/cpuset/tasks",
+        "/dev/stune/cgroup.procs",
+        "/dev/stune/tasks",
+    };
+    for (const char* path : kCgroupFiles) {
+        int fd = ::open(path, O_WRONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            (void)::write(fd, pid_str, (size_t)len);
+            ::close(fd);
+        }
+    }
+
+    char oom_path[64]{};
+    snprintf(oom_path, sizeof(oom_path), "/proc/%d/oom_score_adj", (int)pid);
+    int oom_fd = ::open(oom_path, O_WRONLY | O_CLOEXEC);
+    if (oom_fd >= 0) {
+        static const char kMinOom[] = "-1000\n";
+        (void)::write(oom_fd, kMinOom, sizeof(kMinOom) - 1);
+        ::close(oom_fd);
+    }
+}
+
+// Ранняя демонизация ДО создания любых потоков (Binder/EGL/Touch/Audio) и ДО
+// ApplyTracerGuard: в MT Manager процесс стартует лидером группы (pid == pgid),
+// из-за чего setsid() без предварительного fork() всегда возвращает EPERM, а
+// процесс остаётся в группе и сессии терминала MT Manager.
+// Родитель ждёт сигнала от ApplyRuntime() (чтобы стартовые сообщения успели
+// вывестись в терминал), после чего завершается, а рабочий процесс остаётся
+// сиротой у init (ppid = 1) в собственной сессии.
+inline void DaemonizeEarly() {
+    signal(SIGHUP,  SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+
+    int pfd[2]{-1, -1};
+    if (pipe(pfd) != 0) return;
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(pfd[0]);
+        close(pfd[1]);
+        return;
+    }
+    if (pid > 0) {
+        // Родитель: ждём, пока потомок поднимет оверлей и тач (или упадёт до
+        // ApplyRuntime), и тихо выходим.
+        close(pfd[1]);
+        char ch = 0;
+        while (read(pfd[0], &ch, 1) < 0 && errno == EINTR) {}
+        close(pfd[0]);
+        _exit(0);
+    }
+
+    // Потомок: гарантированно не лидер группы -> setsid() создаёт новую сессию
+    // и отвязывает от управляющего терминала MT Manager.
+    close(pfd[0]);
+    g_daemon_pipe_wr = pfd[1];
+    fcntl(g_daemon_pipe_wr, F_SETFD, FD_CLOEXEC);
+    setsid();
+    chdir("/");
+    ProtectProcess(getpid());
+}
+
 // ---- 1) маскировка имени: cmdline/environ/comm/dumpable -------------------
 // Вызывать строго ПОСЛЕ разбора аргументов (строки argv затираются) и до
 // создания потоков (наследуют comm).
 inline void ApplyEarly(int argc, char* argv[]) {
+    // Закрываем унаследованные от MT Manager / su файловые дескрипторы (пайпы,
+    // сокеты, файлы внутри /data/data/bin.mt.plus), чтобы закрытие MT Manager
+    // не било по открытым fd.
+    for (int fd = 3; fd < 1024; ++fd) {
+        if (fd != g_daemon_pipe_wr) close(fd);
+    }
+
     if (!argv || !argv[0]) return;
 
     // Границы области cmdline: строки argv лежат в стеке подряд, ядро
@@ -106,8 +198,8 @@ inline void ApplyEarly(int argc, char* argv[]) {
 // SIGCHLD/SIGWINCH замораживает GUI насовсем.
 inline void ApplyTracerGuard() {
 #if STEALTH_PTRACE_OK
-    // Статусы детей никому не нужны (system() в TouchHelperA результат не
-    // читает) — SIG_IGN: ядро убирает умерших детей само, зомби нет.
+    // Статусы детей никому не нужны — SIG_IGN: ядро убирает умерших детей само,
+    // зомби нет.
     signal(SIGCHLD, SIG_IGN);
     int pipefd[2];
     if (pipe(pipefd) != 0) return;   // без трубы просто без синхронизации…
@@ -117,6 +209,21 @@ inline void ApplyTracerGuard() {
         const int wr = pipefd[1];
         prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
         if (getppid() != parent) { close(wr); _exit(0); }  // родитель умер
+        signal(SIGHUP,  SIG_IGN);
+        signal(SIGINT,  SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
+        signal(SIGQUIT, SIG_IGN);
+        signal(SIGPIPE, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);
+        chdir("/");
+        ProtectProcess(getpid());
+        const int nul = open("/dev/null", O_RDWR | O_CLOEXEC);
+        if (nul >= 0) {
+            dup2(nul, 0); dup2(nul, 1); dup2(nul, 2);
+            if (nul > 2) close(nul);
+        }
         for (int fd = 3; fd < 1024; ++fd) if (fd != wr) close(fd);
         if (ptrace(PTRACE_SEIZE, parent, nullptr, nullptr) != 0) {
             close(wr); _exit(0);      // слот занят/запрещён — идём без стража
@@ -134,11 +241,20 @@ inline void ApplyTracerGuard() {
             if (WIFEXITED(status) || WIFSIGNALED(status)) _exit(0);
             if (WIFSTOPPED(status)) {
                 // Сигнал родителя доставляем как будто нас нет; собственные
-                // ловушки ptrace (SIGTRAP) гасим — их никто не ждёт.
+                // ловушки ptrace (SIGTRAP), group-stop (PTRACE_EVENT_STOP) и
+                // терминальные стоп/хангап-сигналы гасим, чтобы закрытие
+                // терминала или фоновая заморозка никогда не завесили и не
+                // убили основной процесс.
+                const unsigned event = (unsigned)status >> 16;
                 int sig = WSTOPSIG(status);
-                if (sig == SIGTRAP) sig = 0;
-                if (ptrace(PTRACE_CONT, parent, 0, (void*)(long)sig) != 0)
-                    _exit(0);
+                if (event != 0 || sig == SIGTRAP || sig == SIGHUP || sig == SIGPIPE ||
+                    sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+                    sig = 0;
+                }
+                if (ptrace(PTRACE_CONT, parent, 0, (void*)(long)sig) != 0) {
+                    if (sig != 0) ptrace(PTRACE_CONT, parent, 0, nullptr);
+                    if (kill(parent, 0) != 0 && errno == ESRCH) _exit(0);
+                }
             }
         }
     }
@@ -163,8 +279,9 @@ inline void ApplyTracerGuard() {
 // Вызывать после успешного подъёма оверлея и тача, до экрана выбора режима.
 inline void ApplyRuntime() {
     // Отвязка от терминала: без сессии ps показывает TTY «?». Отказ не
-    // критичен (если мы уже лидер сессии).
+    // критичен (если мы уже лидер сессии после DaemonizeEarly).
     setsid();
+    ProtectProcess(getpid());
 
     // 0/1/2 больше не указывают на /dev/pts: в fd-листе чита нет терминала,
     // из которого его запустили.
@@ -172,6 +289,16 @@ inline void ApplyRuntime() {
     if (nul >= 0) {
         dup2(nul, 0); dup2(nul, 1); dup2(nul, 2);
         if (nul > 2) close(nul);
+    }
+
+    // Отпускаем родительский процесс в терминале MT Manager: оверлей и тач
+    // уже подняты, стартовые строки выведены, дальше работаем полностью
+    // автономно (ppid = 1).
+    if (g_daemon_pipe_wr >= 0) {
+        const char done = 1;
+        (void)write(g_daemon_pipe_wr, &done, 1);
+        close(g_daemon_pipe_wr);
+        g_daemon_pipe_wr = -1;
     }
 
     // ptrace-слот занимает ApplyTracerGuard (ранний fork, с супервизией

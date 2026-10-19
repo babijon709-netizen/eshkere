@@ -496,32 +496,41 @@ public:
     }
 
 private:
-    // bing: собрать 0x28-запрос и позвать getsockopt.
+    // bing: собрать 0x28-запрос и позвать getsockopt/ioctl с разбиением по
+    // границам 4К-страниц (одностраничный PTE-walk драйвера не должен читать
+    // через границу физической страницы).
     ssize_t rw(int cmd, uint64_t addr, void* buf, size_t len) {
         const int fd  = sock_;
         const int pid = pid_;
         if (fd < 0 || pid <= 0 || !buf || !len) { errno = EBADF; return -1; }
-        DriverRwReq req;
-        memset(&req, 0, sizeof(req));
-        req.pid      = (uint32_t)pid;
-        req.addr     = addr & kAddressTagMask;   // снять TBI/MTE-метку
-        req.size     = (uint64_t)len;            // +0x10 (подтверждено 5.10)
-        req.user_buf = (uint64_t)(uintptr_t)buf; // +0x18
-        req.magic    = kDriverMagic;             // +0x20 (нужно чтению 0x301)
-        if (use_ioctl_) {
-            // Сборка 5.10: команды через ioctl(fd, код, &req) — getsockopt
-            // там заглушка. Авторизация уже отправлена (send_auth при
-            // переключении транспорта/пробе); повторяем при необходимости.
-            if (!auth_done_) send_auth();
-            if (ioctl(fd, (unsigned long)cmd, &req) != 0) return -1;
-            return (ssize_t)len;
+        if (use_ioctl_ && !auth_done_) send_auth();
+        uint8_t* p = (uint8_t*)buf;
+        uint64_t a = addr & kAddressTagMask;
+        size_t done = 0;
+        while (done < len) {
+            const uint64_t pageLeft = 0x1000 - (a & 0xfff);
+            const size_t chunk = (uint64_t)(len - done) < pageLeft
+                                       ? (len - done) : (size_t)pageLeft;
+            DriverRwReq req;
+            memset(&req, 0, sizeof(req));
+            req.pid      = (uint32_t)pid;
+            req.addr     = a;
+            req.size     = (uint64_t)chunk;
+            req.user_buf = (uint64_t)(uintptr_t)p;
+            req.magic    = kDriverMagic;
+            int rc = 0;
+            if (use_ioctl_) {
+                rc = ioctl(fd, (unsigned long)cmd, &req);
+            } else {
+                socklen_t optlen = sizeof(req);
+                rc = getsockopt(fd, (int)pid, cmd, (char*)&req, &optlen);
+            }
+            if (rc != 0) return done ? (ssize_t)done : -1;
+            a += chunk;
+            p += chunk;
+            done += chunk;
         }
-        // level обязан быть != SOL_SOCKET, иначе getsockopt уйдёт в generic
-        // обработчик сокета (он-то и отвечает ENOPROTOOPT на чужой optname).
-        socklen_t optlen = sizeof(req);
-        const int rc = getsockopt(fd, (int)pid, cmd, (char*)&req, &optlen);
-        if (rc != 0) return -1;
-        return (ssize_t)len;
+        return (ssize_t)done;
     }
 
     // gongchuang op4: копия from -> to; направление задаём раскладкой полей.
@@ -530,38 +539,62 @@ private:
         const int pid = pid_;
         const int self = (int)getpid();
         if (fd < 0 || pid <= 0 || !buf || !len) { errno = EBADF; return -1; }
-        GongVmReq req;
-        memset(&req, 0, sizeof(req));
-        if (is_read) {
-            req.from = (uint32_t)pid;   req.from_addr = addr & kAddressTagMask;
-            req.to   = (uint32_t)self;  req.to_addr   = (uint64_t)(uintptr_t)buf;
-        } else {
-            req.from = (uint32_t)self;  req.from_addr = (uint64_t)(uintptr_t)buf;
-            req.to   = (uint32_t)pid;   req.to_addr   = addr & kAddressTagMask;
+        uint8_t* p = (uint8_t*)buf;
+        uint64_t a = addr & kAddressTagMask;
+        size_t done = 0;
+        while (done < len) {
+            const uint64_t pageLeft = 0x1000 - (a & 0xfff);
+            const size_t chunk = (uint64_t)(len - done) < pageLeft
+                                       ? (len - done) : (size_t)pageLeft;
+            GongVmReq req;
+            memset(&req, 0, sizeof(req));
+            if (is_read) {
+                req.from = (uint32_t)pid;   req.from_addr = a;
+                req.to   = (uint32_t)self;  req.to_addr   = (uint64_t)(uintptr_t)p;
+            } else {
+                req.from = (uint32_t)self;  req.from_addr = (uint64_t)(uintptr_t)p;
+                req.to   = (uint32_t)pid;   req.to_addr   = a;
+            }
+            req.size = (uint64_t)chunk;
+            socklen_t optlen = sizeof(req);
+            if (getsockopt(fd, pid, kGongCmdAccessVm, (char*)&req, &optlen) != 0)
+                return done ? (ssize_t)done : -1;
+            a += chunk;
+            p += chunk;
+            done += chunk;
         }
-        req.size = (uint64_t)len;
-        socklen_t optlen = sizeof(req);
-        if (getsockopt(fd, pid, kGongCmdAccessVm, (char*)&req, &optlen) != 0)
-            return -1;
-        return (ssize_t)len;
+        return (ssize_t)done;
     }
 
     // gongchuang pte: op5 читает vaddr -> buffer, op6 пишет buffer -> vaddr;
-    // цель — pid, к которому сокет прицеплен (gong_attach).
+    // цель — pid, к которому сокет прицеплен (gong_attach). Разбиваем по 4К,
+    // т.к. PTE-обработчик транслирует одну физическую страницу на запрос.
     ssize_t gong_pte_rw(bool is_read, uint64_t addr, void* buf, size_t len) {
         const int fd = gong_sock_ >= 0 ? gong_sock_ : sock_;
         const int pid = pid_;
         if (fd < 0 || pid <= 0 || !buf || !len) { errno = EBADF; return -1; }
         if (attached_pid_ != pid && !gong_attach(pid)) return -1;
-        PteRwReq req;
-        memset(&req, 0, sizeof(req));
-        req.vaddr  = addr & kAddressTagMask;
-        req.buffer = (uint64_t)(uintptr_t)buf;
-        req.size   = (uint64_t)len;
-        socklen_t optlen = sizeof(req);
+        uint8_t* p = (uint8_t*)buf;
+        uint64_t a = addr & kAddressTagMask;
+        size_t done = 0;
         const int cmd = is_read ? kGongCmdPteRead : kGongCmdPteWrite;
-        if (getsockopt(fd, pid, cmd, (char*)&req, &optlen) != 0) return -1;
-        return (ssize_t)len;
+        while (done < len) {
+            const uint64_t pageLeft = 0x1000 - (a & 0xfff);
+            const size_t chunk = (uint64_t)(len - done) < pageLeft
+                                       ? (len - done) : (size_t)pageLeft;
+            PteRwReq req;
+            memset(&req, 0, sizeof(req));
+            req.vaddr  = a;
+            req.buffer = (uint64_t)(uintptr_t)p;
+            req.size   = (uint64_t)chunk;
+            socklen_t optlen = sizeof(req);
+            if (getsockopt(fd, pid, cmd, (char*)&req, &optlen) != 0)
+                return done ? (ssize_t)done : -1;
+            a += chunk;
+            p += chunk;
+            done += chunk;
+        }
+        return (ssize_t)done;
     }
 
     bool ensure_socket() {

@@ -214,6 +214,7 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
 bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     static const char wn[] = {0x53,0x75,0x72,0x66,0x61,0x63,0x65,0x00};
     ::native_window = anwc::ANativeWindowCreator::Create(wn, _screen_x, _screen_y, false);
+    if (::native_window == nullptr) return false;
     ANativeWindow_acquire(native_window);
 
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -276,10 +277,13 @@ bool ImGui_init() {
     io.IniFilename = NULL;
     io.DisplaySize = ImVec2((float)native_window_screen_x, (float)native_window_screen_y);
 
+    ImFontConfig font_cfg;
+    font_cfg.FontDataOwnedByAtlas = false;
     io.Fonts->AddFontFromMemoryTTF(
         (void*)RobotoFont,
         (int)RobotoFont_size,
-        28.0f
+        28.0f,
+        &font_cfg
     );
 
     ImGui::GetStyle().ScaleAllSizes(1.5f);

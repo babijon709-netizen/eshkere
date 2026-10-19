@@ -8,9 +8,12 @@
 #include "game_offsets_active.h"
 #include "mem_io.h"
 #include "Vector.h"
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+std::recursive_mutex& viewmodel_session_mutex();
 
 extern memio::Reader g_mem;
 extern Mat4 g_frame_vp;

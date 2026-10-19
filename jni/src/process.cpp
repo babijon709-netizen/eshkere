@@ -187,10 +187,10 @@ void start_attach_thread() {
                     // Process death is immediate; isolated /proc/<pid>/mem EIO
                     // failures are tolerated. They are common under load and
                     // must not make every memory feature blink off together.
-                    esp_reset();
                     g_esp_attached = false;
                     g_target_pid = -1;
                     g_alive_check_failures = 0;
+                    esp_reset();
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));

@@ -438,11 +438,13 @@ static std::atomic<float> g_touch_last_y{0.f};
 void Touch_FrameStep() {
     if (!Touch_initialized) return;
     ImGuiIO &io = ImGui::GetIO();
-    if (g_touch_press_unseen.exchange(false, std::memory_order_acq_rel)) {
+    const bool unseen = g_touch_press_unseen.exchange(false, std::memory_order_acq_rel);
+    const bool down = g_touch_phys_down.load(std::memory_order_acquire);
+    if (unseen || down) {
         io.MousePos = {g_touch_last_x.load(std::memory_order_relaxed),
                        g_touch_last_y.load(std::memory_order_relaxed)};
         io.MouseDown[0] = true;
-    } else if (!g_touch_phys_down.load(std::memory_order_acquire)) {
+    } else {
         io.MouseDown[0] = false;
     }
 }
@@ -559,7 +561,6 @@ static void *TypeA(void *arg) {
                 }
             }
             if (ie.code == SYN_REPORT) {
-                ImGuiIO &io = ImGui::GetIO();
                 int bestDev = -1;
                 int bestSlot = -1;
                 for (int d = 0; d < fdNum; ++d) {
@@ -598,13 +599,8 @@ static void *TypeA(void *arg) {
                     g_touch_last_y.store(y, std::memory_order_relaxed);
                     g_touch_phys_down.store(true, std::memory_order_release);
                     g_touch_press_unseen.store(true, std::memory_order_release);
-                    io.MousePos = {x, y};
-                    io.MouseDown[0] = true;
                 } else {
                     g_touch_phys_down.store(false, std::memory_order_release);
-                    if (!g_touch_press_unseen.load(std::memory_order_acquire)) {
-                        io.MouseDown[0] = false;
-                    }
                 }
                 if (!Touch_readOnly) {
                     Upload();
@@ -658,7 +654,7 @@ static bool Touch_CreateUinput(int real_touch_fd, int screenX, int screenY) {
         struct input_id real_id{};
         char real_name[UINPUT_MAX_NAME_SIZE] = {};
         char real_phys[UINPUT_MAX_NAME_SIZE] = {};
-        if (ioctl(real_touch_fd, EVIOCGID, &real_id) == (int)sizeof(real_id))
+        if (ioctl(real_touch_fd, EVIOCGID, &real_id) >= 0)
             ui_dev.id = real_id;
         if (ioctl(real_touch_fd, EVIOCGNAME(sizeof(real_name) - 1), real_name) > 0 &&
             real_name[0])
@@ -667,25 +663,19 @@ static bool Touch_CreateUinput(int real_touch_fd, int screenX, int screenY) {
             real_phys[0])
             ioctl(nowfd, UI_SET_PHYS, real_phys);
 
-        uint8_t *bits = NULL;
-        ssize_t bits_size = 0;
-        int res, j, k;
-        while (1) {
-            res = ioctl(real_touch_fd, EVIOCGBIT(EV_KEY, bits_size), bits);
-            if (res < bits_size)
-                break;
-            bits_size = res + 16;
-            bits = (uint8_t *) realloc(bits, bits_size * 2);
-        }
-        for (j = 0; j < res; j++) {
-            for (k = 0; k < 8; k++)
-                if (bits[j] & 1 << k) {
-                    if (j * 8 + k == BTN_TOUCH || j * 8 + k == BTN_TOOL_FINGER)
+        uint8_t bits[(KEY_MAX + 8) / 8]{};
+        int res = ioctl(real_touch_fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits);
+        if (res > (int)sizeof(bits)) res = (int)sizeof(bits);
+        for (int j = 0; j < res; j++) {
+            for (int k = 0; k < 8; k++) {
+                if (bits[j] & (1u << k)) {
+                    const int key = j * 8 + k;
+                    if (key == BTN_TOUCH || key == BTN_TOOL_FINGER)
                         continue;
-                    ioctl(nowfd, UI_SET_KEYBIT, j * 8 + k);
+                    ioctl(nowfd, UI_SET_KEYBIT, key);
                 }
+            }
         }
-        free(bits);
     }
     ui_dev.absmin[ABS_MT_POSITION_X] = 0;
     ui_dev.absmax[ABS_MT_POSITION_X] = screenX;
@@ -809,6 +799,13 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
             return false;
         }
     }
+    ::screenWidth = w;
+    ::screenHeight = h;
+    ::orientation = orientation_;
+    devMaxX = screenX;
+    devMaxY = screenY;
+    Touch_UpdateScale();
+
     Touch_initialized = true;
     Touch_readOnly = readOnly;
 
@@ -823,13 +820,6 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
         targF[i].singleTouch = s_single[i];
         s_thread_alive[i] = (pthread_create(&s_threads[i], NULL, TypeA, &targF[i]) == 0);
     }
-
-    ::screenWidth = w;
-    ::screenHeight = h;
-    ::orientation = orientation_;
-    devMaxX = screenX;
-    devMaxY = screenY;
-    Touch_UpdateScale();
 
     return true;
 }
@@ -860,23 +850,11 @@ void UpdateScreenData(int w, int h, uint32_t orientation_) {
 // Есть ли у устройства клавиша keyCode в EV_KEY (нам важен BTN_TOUCH у
 // однотачевых — без неё «ABS_X/ABS_Y» может оказаться джойстиком).
 static bool checkDeviceHasKey(int fd, int keyCode) {
-    uint8_t *bits = NULL;
-    ssize_t bits_size = 0;
-    int res, j, k;
-    bool found = false;
-    while (true) {
-        res = ioctl(fd, EVIOCGBIT(EV_KEY, bits_size), bits);
-        if (res < bits_size)
-            break;
-        bits_size = res + 16;
-        bits = (uint8_t *) realloc(bits, bits_size * 2);
-    }
-    for (j = 0; j < res && !found; j++)
-        for (k = 0; k < 8 && !found; k++)
-            if (bits[j] & 1 << k && j * 8 + k == keyCode)
-                found = true;
-    free(bits);
-    return found;
+    if (keyCode < 0 || keyCode > KEY_MAX) return false;
+    uint8_t bits[(KEY_MAX + 8) / 8]{};
+    int res = ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits);
+    if (res <= keyCode / 8) return false;
+    return (bits[keyCode / 8] & (1u << (keyCode % 8))) != 0;
 }
 
 static bool checkDeviceHasProp(int fd, int propCode) {
@@ -888,28 +866,22 @@ static bool checkDeviceHasProp(int fd, int propCode) {
 }
 
 static int checkDeviceIsTouch(int fd) {
-    uint8_t *bits = NULL;
-    ssize_t bits_size = 0;
-    int res, j, k;
+    uint8_t bits[(ABS_MAX + 8) / 8]{};
+    int res = ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(bits)), bits);
+    if (res > (int)sizeof(bits)) res = (int)sizeof(bits);
     touchfilter::Caps caps{};
     struct input_absinfo abs{};
-    while (true) {
-        res = ioctl(fd, EVIOCGBIT(EV_ABS, bits_size), bits);
-        if (res < bits_size)
-            break;
-        bits_size = res + 16;
-        bits = (uint8_t *) realloc(bits, bits_size * 2);
-    }
-    for (j = 0; j < res; j++) {
-        for (k = 0; k < 8; k++)
-            if (bits[j] & 1 << k && ioctl(fd, EVIOCGABS(j * 8 + k), &abs) == 0) {
-                if (j * 8 + k == ABS_MT_POSITION_X) caps.mt_x = true;
-                if (j * 8 + k == ABS_MT_POSITION_Y) caps.mt_y = true;
-                if (j * 8 + k == ABS_X) caps.abs_x = true;
-                if (j * 8 + k == ABS_Y) caps.abs_y = true;
+    for (int j = 0; j < res; j++) {
+        for (int k = 0; k < 8; k++) {
+            const int code = j * 8 + k;
+            if ((bits[j] & (1u << k)) && ioctl(fd, EVIOCGABS(code), &abs) == 0) {
+                if (code == ABS_MT_POSITION_X) caps.mt_x = true;
+                if (code == ABS_MT_POSITION_Y) caps.mt_y = true;
+                if (code == ABS_X) caps.abs_x = true;
+                if (code == ABS_Y) caps.abs_y = true;
             }
+        }
     }
-    free(bits);
     caps.btn_touch = checkDeviceHasKey(fd, BTN_TOUCH);
     caps.tool_pen = checkDeviceHasKey(fd, BTN_TOOL_PEN);
     caps.direct = checkDeviceHasProp(fd, INPUT_PROP_DIRECT);

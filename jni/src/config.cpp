@@ -357,7 +357,10 @@ static bool ReadNewestUi(CfgUiTrailer& t) {
 // Startup restore: state comes from the newest config, nothing else on disk.
 void RestoreLang() {
     CfgBlob s;
-    if (ReadNewestBlob(s)) lang::set(s.ui_lang_en ? lang::LANG_EN : lang::LANG_RU);
+    if (ReadNewestBlob(s)) {
+        const bool en = (*reinterpret_cast<const unsigned char*>(&s.ui_lang_en) != 0);
+        lang::set(en ? lang::LANG_EN : lang::LANG_RU);
+    }
 }
 
 void RestoreAccent() {
@@ -679,7 +682,7 @@ static void LoadCfgByName(const char* name, bool announce) {
     g_state.ui_dark_mode= s.ui_dark_mode;
     // Язык интерфейса живёт в бывшем слоте ui_fps (счётчик FPS убран навсегда).
     // Старые конфиги держат там false — это и есть русский по умолчанию.
-    lang::set(s.ui_lang_en ? lang::LANG_EN : lang::LANG_RU);
+    lang::set((*reinterpret_cast<const unsigned char*>(&s.ui_lang_en) != 0) ? lang::LANG_EN : lang::LANG_RU);
     // ui_show_sep из конфига игнорируется: рамки карточек всегда включены.
     g_state.ui_fps      = false;
     g_state.ui_show_sep = true;

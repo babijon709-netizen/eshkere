@@ -5,8 +5,10 @@
 #include <dlfcn.h>
 #include <sys/system_properties.h>
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <unordered_map>
 #include <string>
@@ -38,6 +40,7 @@ namespace anwc {
                 LayerStack layerStack;
                 Rotation orientation = Rotation::Rotation0;
                 Size layerStackSpaceRect;
+                uint8_t reserved[128]{};
             };
 
             typedef int64_t nsecs_t;
@@ -54,6 +57,7 @@ namespace anwc {
                 nsecs_t presentationDeadline{0};
                 uint32_t viewportW{0};
                 uint32_t viewportH{0};
+                uint8_t reserved[128]{};
             };
 
             enum class DisplayType {
@@ -63,6 +67,22 @@ namespace anwc {
 
             struct PhysicalDisplayId {
                 uint64_t value;
+            };
+
+            // ABI-compatible return layout for std::vector<PhysicalDisplayId> returned
+            // by system libgui.so (linked against /system/lib64/libc++.so) without
+            // invoking benzware's c++_static std::vector destructor across STL boundaries.
+            struct PhysicalDisplayIdVector {
+                PhysicalDisplayId *begin_ptr = nullptr;
+                PhysicalDisplayId *end_ptr = nullptr;
+                PhysicalDisplayId *cap_ptr = nullptr;
+
+                PhysicalDisplayIdVector() noexcept = default;
+                PhysicalDisplayIdVector(const PhysicalDisplayIdVector &) noexcept = default;
+                ~PhysicalDisplayIdVector() noexcept {}
+
+                bool empty() const noexcept { return begin_ptr == nullptr || begin_ptr == end_ptr; }
+                PhysicalDisplayId operator[](size_t i) const noexcept { return begin_ptr[i]; }
             };
         }
 
@@ -122,11 +142,12 @@ namespace anwc {
             StrongPointer<void>(*SurfaceComposerClient__GetBuiltInDisplay)(ui::DisplayType type) = nullptr;
             int32_t(*SurfaceComposerClient__GetDisplayState)(StrongPointer<void> &display, ui::DisplayState *displayState) = nullptr;
             int32_t(*SurfaceComposerClient__GetDisplayInfo)(StrongPointer<void> &display, ui::DisplayInfo *displayInfo) = nullptr;
-            std::vector<ui::PhysicalDisplayId>(*SurfaceComposerClient__GetPhysicalDisplayIds)() = nullptr;
+            ui::PhysicalDisplayIdVector(*SurfaceComposerClient__GetPhysicalDisplayIds)() = nullptr;
             StrongPointer<void>(*SurfaceComposerClient__GetPhysicalDisplayToken)(ui::PhysicalDisplayId displayId) = nullptr;
             void(*SurfaceComposerClient__Transaction__Constructor)(void *thiz) = nullptr;
             void *(*SurfaceComposerClient__Transaction__SetLayer)(void *thiz, StrongPointer<void> &surfaceControl, int32_t z) = nullptr;
             void *(*SurfaceComposerClient__Transaction__SetTrustedOverlay)(void *thiz, StrongPointer<void> &surfaceControl, bool isTrustedOverlay) = nullptr;
+            void *(*SurfaceComposerClient__Transaction__SetTrustedOverlay_v2)(void *thiz, StrongPointer<void> &surfaceControl, int32_t trustedOverlayState) = nullptr;
             int32_t(*SurfaceComposerClient__Transaction__Apply)(void *thiz, bool synchronous, bool oneWay) = nullptr;
             void *(*SurfaceComposerClient__Transaction__SetFlags)(void *thiz, StrongPointer<void> &surfaceControl, uint32_t flags, uint32_t mask) = nullptr;
             int32_t(*SurfaceControl__Validate)(void *thiz) = nullptr;
@@ -134,10 +155,22 @@ namespace anwc {
             void(*SurfaceControl__DisConnect)(void *thiz) = nullptr;
 
             Functionals(const SymbolMethod &symbolMethod) {
-                std::string ver(128, 0);
-                ver.resize(__system_property_get("ro.build.version.release", ver.data()));
-                if (!ver.empty())
-                    systemVersion = std::stoi(ver);
+                char verBuf[PROP_VALUE_MAX]{};
+                if (__system_property_get("ro.build.version.release", verBuf) > 0) {
+                    int parsed = std::atoi(verBuf);
+                    if (parsed > 0)
+                        systemVersion = static_cast<size_t>(parsed);
+                }
+                char sdkBuf[PROP_VALUE_MAX]{};
+                if (__system_property_get("ro.build.version.sdk", sdkBuf) > 0) {
+                    int sdk = std::atoi(sdkBuf);
+                    if (sdk >= 36 && systemVersion < 16) systemVersion = 16;
+                    else if (sdk == 35 && systemVersion < 15) systemVersion = 15;
+                    else if (sdk == 34 && systemVersion < 14) systemVersion = 14;
+                    else if (sdk == 33 && systemVersion < 13) systemVersion = 13;
+                }
+                if (systemVersion > 16)
+                    systemVersion = 16;
 
                 if (systemVersion < 8)
                     throw std::runtime_error("ANativeWindowCreator: Android < 8 is not supported");
@@ -208,6 +241,7 @@ namespace anwc {
                 ResolveMethod(SurfaceComposerClient__Transaction, Constructor, libgui, "_ZN7android21SurfaceComposerClient11TransactionC2Ev");
                 ResolveMethod(SurfaceComposerClient__Transaction, SetLayer, libgui, "_ZN7android21SurfaceComposerClient11Transaction8setLayerERKNS_2spINS_14SurfaceControlEEEi");
                 ResolveMethod(SurfaceComposerClient__Transaction, SetTrustedOverlay, libgui, "_ZN7android21SurfaceComposerClient11Transaction17setTrustedOverlayERKNS_2spINS_14SurfaceControlEEEb");
+                ResolveMethod(SurfaceComposerClient__Transaction, SetTrustedOverlay_v2, libgui, "_ZN7android21SurfaceComposerClient11Transaction17setTrustedOverlayERKNS_2spINS_14SurfaceControlEEENS_3gui14TrustedOverlayE");
                 ResolveMethod(SurfaceComposerClient__Transaction, Apply, libgui, "_ZN7android21SurfaceComposerClient11Transaction5applyEbb");
                 ResolveMethod(SurfaceComposerClient__Transaction, SetFlags, libgui, "_ZN7android21SurfaceComposerClient11Transaction8setFlagsERKNS_2spINS_14SurfaceControlEEEjj");
                 ResolveMethod(SurfaceControl, Validate, libgui, "_ZNK7android14SurfaceControl8validateEv");
@@ -223,8 +257,17 @@ namespace anwc {
                     }
                 }
 
-                symbolMethod.Close(libutils);
-                symbolMethod.Close(libgui);
+                // Fallback for Android 16 QPR / 17+ where createSurface takes const gui::LayerMetadata&
+                if (systemVersion >= 14 && SurfaceComposerClient__CreateSurface == nullptr) {
+                    ResolveMethod(SurfaceComposerClient, CreateSurface, libgui,
+                                  "_ZN7android21SurfaceComposerClient13createSurfaceERKNS_7String8EjjiiRKNS_2spINS_7IBinderEEERKNS_3gui13LayerMetadataEPj");
+                }
+                if (SurfaceControl__GetSurface == nullptr) {
+                    ResolveMethod(SurfaceControl, GetSurface, libgui, "_ZNK7android14SurfaceControl10getSurfaceEv");
+                }
+
+                // Intentionally keep libgui.so and libutils.so loaded: benzware does not
+                // link them in DT_NEEDED, so dlclose() could unmap resolved code pages.
             }
 
             static const Functionals &GetInstance(const SymbolMethod &symbolMethod = {.Open = dlopen, .Find = dlsym, .Close = dlclose}) {
@@ -234,23 +277,29 @@ namespace anwc {
         };
 
         struct String8 {
-            char data[1024];
+            char data[1024]{};
 
-            String8(const char *const string) { Functionals::GetInstance().String8__Constructor(data, string); }
-            ~String8() { Functionals::GetInstance().String8__Destructor(data); }
+            String8(const char *const string) {
+                if (Functionals::GetInstance().String8__Constructor)
+                    Functionals::GetInstance().String8__Constructor(data, string);
+            }
+            ~String8() {
+                if (Functionals::GetInstance().String8__Destructor)
+                    Functionals::GetInstance().String8__Destructor(data);
+            }
             operator void *() { return reinterpret_cast<void *>(data); }
         };
 
         struct LayerMetadata {
-            char data[1024];
+            char data[1024]{};
 
             LayerMetadata() {
-                if (9 < Functionals::GetInstance().systemVersion)
+                if (9 < Functionals::GetInstance().systemVersion && Functionals::GetInstance().LayerMetadata__Constructor)
                     Functionals::GetInstance().LayerMetadata__Constructor(data);
             }
 
             void setInt32(uint32_t type, int32_t value) {
-                if (9 < Functionals::GetInstance().systemVersion)
+                if (9 < Functionals::GetInstance().systemVersion && Functionals::GetInstance().LayerMetadata__setInt32)
                     Functionals::GetInstance().LayerMetadata__setInt32(data, type, value);
             }
 
@@ -268,40 +317,55 @@ namespace anwc {
             SurfaceControl(void *data) : data(data) {}
 
             int32_t Validate() {
-                return nullptr == data ? 0 : Functionals::GetInstance().SurfaceControl__Validate(data);
+                if (nullptr == data || nullptr == Functionals::GetInstance().SurfaceControl__Validate) return 0;
+                return Functionals::GetInstance().SurfaceControl__Validate(data);
             }
 
             Surface *GetSurface() {
-                if (nullptr == data) return nullptr;
+                if (nullptr == data || nullptr == Functionals::GetInstance().SurfaceControl__GetSurface) return nullptr;
                 auto result = Functionals::GetInstance().SurfaceControl__GetSurface(data);
+                if (nullptr == result.pointer) return nullptr;
                 return reinterpret_cast<Surface *>(reinterpret_cast<size_t>(result.pointer) + sizeof(std::max_align_t) / 2);
             }
 
             void DisConnect() {
-                if (nullptr != data)
+                if (nullptr != data && nullptr != Functionals::GetInstance().SurfaceControl__DisConnect)
                     Functionals::GetInstance().SurfaceControl__DisConnect(data);
             }
 
             void DestroySurface(Surface *surface) {
                 if (nullptr == data || nullptr == surface) return;
-                Functionals::GetInstance().RefBase__DecStrong(
-                        reinterpret_cast<Surface *>(reinterpret_cast<size_t>(surface) - sizeof(std::max_align_t) / 2), this);
+                if (Functionals::GetInstance().RefBase__DecStrong)
+                    Functionals::GetInstance().RefBase__DecStrong(
+                            reinterpret_cast<Surface *>(reinterpret_cast<size_t>(surface) - sizeof(std::max_align_t) / 2), this);
                 DisConnect();
-                Functionals::GetInstance().RefBase__DecStrong(data, this);
+                if (Functionals::GetInstance().RefBase__DecStrong)
+                    Functionals::GetInstance().RefBase__DecStrong(data, this);
             }
         };
 
         struct SurfaceComposerClientTransaction {
-            char data[1024];
+            char data[1024]{};
 
-            SurfaceComposerClientTransaction() { Functionals::GetInstance().SurfaceComposerClient__Transaction__Constructor(data); }
+            SurfaceComposerClientTransaction() {
+                if (Functionals::GetInstance().SurfaceComposerClient__Transaction__Constructor)
+                    Functionals::GetInstance().SurfaceComposerClient__Transaction__Constructor(data);
+            }
 
             void *SetLayer(StrongPointer<void> &sc, int32_t z) {
+                if (nullptr == Functionals::GetInstance().SurfaceComposerClient__Transaction__SetLayer) return nullptr;
                 return Functionals::GetInstance().SurfaceComposerClient__Transaction__SetLayer(data, sc, z);
             }
 
             void *SetTrustedOverlay(StrongPointer<void> &sc, bool trusted) {
-                return Functionals::GetInstance().SurfaceComposerClient__Transaction__SetTrustedOverlay(data, sc, trusted);
+                const auto &f = Functionals::GetInstance();
+                if (nullptr != f.SurfaceComposerClient__Transaction__SetTrustedOverlay)
+                    return f.SurfaceComposerClient__Transaction__SetTrustedOverlay(data, sc, trusted);
+                if (nullptr != f.SurfaceComposerClient__Transaction__SetTrustedOverlay_v2) {
+                    // gui::TrustedOverlay: UNSET = 0, DISABLED = 1, ENABLED = 2
+                    return f.SurfaceComposerClient__Transaction__SetTrustedOverlay_v2(data, sc, trusted ? 2 : 1);
+                }
+                return nullptr;
             }
 
             void *SetFlags(StrongPointer<void> &sc, uint32_t flags, uint32_t mask) {
@@ -310,6 +374,7 @@ namespace anwc {
             }
 
             int32_t Apply(bool synchronous, bool oneWay) {
+                if (nullptr == Functionals::GetInstance().SurfaceComposerClient__Transaction__Apply) return 0;
                 if (12 >= Functionals::GetInstance().systemVersion)
                     return reinterpret_cast<int32_t (*)(void *, bool)>(
                             Functionals::GetInstance().SurfaceComposerClient__Transaction__Apply)(data, synchronous);
@@ -318,18 +383,26 @@ namespace anwc {
         };
 
         struct SurfaceComposerClient {
-            char data[1024];
+            char data[1024]{};
 
             SurfaceComposerClient() {
-                Functionals::GetInstance().SurfaceComposerClient__Constructor(data);
-                Functionals::GetInstance().RefBase__IncStrong(data, this);
+                if (Functionals::GetInstance().SurfaceComposerClient__Constructor)
+                    Functionals::GetInstance().SurfaceComposerClient__Constructor(data);
+                if (Functionals::GetInstance().RefBase__IncStrong)
+                    Functionals::GetInstance().RefBase__IncStrong(data, this);
             }
 
             ~SurfaceComposerClient() {
-                Functionals::GetInstance().SurfaceComposerClient__Destructor(data);
+                if (Functionals::GetInstance().SurfaceComposerClient__Destructor)
+                    Functionals::GetInstance().SurfaceComposerClient__Destructor(data);
+                else if (Functionals::GetInstance().RefBase__DecStrong)
+                    Functionals::GetInstance().RefBase__DecStrong(data, this);
             }
 
             SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool hide, bool) {
+                if (nullptr == Functionals::GetInstance().SurfaceComposerClient__CreateSurface)
+                    return {};
+
                 void *parentHandle = nullptr;
                 String8 windowName(name);
                 LayerMetadata layerMetadata;
@@ -355,8 +428,9 @@ namespace anwc {
                     result = Functionals::GetInstance().SurfaceComposerClient__CreateSurface(data, windowName, width, height, 1, flags, parentHandle, layerMetadata, nullptr);
                 }
 
-                if (12 <= Functionals::GetInstance().systemVersion) {
+                if (12 <= Functionals::GetInstance().systemVersion && nullptr != result.get()) {
                     static SurfaceComposerClientTransaction transaction;
+                    transaction.SetLayer(result, INT_MAX);
                     transaction.SetTrustedOverlay(result, true);
                     transaction.Apply(false, true);
                 }
@@ -365,25 +439,43 @@ namespace anwc {
             }
 
             bool GetDisplayInfo(ui::DisplayState *displayState) {
-                StrongPointer<void> defaultDisplay;
+                static StrongPointer<void> cachedDisplay{};
+                const auto &f = Functionals::GetInstance();
 
-                if (9 >= Functionals::GetInstance().systemVersion) {
-                    defaultDisplay = Functionals::GetInstance().SurfaceComposerClient__GetBuiltInDisplay(ui::DisplayType::DisplayIdMain);
-                } else if (14 > Functionals::GetInstance().systemVersion) {
-                    defaultDisplay = Functionals::GetInstance().SurfaceComposerClient__GetInternalDisplayToken();
+                auto acquireDisplay = [&]() -> StrongPointer<void> {
+                    if (9 >= f.systemVersion) {
+                        if (nullptr == f.SurfaceComposerClient__GetBuiltInDisplay) return {};
+                        return f.SurfaceComposerClient__GetBuiltInDisplay(ui::DisplayType::DisplayIdMain);
+                    } else if (14 > f.systemVersion) {
+                        if (nullptr == f.SurfaceComposerClient__GetInternalDisplayToken) return {};
+                        return f.SurfaceComposerClient__GetInternalDisplayToken();
+                    } else {
+                        if (nullptr == f.SurfaceComposerClient__GetPhysicalDisplayIds ||
+                            nullptr == f.SurfaceComposerClient__GetPhysicalDisplayToken)
+                            return {};
+                        auto displayIds = f.SurfaceComposerClient__GetPhysicalDisplayIds();
+                        if (displayIds.empty()) return {};
+                        return f.SurfaceComposerClient__GetPhysicalDisplayToken(displayIds[0]);
+                    }
+                };
+
+                if (nullptr == cachedDisplay.get())
+                    cachedDisplay = acquireDisplay();
+                if (nullptr == cachedDisplay.get())
+                    return false;
+
+                if (11 <= f.systemVersion) {
+                    if (nullptr == f.SurfaceComposerClient__GetDisplayState) return false;
+                    if (0 == f.SurfaceComposerClient__GetDisplayState(cachedDisplay, displayState))
+                        return true;
+                    // Re-acquire once if display token became stale
+                    cachedDisplay = acquireDisplay();
+                    if (nullptr == cachedDisplay.get()) return false;
+                    return 0 == f.SurfaceComposerClient__GetDisplayState(cachedDisplay, displayState);
                 } else {
-                    auto displayIds = Functionals::GetInstance().SurfaceComposerClient__GetPhysicalDisplayIds();
-                    if (displayIds.empty()) return false;
-                    defaultDisplay = Functionals::GetInstance().SurfaceComposerClient__GetPhysicalDisplayToken(displayIds[0]);
-                }
-
-                if (nullptr == defaultDisplay.get()) return false;
-
-                if (11 <= Functionals::GetInstance().systemVersion) {
-                    return 0 == Functionals::GetInstance().SurfaceComposerClient__GetDisplayState(defaultDisplay, displayState);
-                } else {
+                    if (nullptr == f.SurfaceComposerClient__GetDisplayInfo) return false;
                     ui::DisplayInfo legacyInfo{};
-                    if (0 != Functionals::GetInstance().SurfaceComposerClient__GetDisplayInfo(defaultDisplay, &legacyInfo))
+                    if (0 != f.SurfaceComposerClient__GetDisplayInfo(cachedDisplay, &legacyInfo))
                         return false;
                     displayState->layerStackSpaceRect.width  = static_cast<int32_t>(legacyInfo.w);
                     displayState->layerStackSpaceRect.height = static_cast<int32_t>(legacyInfo.h);
@@ -440,7 +532,8 @@ namespace anwc {
 
             auto surfaceControl = client.CreateSurface(name, width, height, hide, false);
             auto nativeWindow   = reinterpret_cast<ANativeWindow *>(surfaceControl.GetSurface());
-            m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
+            if (nullptr != nativeWindow)
+                m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
             return nativeWindow;
         }
 

@@ -2226,6 +2226,7 @@ static void marker_watch_finish(int visible_count) {
 }
 
 std::vector<EspMarker> esp_get_markers() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     ++s_marker_watch_frame;
     g_marker_frame_transient = false;
     std::vector<EspMarker> result;

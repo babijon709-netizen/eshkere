@@ -10762,6 +10762,7 @@ float esp_game_frame_hz() {
 }
 
 std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     g_frame_bot_count = 0;
     g_box_frame_transient = true;
     g_aim_lead = {};

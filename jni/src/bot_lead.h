@@ -35,7 +35,9 @@ inline bool finite_position(const Vec3& p) {
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
 }
 
-inline void update(Track& track, const Vec3& position, double now) {
+inline void update(Track& track, const Vec3& position, double now,
+                   float max_speed = kMaxSpeed,
+                   float clamp_speed = kClampRunSpeed) {
     if (!finite_position(position) || !std::isfinite(now)) return;   // мусорный отсчёт не двигает оценку
     if (!track.have_ref) {
         track.ref = position; track.ref_t = now; track.moved_t = now;
@@ -51,9 +53,9 @@ inline void update(Track& track, const Vec3& position, double now) {
             if (span < kMaxSpanSeconds) {
                 Vec3 v = {(float)(mx / span), (float)(my / span), (float)(mz / span)};
                 const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-                if (std::isfinite(speed) && speed < kMaxSpeed) {
-                    if (speed > kClampRunSpeed) {
-                        const float s = kClampRunSpeed / speed;
+                if (std::isfinite(speed) && speed < max_speed) {
+                    if (speed > clamp_speed) {
+                        const float s = clamp_speed / speed;
                         v.x *= s; v.y *= s; v.z *= s;
                     }
                     const float prev2 = track.vel.x * track.vel.x + track.vel.z * track.vel.z;

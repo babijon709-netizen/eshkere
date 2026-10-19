@@ -6130,13 +6130,7 @@ static void apply_mounted_position(uint64_t player, Vec3& feet) {
             live_source = "трансформ";
         }
     }
-    if (have_model && !id_mounted && !latch.engaged) {
-        // While riding, characterModel can remain parented to the seat's old
-        // PlayerManager copy for a tick. Selecting whichever sample is farther
-        // from lastSaved made the box alternate between the boarding point and
-        // the vehicle every frame. The rendered/worldCameraRoot transform is
-        // the authoritative moving sample; use the model only on foot or when
-        // the rendered transform is unavailable.
+    if (have_model && (!id_mounted && !latch.engaged || !have_live || live_h2 < 1.6F * 1.6F)) {
         Vec3 p = model;
         if (!ground) p.y += 0.90F; // hips -> roughly eye, matches hierarchy boxes
         float h2 = vec3_horiz2(p, saved);
@@ -6146,13 +6140,22 @@ static void apply_mounted_position(uint64_t player, Vec3& feet) {
             live_h2 = h2;
             live_source = "модель";
         }
-    } else if (!have_live && have_model) {
-        Vec3 p = model;
-        if (!ground) p.y += 0.90F;
-        live = p;
-        have_live = true;
-        live_h2 = vec3_horiz2(p, saved);
-        live_source = "модель";
+    }
+    if (!have_live || live_h2 < 1.6F * 1.6F) {
+        Vec3 head_pos{};
+        if (player_head_world(player_aux(player), head_pos)) {
+            Vec3 p = head_pos;
+            if (ground) p.y -= kCameraRootHeight;
+            if (position_looks_like_world_space(p)) {
+                const float h2 = vec3_horiz2(p, saved);
+                if (!have_live || h2 > live_h2 + 0.25F) {
+                    live = p;
+                    have_live = true;
+                    live_h2 = h2;
+                    live_source = "голова";
+                }
+            }
+        }
     }
     if (!ground && !have_live && position_looks_like_world_space(feet)) {
         live = feet;
@@ -6293,8 +6296,8 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
                     if (span < 0.5) {
                         Vec3 v = { (float)(mx / span), (float)(my / span), (float)(mz / span) };
                         const float speed = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-                        const float max_speed = mounted ? 30.0F : 22.0F;
-                        const float clamp_speed = mounted ? 25.0F : 6.8F;
+                        const float max_speed = mounted ? 65.0F : 22.0F;
+                        const float clamp_speed = mounted ? 40.0F : 6.8F;
                         if (std::isfinite(speed) && speed < max_speed) {
                             if (speed > clamp_speed) {
                                 const float s = clamp_speed / speed;
@@ -7331,16 +7334,30 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
 
     // Distance-dependent lead scaling: in Oxide FixedUpdate steps by 0.03125s,
     // so a 350–600 m/s firearm bullet raycasts 11–19m on the very first tick.
-    // Inside 6m, extra control lead pulls aim ahead of the collider; from 6m
-    // to 40m it ramps smoothly with distance (up to 1.35x at >= 55m).
+    // On foot (horiz_speed <= 7 m/s), keep extra control lead at 0 inside 5m
+    // and ramp smoothly over 5–25m. In vehicles (horiz_speed > 7 m/s), ramp
+    // much earlier (2–12m) because a fast vehicle covers 1–2m during control lag.
+    const float horiz_speed = std::sqrt(
+        g_aim_velocity.x * g_aim_velocity.x + g_aim_velocity.z * g_aim_velocity.z);
+    const bool vehicle_speed = aim_ballistics::finite(horiz_speed) && horiz_speed > 7.0f;
     float lead_dist_scale = 0.0f;
-    if (aim_ballistics::finite(dist) && dist > 6.0f) {
-        if (dist <= 40.0f) {
-            const float t = (dist - 6.0f) / 34.0f;
-            lead_dist_scale = t * t * (3.0f - 2.0f * t);
-        } else {
-            const float extra = (dist - 40.0f) / 40.0f;
-            lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
+    if (aim_ballistics::finite(dist)) {
+        if (vehicle_speed) {
+            if (dist > 2.0f) {
+                if (dist <= 12.0f) {
+                    lead_dist_scale = (dist - 2.0f) / 10.0f;
+                } else {
+                    const float extra = (dist - 12.0f) / 30.0f;
+                    lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
+                }
+            }
+        } else if (dist > 5.0f) {
+            if (dist <= 25.0f) {
+                lead_dist_scale = (dist - 5.0f) / 20.0f;
+            } else {
+                const float extra = (dist - 25.0f) / 35.0f;
+                lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
+            }
         }
     }
     const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale);
@@ -7362,9 +7379,9 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             params.valid = true;
         }
         float ballistic_vel_scale = 1.0f;
-        if (aim_ballistics::finite(dist)) {
-            if (dist <= 4.0f) ballistic_vel_scale = 0.0f;
-            else if (dist < 10.0f) ballistic_vel_scale = (dist - 4.0f) / 6.0f;
+        if (!vehicle_speed && aim_ballistics::finite(dist)) {
+            if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
+            else if (dist < 8.5f) ballistic_vel_scale = (dist - 3.5f) / 5.0f;
         }
         const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
         aim_ballistics::Solution solution{};
@@ -7628,18 +7645,22 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
     }
     if (hips_fresh) {
         const double now = mono_seconds();
-        botlead::update(skeleton.hips_track, hips_now, now);
+        const bool mounted = player_is_mounted(player) || player_mount_engaged(player);
+        botlead::update(skeleton.hips_track, hips_now, now,
+                        mounted ? 65.0F : botlead::kMaxSpeed,
+                        mounted ? 40.0F : botlead::kClampRunSpeed);
         const float cur_v2 = g_aim_velocity.x * g_aim_velocity.x +
                              g_aim_velocity.z * g_aim_velocity.z;
         if (cur_v2 < 0.04F && botlead::fresh(skeleton.hips_track, now)) {
             Vec3 hv = skeleton.hips_track.vel;
-            if (fabsf(hv.y) < 0.45F) hv.y *= 0.35F;
+            if (!mounted && fabsf(hv.y) < 0.45F) hv.y *= 0.35F;
             const float hv2 = hv.x * hv.x + hv.z * hv.z;
             if (hv2 > 0.04F && aim_ballistics::finite(hv)) {
                 g_aim_velocity = hv;
                 g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
-                if (g_aim_lead.y > 0.20F) g_aim_lead.y = 0.20F;
-                else if (g_aim_lead.y < -0.20F) g_aim_lead.y = -0.20F;
+                const float max_y = mounted ? 2.00F : 0.20F;
+                if (g_aim_lead.y > max_y) g_aim_lead.y = max_y;
+                else if (g_aim_lead.y < -max_y) g_aim_lead.y = -max_y;
             }
         }
     }
@@ -11011,6 +11032,9 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             source = 'C';
         } else {
             ++live_player_positions;
+            if (player != g_local_player) {
+                apply_mounted_position(player, candidate);
+            }
             PlayerTrack& track = track_player(player, candidate);
             tracked = g_player_track.find(player);
 
@@ -11189,19 +11213,6 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (!s_transforms[i]) { skip_reason[i] = 'Z'; continue; }
         if (!position_ok[i]) { mark_skip('P'); continue; }
         Vec3 feet = positions[i];
-        // На транспорте поле позиции замирает в точке посадки, и бокс едет
-        // «по памяти» либо отстаёт. Пока пассажир в седле, позиция берётся из
-        // трансформа, привязанного к сиденью; состояние видно в логе по
-        // префиксу «транспорт:».
-        apply_mounted_position(s_transforms[i], feet);
-        {
-            const float mdx = feet.x - positions[i].x;
-            const float mdy = feet.y - positions[i].y;
-            const float mdz = feet.z - positions[i].z;
-            if (mdx * mdx + mdy * mdy + mdz * mdz > 0.01F) {
-                track_player(s_transforms[i], feet);
-            }
-        }
         diagnostic.position = feet;
 
         float distance = -1.0F;
@@ -11387,16 +11398,19 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         {
             auto vt = g_player_track.find(s_transforms[i]);
             if (vt != g_player_track.end() && vt->second.have_vel_ref) {
+                const bool mounted = player_is_mounted(s_transforms[i]) ||
+                                     player_mount_engaged(s_transforms[i]);
                 Vec3 velocity = vt->second.vel;
-                if (fabsf(velocity.y) < 0.45f) velocity.y *= 0.35f;
+                if (!mounted && fabsf(velocity.y) < 0.45f) velocity.y *= 0.35f;
                 const double age = mono_seconds() - vt->second.vel_ref_t;
                 if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(velocity)) {
                     const float age_seconds = static_cast<float>(age);
                     const float confidence = aim_ballistics::motion_confidence(age_seconds);
                     g_aim_velocity = aim_ballistics::scale(velocity, confidence);
                     g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
-                    if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
-                    else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
+                    const float max_y = mounted ? 2.00f : 0.20f;
+                    if (g_aim_lead.y > max_y) g_aim_lead.y = max_y;
+                    else if (g_aim_lead.y < -max_y) g_aim_lead.y = -max_y;
                 } else {
                     g_aim_velocity = {};
                     g_aim_lead = {};

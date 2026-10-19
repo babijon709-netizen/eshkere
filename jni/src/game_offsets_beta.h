@@ -408,6 +408,7 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_H
 // Move 0x1AC, Move 0x1AC + 0x6C = Terrain 0x218. (В бету добавлен ещё один
 // Move — ydK 0xF0 — но он стоит ДО пары oM/float, а не после PlayerInput.)
 inline constexpr std::uint64_t KCC_MOVE = 0x1AC;
+inline constexpr std::uint64_t KCC_VISIBILITY = 0x308; // public Visibility visibility; // 0x308 (0 = Visible, 1 = Hidden)
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
 // Значение Move в бете то же самое (struct Move, TypeDefIndex 4453): State
 // 0x00, Position 0x0C, RealVelocity 0x18 — сверено по dump.cs 11968.
@@ -523,6 +524,7 @@ inline constexpr std::uint64_t PLAYER_CLAN_ID = 0x2C0;    // было 0x2B0
 inline constexpr std::uint64_t PLAYER_CLAN_TAG = 0x2C8;   // было 0x2B8
 inline constexpr std::uint64_t PLAYER_VEHICLE_ID = 0x2B8; // было 0x2A8
 inline constexpr std::uint64_t PLAYER_SEAT_ID = 0x2BC;    // было 0x2AC
+inline constexpr std::uint64_t PLAYER_ZIPLINE_ID = 0x2DC; // было 0x2CC
 inline constexpr std::uint64_t LOOTOBJECT_INVENTORY = game_offsets::LOOTOBJECT_INVENTORY;
 inline constexpr std::uint64_t LOOTOBJECT_IS_LOOTABLE = game_offsets::LOOTOBJECT_IS_LOOTABLE;
 inline constexpr std::uint64_t LOOTOBJECT_PANEL_NAME = game_offsets::LOOTOBJECT_PANEL_NAME;

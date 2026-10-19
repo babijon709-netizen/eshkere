@@ -693,6 +693,7 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET     = 0x90; // float, eye 
 //   +0x04 Pose (0 Stand, 1 Crouch)   +0x08 bool Aim  +0x0C Vector3 Position
 //   +0x18 Vector3 RealVelocity
 inline constexpr std::uint64_t KCC_MOVE                   = 0x13C;  // было 0x154; luY (был ZYW): State +0x0, Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
+inline constexpr std::uint64_t KCC_VISIBILITY             = 0x298;  // [SyncVar(hook = "OnVisibilityChanged")] public Visibility visibility; // 0x298 (0 = Visible, 1 = Hidden)
 // MoveState значения (dump 11949, enum MoveState TypeDefIndex 4284): 0 IDLE,
 // 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE, 5 CLIMBING, 6 SWIMMING,
 // 7 DEAD, 8 SEATED. Поза (Move.Pose, TypeDefIndex 4285) знает только
@@ -957,6 +958,7 @@ inline constexpr std::uint64_t PLAYER_CLAN_TAG  = 0x2B8; // string clanTag; бы
 // lastSavedPosition, so his box has to come from the rendered transform.
 inline constexpr std::uint64_t PLAYER_VEHICLE_ID = 0x2A8; // uint vehicleID; было 0x288
 inline constexpr std::uint64_t PLAYER_SEAT_ID    = 0x2AC; // uint seatID; было 0x28C
+inline constexpr std::uint64_t PLAYER_ZIPLINE_ID = 0x2CC; // uint ziplineID; 0x2CC
 
 // ---- World loot containers (Oxide.LootObject : fNZ : Mirror.NetworkBehaviour)
 // Everything openable in the world is a LootObject: road crates, barrels,

@@ -323,6 +323,7 @@ inline std::uint64_t HITBOX_CENTER = game_offsets::HITBOX_CENTER;
 inline std::uint64_t HITBOX_AREA = game_offsets::HITBOX_AREA;
 inline std::uint64_t KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_HEIGHT_OFFSET;
 inline std::uint64_t KCC_MOVE = game_offsets::KCC_MOVE;
+inline std::uint64_t KCC_VISIBILITY = game_offsets::KCC_VISIBILITY;
 inline std::int32_t KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
 inline std::uint64_t KCC_MOVE_STATE = game_offsets::KCC_MOVE_STATE;
 inline std::uint64_t KCC_MOVE_REAL_VELOCITY = game_offsets::KCC_MOVE_REAL_VELOCITY;
@@ -413,6 +414,7 @@ inline std::uint64_t PLAYER_CLAN_ID = game_offsets::PLAYER_CLAN_ID;
 inline std::uint64_t PLAYER_CLAN_TAG = game_offsets::PLAYER_CLAN_TAG;
 inline std::uint64_t PLAYER_VEHICLE_ID = game_offsets::PLAYER_VEHICLE_ID;
 inline std::uint64_t PLAYER_SEAT_ID = game_offsets::PLAYER_SEAT_ID;
+inline std::uint64_t PLAYER_ZIPLINE_ID = game_offsets::PLAYER_ZIPLINE_ID;
 inline std::uint64_t LOOTOBJECT_INVENTORY = game_offsets::LOOTOBJECT_INVENTORY;
 inline std::uint64_t LOOTOBJECT_IS_LOOTABLE = game_offsets::LOOTOBJECT_IS_LOOTABLE;
 inline std::uint64_t LOOTOBJECT_PANEL_NAME = game_offsets::LOOTOBJECT_PANEL_NAME;
@@ -753,6 +755,7 @@ inline void Select(GameVersion version) {
         HITBOX_AREA = game_offsets_beta::HITBOX_AREA;
         KCC_LOOK_HEIGHT_OFFSET = game_offsets_beta::KCC_LOOK_HEIGHT_OFFSET;
         KCC_MOVE = game_offsets_beta::KCC_MOVE;
+        KCC_VISIBILITY = game_offsets_beta::KCC_VISIBILITY;
         KCC_MOVE_STATE_DEAD = game_offsets_beta::KCC_MOVE_STATE_DEAD;
         KCC_MOVE_STATE = game_offsets_beta::KCC_MOVE_STATE;
         KCC_MOVE_REAL_VELOCITY = game_offsets_beta::KCC_MOVE_REAL_VELOCITY;
@@ -843,6 +846,7 @@ inline void Select(GameVersion version) {
         PLAYER_CLAN_TAG = game_offsets_beta::PLAYER_CLAN_TAG;
         PLAYER_VEHICLE_ID = game_offsets_beta::PLAYER_VEHICLE_ID;
         PLAYER_SEAT_ID = game_offsets_beta::PLAYER_SEAT_ID;
+        PLAYER_ZIPLINE_ID = game_offsets_beta::PLAYER_ZIPLINE_ID;
         LOOTOBJECT_INVENTORY = game_offsets_beta::LOOTOBJECT_INVENTORY;
         LOOTOBJECT_IS_LOOTABLE = game_offsets_beta::LOOTOBJECT_IS_LOOTABLE;
         LOOTOBJECT_PANEL_NAME = game_offsets_beta::LOOTOBJECT_PANEL_NAME;
@@ -1180,6 +1184,7 @@ inline void Select(GameVersion version) {
         HITBOX_AREA = game_offsets::HITBOX_AREA;
         KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_HEIGHT_OFFSET;
         KCC_MOVE = game_offsets::KCC_MOVE;
+        KCC_VISIBILITY = game_offsets::KCC_VISIBILITY;
         KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
         KCC_MOVE_STATE = game_offsets::KCC_MOVE_STATE;
         KCC_MOVE_REAL_VELOCITY = game_offsets::KCC_MOVE_REAL_VELOCITY;
@@ -1270,6 +1275,7 @@ inline void Select(GameVersion version) {
         PLAYER_CLAN_TAG = game_offsets::PLAYER_CLAN_TAG;
         PLAYER_VEHICLE_ID = game_offsets::PLAYER_VEHICLE_ID;
         PLAYER_SEAT_ID = game_offsets::PLAYER_SEAT_ID;
+        PLAYER_ZIPLINE_ID = game_offsets::PLAYER_ZIPLINE_ID;
         LOOTOBJECT_INVENTORY = game_offsets::LOOTOBJECT_INVENTORY;
         LOOTOBJECT_IS_LOOTABLE = game_offsets::LOOTOBJECT_IS_LOOTABLE;
         LOOTOBJECT_PANEL_NAME = game_offsets::LOOTOBJECT_PANEL_NAME;

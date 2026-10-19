@@ -2831,7 +2831,16 @@ static bool read_entity_pose(uint64_t source, Vec3& position, Vec4& rotation) {
 // спавне в центре карты: там x и z тоже стоят в нуле, и трек не подтверждался
 // НИКОГДА. Дополнительно гейт применяется только к первой точке трека
 // (см. вызовы): подтверждённая позиция нулём быть не перестаёт.
+// KCC.OnVisibilityChanged паркует скрытых сервером (Visibility.ForceHidden)
+// удалённых игроков на вертикальной оси: transform.position = Vector3.up * 1000f
+// (а также (0, 3289, 0) / (0, -7045, 0) в соседних перегрузках). Если игрок
+// заспавнился уже скрытым, KCC.OnStartClient копирует эту же точку в KCC.Move.Position.
+static bool position_is_sky_parked(const Vec3& v) {
+    return fabsf(v.x) < 0.05F && fabsf(v.z) < 0.05F && fabsf(v.y) > 400.0F;
+}
+
 static bool position_near_world_origin(const Vec3& v) {
+    if (position_is_sky_parked(v)) return true;
     return fabsf(v.y) < 0.02F && fabsf(v.z) < 0.02F;
 }
 
@@ -2840,6 +2849,7 @@ static bool position_near_world_origin(const Vec3& v) {
 // server, where the "several players spread out" test below cannot run.
 bool position_looks_like_world_space(const Vec3& position) {
     if (!vec3_is_finite(position)) return false;
+    if (position_is_sky_parked(position)) return false;
     if (fabsf(position.x) > 20000.0F || fabsf(position.z) > 20000.0F) return false;
     if (fabsf(position.y) > 10000.0F) return false;
     return fabsf(position.x) + fabsf(position.y) + fabsf(position.z) > 0.01F;
@@ -5946,8 +5956,13 @@ static bool player_is_crouched(const PlayerAux& aux) {
 static bool player_head_world(const PlayerAux& aux, Vec3& out) {
     if (!aux.head_native) return false;
     if (g_skeleton_layout_valid &&
-        read_transform_hierarchy_layout(aux.head_native, g_skeleton_layout, out)) return vec3_is_finite(out);
-    return read_transform_hierarchy_position(aux.head_native, out) && vec3_is_finite(out);
+        read_transform_hierarchy_layout(aux.head_native, g_skeleton_layout, out) &&
+        vec3_is_finite(out) && position_looks_like_world_space(out) &&
+        !position_near_world_origin(out))
+        return true;
+    return read_transform_hierarchy_position(aux.head_native, out) &&
+           vec3_is_finite(out) && position_looks_like_world_space(out) &&
+           !position_near_world_origin(out);
 }
 
 // World-space centre of the Head hit volume: transform TRS applied to the
@@ -5995,6 +6010,7 @@ struct PlayerTrack {
     Vec3 last{};
     bool has_last = false;
     int  still_frames = 0;  // consecutive frames without movement
+    int  miss_frames = 0;   // consecutive frames without a live world position
     // How fast this player is actually moving through the world, in metres
     // per second. World space on purpose: it does not care where the camera
     // is pointing or how fast it is turning, so it stays correct even when
@@ -6044,9 +6060,11 @@ static bool player_is_mounted(uint64_t player) {
     if (!player) return false;
     uint32_t vehicle = rd<uint32_t>(player + PLAYER_VEHICLE_ID);
     if (vehicle != 0 && vehicle != 0xFFFFFFFFu) return true;
-    // Copters / some seats leave vehicleID at 0; seatID is still non-zero.
+    // Copters / seats store a Mirror netId in seatID (looked up in NetworkClient.spawned).
     uint32_t seat = rd<uint32_t>(player + PLAYER_SEAT_ID);
-    return seat != 0 && seat != 0xFFFFFFFFu && seat < 32u;
+    if (seat != 0 && seat != 0xFFFFFFFFu) return true;
+    uint32_t zipline = rd<uint32_t>(player + PLAYER_ZIPLINE_ID);
+    return zipline != 0 && zipline != 0xFFFFFFFFu;
 }
 
 static bool player_saved_position(uint64_t player, Vec3& out) {
@@ -6182,7 +6200,10 @@ static void apply_mounted_position(uint64_t player, Vec3& feet) {
     }
 
     const bool was_engaged = latch.engaged;
-    bool pos_mounted = latch.saved_still >= 8 && have_live && live_h2 > 1.6F * 1.6F;
+    const float live_dy = have_live ? fabsf(live.y - saved.y) : 0.0F;
+    bool pos_mounted = latch.saved_still >= 8 && have_live &&
+                       live_h2 > 1.6F * 1.6F && live_h2 < 25.0F * 25.0F &&
+                       live_dy < 15.0F;
     bool keep_mounted = latch.engaged && have_live && live_h2 > 1.6F * 1.6F;
     if (id_mounted || pos_mounted || keep_mounted) {
         latch.engaged = true;
@@ -6340,6 +6361,7 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
     }
     track.last = position;
     track.has_last = true;
+    track.miss_frames = 0;
     return track;
 }
 
@@ -8612,13 +8634,25 @@ bool esp_alive_check() { return g_mem.verify(); }
 unsigned long long esp_mem_reads_total() { return g_mem.reads_total(); }
 unsigned long long esp_mem_read_fails_total() { return g_mem.read_fails_total(); }
 
+// Server-side network visibility culling (Mirror.Visibility.ForceHidden == 1).
+// When hidden, KCC.OnVisibilityChanged teleports transform.position to
+// Vector3.up * 1000f and KCC stops interpolating remote ObserverMove ticks,
+// leaving KCC.Move.Position frozen (either at (0,1000,0) or at the last
+// visible position, including mid-air).
+static bool player_is_kcc_hidden(const PlayerAux& aux) {
+    if (!aux.kcc) return false;
+    int32_t vis = 0;
+    if (!rd_exact(aux.kcc + KCC_VISIBILITY, vis)) return false;
+    return vis == 1;
+}
+
 // KCC.Move.Position: the simulated character position (capsule bottom) the
 // game itself moves the character with. Independent of the discovered
 // PlayerManager position field, and validated by the KCC back-reference.
 static bool player_kcc_position(const PlayerAux& aux, Vec3& out, bool gate_origin = true) {
-    if (!aux.kcc) return false;
+    if (!aux.kcc || player_is_kcc_hidden(aux)) return false;
     Vec3 p = rd_v3(aux.kcc + KCC_MOVE + 0x0C);
-    if (!vec3_is_finite(p)) return false;
+    if (!vec3_is_finite(p) || !position_looks_like_world_space(p)) return false;
     float magnitude = fabsf(p.x) + fabsf(p.y) + fabsf(p.z);
     if (magnitude < 0.01F || magnitude > 100000.0F) return false;
     // Тот же пуловой мусор, что и в поле позиции: свежий CharacterController
@@ -11031,6 +11065,18 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         const uint64_t player = s_transforms[index];
         if (!player) continue;
 
+        auto tracked = g_player_track.find(player);
+        if (player != g_local_player && player_is_kcc_hidden(player_aux(player))) {
+            if (tracked != g_player_track.end()) {
+                tracked->second.has_last = false;
+                tracked->second.have_vel_ref = false;
+                tracked->second.filt.has_drawn = false;
+                tracked->second.miss_frames = 0;
+            }
+            g_mount_latch.erase(player);
+            continue;
+        }
+
         Vec3 candidate{};
         char source = 0;
         unsigned short read_flags = PositionDirectTried;
@@ -11044,7 +11090,6 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         // подтверждённой позиции: у карты, где игрок реально стоит у нуля
         // (спавн/стройка в центре), подтверждённая точка нулём быть не
         // перестаёт, и гейт по ней стёр бы живого игрока с ESP навсегда.
-        auto tracked = g_player_track.find(player);
         const bool have_confirmed = tracked != g_player_track.end() && tracked->second.has_last;
         const bool origin_gate = position_near_world_origin(candidate) && !have_confirmed;
         bool read_ok = direct_read_ok && position_looks_like_world_space(candidate) && !origin_gate;
@@ -11090,9 +11135,16 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         }
 
         if (!read_ok) {
-            // A read failure never removes a visible player. Keep the last
-            // accepted world position until the confirmed list retires him.
-            if (tracked == g_player_track.end() || !tracked->second.has_last) {
+            // A read failure never removes a visible player on a dropped tick,
+            // but expire the cache if live reads stay dead so culled or
+            // recycled objects cannot hang statically in the air.
+            if (tracked == g_player_track.end() || !tracked->second.has_last ||
+                ++tracked->second.miss_frames > 45) {
+                if (tracked != g_player_track.end()) {
+                    tracked->second.has_last = false;
+                    tracked->second.have_vel_ref = false;
+                    tracked->second.filt.has_drawn = false;
+                }
                 position_read_flags[index] = read_flags;
                 continue;
             }
@@ -11288,7 +11340,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (has_local_position) {
             float dx = feet.x - local.x, dy = feet.y - local.y, dz = feet.z - local.z;
             distance = sqrtf(dx * dx + dy * dy + dz * dz);
-            if (!std::isfinite(distance)) { diagnostic.distance = distance; mark_skip('D'); continue; }
+            if (!std::isfinite(distance) || distance > MAX_PLAYER_DISTANCE) {
+                diagnostic.distance = distance;
+                mark_skip('D');
+                continue;
+            }
         }
         diagnostic.distance = distance;
 

@@ -46,8 +46,8 @@ namespace {
 // снимаем сами, (3) дедлайн-выход в main.cpp зовёт unblockRaw().
 // Ловить нельзя ровно два — SIGKILL и SIGSTOP.
 std::atomic<bool> g_guards_on{false};
-struct sigaction g_old_actions[6];
-const int kGuarded[6] = { SIGTERM, SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
+struct sigaction g_old_actions[5];
+const int kGuarded[5] = { SIGQUIT, SIGABRT, SIGSEGV, SIGBUS, SIGILL };
 
 void guard_handler(int sig) {
     // Повторный сигнал внутри обработчика (например, второй SIGSEGV на

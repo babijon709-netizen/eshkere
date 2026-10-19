@@ -347,15 +347,16 @@ int main(int argc, char* argv[]) {
     // маскировки: это секундная диагностика из терминала, ей нужен вывод.
     stealth::ApplyEarly(argc, argv);
 
-    // SIGHUP и SIGINT приходят от закрытия терминала/вкладки в MT Manager —
-    // игнорируем их (выход из оверлея штатно идёт через кнопку закрытия в меню).
+    // SIGHUP, SIGINT и SIGTERM приходят от закрытия терминала/вкладки или
+    // Process.destroy() в MT Manager — игнорируем их (выход из оверлея штатно
+    // идёт через кнопку закрытия в меню).
     signal(SIGHUP,  SIG_IGN);
     signal(SIGINT,  SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
-    signal(SIGTERM, [](int) { main_thread_flag.store(false); ArmShutdownDeadline(); });
     InstallCrashSignalCleanup();
 
     prot::Init();

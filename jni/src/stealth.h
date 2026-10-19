@@ -135,11 +135,21 @@ inline void DaemonizeEarly() {
 // Вызывать строго ПОСЛЕ разбора аргументов (строки argv затираются) и до
 // создания потоков (наследуют comm).
 inline void ApplyEarly(int argc, char* argv[]) {
-    // Закрываем унаследованные от MT Manager / su файловые дескрипторы (пайпы,
-    // сокеты, файлы внутри /data/data/bin.mt.plus), чтобы закрытие MT Manager
-    // не било по открытым fd.
-    for (int fd = 3; fd < 1024; ++fd) {
-        if (fd != g_daemon_pipe_wr) close(fd);
+    // Закрываем только унаследованные от MT Manager / терминала дескрипторы
+    // (/dev/pts/*, /data/*, pipe/socket от шелла), не трогая системные fd
+    // bionic/линкера (/dev/__properties__ и т.д.).
+    for (int fd = 3; fd < 256; ++fd) {
+        if (fd == g_daemon_pipe_wr) continue;
+        char path[64]{}, target[256]{};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        const ssize_t n = readlink(path, target, sizeof(target) - 1);
+        if (n <= 0) continue;
+        target[n] = '\0';
+        if (strncmp(target, "/dev/pts/", 9) == 0 ||
+            strncmp(target, "/data/", 6) == 0 ||
+            strncmp(target, "pipe:", 5) == 0) {
+            close(fd);
+        }
     }
 
     if (!argv || !argv[0]) return;
@@ -247,8 +257,9 @@ inline void ApplyTracerGuard() {
                 // убили основной процесс.
                 const unsigned event = (unsigned)status >> 16;
                 int sig = WSTOPSIG(status);
-                if (event != 0 || sig == SIGTRAP || sig == SIGHUP || sig == SIGPIPE ||
-                    sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+                if (event != 0 || sig == SIGTRAP || sig == SIGHUP || sig == SIGINT ||
+                    sig == SIGTERM || sig == SIGPIPE || sig == SIGSTOP ||
+                    sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
                     sig = 0;
                 }
                 if (ptrace(PTRACE_CONT, parent, 0, (void*)(long)sig) != 0) {

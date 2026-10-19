@@ -8,6 +8,7 @@
 #include "viewmodel.h"
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
+#include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
 #include "kernel_io.h"             // кернел-транспорт (сокет ядерного драйвера)
 #include "game_internal.h"        // общий срез состояния/помощников для game_markers/farm.cpp
@@ -4524,6 +4525,7 @@ struct CachedSkeleton {
     int      fail_streak = 0;
     int      build_fail = 0;         // пересборок подряд, закончившихся провалом
     int      revalidate_timer = 0;
+    botlead::Track hips_track{};
 };
 
 static std::unordered_map<uint64_t, CachedSkeleton> g_skeletons;
@@ -7083,8 +7085,13 @@ bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
         {  5,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 05_Shotgun
         {  6, 260.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 06_HuntingRifle
         {  7, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 07_AssaultRifle
+        { 10,  60.0f,  28.0f, 1.0f, 0.05f, 1.5f }, // 10_IronSpear
+        { 11, 120.0f,  55.0f, 1.0f, 0.05f, 1.5f }, // 11_WoodenBow
+        { 14, 150.0f,  40.0f, 0.5f, 0.05f, 1.5f }, // 14_RocketLauncher
+        { 16,  35.0f,  18.0f, 1.0f, 0.05f, 1.5f }, // 16_ExplosiveCharge
         { 20,  90.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 20_SubmachineGun
         { 21,   9.0f, 350.0f, 0.5f, 0.10f, 5.0f }, // 21_FlareGun
+        { 22, 150.0f,  75.0f, 1.0f, 0.05f, 1.5f }, // 22_Crossbow
         { 26, 130.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 26_DesertEagle
         { 27, 120.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 27_Thompson
         { 28, 200.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 28_DMR
@@ -7618,6 +7625,23 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
         box.bones[bone][1] = screen.y;
         box.bone_valid[bone] = true;
         ++projected;
+    }
+    if (hips_fresh) {
+        const double now = mono_seconds();
+        botlead::update(skeleton.hips_track, hips_now, now);
+        const float cur_v2 = g_aim_velocity.x * g_aim_velocity.x +
+                             g_aim_velocity.z * g_aim_velocity.z;
+        if (cur_v2 < 0.04F && botlead::fresh(skeleton.hips_track, now)) {
+            Vec3 hv = skeleton.hips_track.vel;
+            if (fabsf(hv.y) < 0.45F) hv.y *= 0.35F;
+            const float hv2 = hv.x * hv.x + hv.z * hv.z;
+            if (hv2 > 0.04F && aim_ballistics::finite(hv)) {
+                g_aim_velocity = hv;
+                g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
+                if (g_aim_lead.y > 0.20F) g_aim_lead.y = 0.20F;
+                else if (g_aim_lead.y < -0.20F) g_aim_lead.y = -0.20F;
+            }
+        }
     }
     // Aim points: exact bone world positions -> screen + angular offsets.
     //   [0] head  : skull centre. The Head joint sits at the base of the skull,

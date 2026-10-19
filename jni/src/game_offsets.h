@@ -382,6 +382,9 @@ inline constexpr std::uint64_t DEATH_HANDLER_DEATH          = 0xF0;
 // обфусцировано, сверялись позиционно по dump.cs (class Oxide.GenericVitals).
 inline constexpr std::uint64_t PLAYER_VITALS       = 0xC8;
 inline constexpr std::uint64_t VITALS_HEALTH       = 0xB8;
+inline constexpr std::uint64_t EVENT_HANDLER_HEALTH = 0x98; // hsN.Health (hkz<float, ...>), Value at +0x20 (HEALTH_VALUE)
+inline constexpr std::uint64_t PLAYER_UKX          = 0x260; // Eo uKx (model wrapper), modelInfo at +0x10
+inline constexpr std::uint64_t UKX_MODEL_INFO      = 0x10;  // PlayerModelInfo* inside uKx
 // Урон от падения (dump.cs): Oxide.EntityVitals : GenericVitals
 //   [SerializeField][Range(1, 30)] protected float m_MinFallSpeed;  0xC0
 //   [SerializeField][Range(1, 60)] protected float m_MaxFallSpeed;  0xC4
@@ -692,8 +695,10 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET     = 0x90; // float, eye 
 //   +0x00 MoveState State (0 idle,1 walk,2 run,3 crouching,4 air,5 climb,6 swim,7 dead)
 //   +0x04 Pose (0 Stand, 1 Crouch)   +0x08 bool Aim  +0x0C Vector3 Position
 //   +0x18 Vector3 RealVelocity
-inline constexpr std::uint64_t KCC_MOVE                   = 0x13C;  // было 0x154; luY (был ZYW): State +0x0, Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
+inline constexpr std::uint64_t KCC_MOVE                   = 0x13C;  // было 0x154; luY (был ZYW): State +0x0 (uint8), Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
 inline constexpr std::uint64_t KCC_VISIBILITY             = 0x298;  // [SyncVar(hook = "OnVisibilityChanged")] public Visibility visibility; // 0x298 (0 = Visible, 1 = Hidden)
+inline constexpr std::uint64_t KCC_MOTOR_ENABLED          = 0x29D;  // [SyncVar] private bool motorEnabled; // 0x29D
+inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x350;  // private bool RMu; // 0x350 (1 after first full ObserverMove on remote client)
 // MoveState значения (dump 11949, enum MoveState TypeDefIndex 4284): 0 IDLE,
 // 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE, 5 CLIMBING, 6 SWIMMING,
 // 7 DEAD, 8 SEATED. Поза (Move.Pose, TypeDefIndex 4285) знает только

@@ -971,6 +971,13 @@ static int resolve_player_lists(uint64_t out[2]) {
         bool duplicate = false;
         for (int i = 0; i < count; ++i) duplicate |= out[i] == list;
         if (!duplicate) out[count++] = list;
+        // OnStopClient removes disconnected/despawned players only from
+        // clientPlayerList (+0x10). Do not merge activePlayerList (+0x08) when
+        // clientPlayerList is already populated.
+        if (field == PLAYER_MANAGER_STATIC_FIELDS_LIST &&
+            rd<int32_t>(list + IL2CPP_LIST_SIZE) > 0) {
+            break;
+        }
     }
     if (count == 0) g_player_manager_static_fields = 0;
     return count;
@@ -2803,40 +2810,12 @@ static bool discover_transform_hierarchy_layout(const std::vector<uint64_t>& pla
     return discover_layout_from_native_transforms(native_transforms, best_position_count, candidate_count);
 }
 
-static bool read_entity_position(uint64_t source, Vec3& position) {
-    if (!source) return false;
-    if (g_use_direct_player_position && g_player_position_offset != 0) { position = rd_v3(source + g_player_position_offset); return vec3_is_finite(position); }
-    uint64_t native = resolve_player_native_transform(source);
-    if (!native) return false;
-    return read_transform_hierarchy_position(native, position);
-}
-
-static bool read_entity_pose(uint64_t source, Vec3& position, Vec4& rotation) {
-    if (!source || g_use_direct_player_position || !g_transform_hierarchy_layout_valid) return false;
-    uint64_t native = resolve_player_native_transform(source);
-    if (!native) return false;
-    return read_transform_hierarchy_layout(native, g_transform_hierarchy_layout, position, &rotation);
-}
-
-// Сентинел пулового мусора: свежий объект (игра пересоздаёт PlayerManager
-// каждые ~10 с, см. лог «сменили победителя») пока недоинициализирован отдаёт
-// в поле позиции вектор ВИДА (x_любой, 0.0, 0.0) — в логе x принимал 0.1,
-// 0.8, 3.1, 4.8, 9.5, 11.8, а y и z всегда ровный ноль. Такая точка проходит
-// world-space-гейт и рисует бокс под картой (нырок y 10.4 -> 0.0 за кадр).
-// Ловим ПОДПИСЬ этого мусора, а не «две почти нулевые оси из трёх». Пара
-// ровных нулей у y и z — всегда недоделанный объект и почти никогда живая
-// позиция; а вот x у мусора произвольный (0.1 ... 11.8), поэтому требовать
-// нуля по трём осям нельзя — подпись (x любой, y0, z0) тогда проходит. Порог
-// по y/z узкий (2 см), потому что широкие 0.25 м выкидывали живого игрока на
-// спавне в центре карты: там x и z тоже стоят в нуле, и трек не подтверждался
-// НИКОГДА. Дополнительно гейт применяется только к первой точке трека
-// (см. вызовы): подтверждённая позиция нулём быть не перестаёт.
-// KCC.OnVisibilityChanged паркует скрытых сервером (Visibility.ForceHidden)
-// удалённых игроков на вертикальной оси: transform.position = Vector3.up * 1000f
-// (а также (0, 3289, 0) / (0, -7045, 0) в соседних перегрузках). Если игрок
-// заспавнился уже скрытым, KCC.OnStartClient копирует эту же точку в KCC.Move.Position.
 static bool position_is_sky_parked(const Vec3& v) {
-    return fabsf(v.x) < 0.05F && fabsf(v.z) < 0.05F && fabsf(v.y) > 400.0F;
+    if (fabsf(v.y) > 400.0F) return true;
+    // KCC.TK (0x7C60228) parks inactive/culled transforms at (4.41568, y, 52.58677) in mid-air.
+    const float dx_tk = v.x - 4.41568F;
+    const float dz_tk = v.z - 52.58677F;
+    return dx_tk * dx_tk + dz_tk * dz_tk < 1.0F;
 }
 
 static bool position_near_world_origin(const Vec3& v) {
@@ -2853,6 +2832,38 @@ bool position_looks_like_world_space(const Vec3& position) {
     if (fabsf(position.x) > 20000.0F || fabsf(position.z) > 20000.0F) return false;
     if (fabsf(position.y) > 10000.0F) return false;
     return fabsf(position.x) + fabsf(position.y) + fabsf(position.z) > 0.01F;
+}
+
+static bool read_entity_position(uint64_t source, Vec3& position) {
+    if (!source) return false;
+    uint64_t native = resolve_player_native_transform(source);
+    if (!native) return false;
+    Vec3 raw{};
+    if (!read_transform_hierarchy_position(native, raw)) return false;
+    if (!vec3_is_finite(raw) || !position_looks_like_world_space(raw) ||
+        position_near_world_origin(raw)) {
+        return false;
+    }
+    if (g_use_direct_player_position) raw.y -= 1.60F;
+    position = raw;
+    return true;
+}
+
+static bool player_transform_is_parked(uint64_t player) {
+    if (!player) return true;
+    const uint64_t native = resolve_player_native_transform(player);
+    if (!native) return true;
+    Vec3 raw{};
+    if (!read_transform_hierarchy_position(native, raw)) return false;
+    if (!vec3_is_finite(raw)) return true;
+    return !position_looks_like_world_space(raw) || position_near_world_origin(raw);
+}
+
+static bool read_entity_pose(uint64_t source, Vec3& position, Vec4& rotation) {
+    if (!source || g_use_direct_player_position || !g_transform_hierarchy_layout_valid) return false;
+    uint64_t native = resolve_player_native_transform(source);
+    if (!native) return false;
+    return read_transform_hierarchy_layout(native, g_transform_hierarchy_layout, position, &rotation);
 }
 
 static bool evaluate_player_position_offset(const std::vector<uint64_t>& players, uint64_t offset, double& score) {
@@ -4419,6 +4430,22 @@ static bool optimize_matrix_configuration(uint64_t native_camera, const std::vec
     return true;
 }
 
+// Same filter used by Na.Tick (0x5cfd838), huw.ojf (0x66eaa88), and
+// SecurityRenderFeature (0x6d275f8): a PlayerManager in clientPlayerList is
+// only an active spawned character when its native Unity Object is alive
+// (m_CachedPtr != 0) and its uKx.modelInfo MonoBehaviour is spawned and alive.
+static bool player_is_active_client_entity(uint64_t player, uint64_t local_player) {
+    if (!valid_obj(player)) return false;
+    if (g_player_manager_class && rd_ptr(player) != g_player_manager_class) return false;
+    if (!valid_obj(rd_ptr(player + MANAGED_CACHED_PTR))) return false;
+    if (player == local_player) return true;
+    const uint64_t ukx = rd_ptr(player + go_active::PLAYER_UKX);
+    if (!valid_obj(ukx)) return false;
+    const uint64_t model_info = rd_ptr(ukx + go_active::UKX_MODEL_INFO);
+    if (!valid_obj(model_info)) return false;
+    return valid_obj(rd_ptr(model_info + MANAGED_CACHED_PTR));
+}
+
 static std::vector<uint64_t> read_configured_player_transforms(bool* player_list_ok) {
     if (player_list_ok) *player_list_ok = false;
     std::vector<uint64_t> transforms;
@@ -4468,10 +4495,7 @@ static std::vector<uint64_t> read_configured_player_transforms(bool* player_list
                 const uint64_t player = rd_ptr(
                     items + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)index * sizeof(uint64_t));
                 if (!player || player == local_source) continue;
-                // The containing registry is already validated and its
-                // pointer/count are rechecked below. A failed class read must
-                // not make one live player disappear from an otherwise stable
-                // snapshot.
+                if (!player_is_active_client_entity(player, local_source)) continue;
                 bool duplicate = false;
                 for (uint64_t known : snapshot) duplicate |= known == player;
                 if (!duplicate) snapshot.push_back(player);
@@ -5078,6 +5102,7 @@ static bool kcc_head_transform_valid(uint64_t kcc) {
 
 static bool looks_like_kcc(uint64_t candidate, uint64_t player) {
     if (candidate < 0x10000 || candidate >= 0x0001000000000000ULL) return false;
+    if (!valid_obj(rd_ptr(candidate + MANAGED_CACHED_PTR))) return false;
     return rd_ptr(candidate + KCC_PLAYER_BACKREF) == player;
 }
 
@@ -5880,7 +5905,8 @@ static PlayerAux& player_aux(uint64_t player) {
     PlayerAux& aux = g_player_aux[player];
     if (aux.kcc) {
         // Cheap liveness check every frame; full re-resolve occasionally.
-        if (rd_ptr(aux.kcc + KCC_PLAYER_BACKREF) != player || ++aux.revalidate >= 300) {
+        if (!valid_obj(rd_ptr(aux.kcc + MANAGED_CACHED_PTR)) ||
+            rd_ptr(aux.kcc + KCC_PLAYER_BACKREF) != player || ++aux.revalidate >= 300) {
             aux = PlayerAux{};
         }
     }
@@ -5948,7 +5974,7 @@ static PlayerAux& player_aux(uint64_t player) {
 // Pose from KCC.Move: true when crouched (Pose == Crouch or State == CROUCHING).
 static bool player_is_crouched(const PlayerAux& aux) {
     if (!aux.kcc) return false;
-    int32_t state = rd<int32_t>(aux.kcc + KCC_MOVE + 0x00);
+    uint8_t state = rd<uint8_t>(aux.kcc + KCC_MOVE + 0x00);
     int32_t pose  = rd<int32_t>(aux.kcc + KCC_MOVE + 0x04);
     return pose == 1 || state == 3;
 }
@@ -6392,11 +6418,10 @@ static bool player_is_dead_early(uint64_t player) {
         if (dh >= 0x10000 && rd_exact(dh + go_active::DEATH_HANDLER_DEATH, f) && f <= 1)
             handler = f == 1 ? Signal::Dead : Signal::Alive;
     }
-    // KCC — только если уже разрешён (g_player_aux не создаём ради мёртвых).
-    const auto aux = g_player_aux.find(player);
-    if (aux != g_player_aux.end() && aux->second.kcc) {
-        int32_t st = 0;
-        if (rd_exact(aux->second.kcc + KCC_MOVE + 0x00, st))
+    const PlayerAux& aux = player_aux(player);
+    if (aux.kcc) {
+        uint8_t st = 0;
+        if (rd_exact(aux.kcc + KCC_MOVE + 0x00, st))
             move = st == KCC_MOVE_STATE_DEAD ? Signal::Dead : Signal::Alive;
     }
     const bool dead = playerdeath::update(v, playerdeath::combine(respawn, handler, move), now);
@@ -8639,27 +8664,41 @@ unsigned long long esp_mem_read_fails_total() { return g_mem.read_fails_total();
 // Vector3.up * 1000f and KCC stops interpolating remote ObserverMove ticks,
 // leaving KCC.Move.Position frozen (either at (0,1000,0) or at the last
 // visible position, including mid-air).
-static bool player_is_kcc_hidden(const PlayerAux& aux) {
+static bool player_is_kcc_hidden(const PlayerAux& aux, uint64_t player = 0) {
     if (!aux.kcc) return false;
+    if (!valid_obj(rd_ptr(aux.kcc + MANAGED_CACHED_PTR))) return true;
     int32_t vis = 0;
-    if (!rd_exact(aux.kcc + KCC_VISIBILITY, vis)) return false;
-    return vis == 1;
+    if (rd_exact(aux.kcc + KCC_VISIBILITY, vis) && vis == 1) return true;
+    if (!player) player = rd_ptr(aux.kcc + KCC_PLAYER_BACKREF);
+    if (player && player != g_local_player &&
+        !player_is_mounted(player) && !player_mount_engaged(player)) {
+        // KCC.Xfo (OnStartClient, 0x7C4AA14) initializes Move.Position from the
+        // spawn/prefab transform while RMu == 0, and KCC.FhR (Update, 0x7C59A14)
+        // parks transform.position at (0, -1000, 0) until the first full
+        // ObserverMove sets RMu = 1 in KCC.hPA (0x7C558CC).
+        uint8_t has_obs = 1;
+        if (rd_exact(aux.kcc + go_active::KCC_HAS_OBSERVER_MOVE, has_obs) && has_obs == 0)
+            return true;
+        // KCC.XfE (0x7C510C4) parks transform.position at (0, +/-1000, 0) and
+        // disables Motor.Capsule whenever !motorEnabled || visibility == 1.
+        uint8_t motor_en = 1;
+        if (rd_exact(aux.kcc + go_active::KCC_MOTOR_ENABLED, motor_en) && motor_en == 0)
+            return true;
+    }
+    return false;
 }
 
 // KCC.Move.Position: the simulated character position (capsule bottom) the
 // game itself moves the character with. Independent of the discovered
 // PlayerManager position field, and validated by the KCC back-reference.
 static bool player_kcc_position(const PlayerAux& aux, Vec3& out, bool gate_origin = true) {
+    (void)gate_origin;
     if (!aux.kcc || player_is_kcc_hidden(aux)) return false;
     Vec3 p = rd_v3(aux.kcc + KCC_MOVE + 0x0C);
     if (!vec3_is_finite(p) || !position_looks_like_world_space(p)) return false;
     float magnitude = fabsf(p.x) + fabsf(p.y) + fabsf(p.z);
     if (magnitude < 0.01F || magnitude > 100000.0F) return false;
-    // Тот же пуловой мусор, что и в поле позиции: свежий CharacterController
-    // отдаёт (x, 0, 0), и бокс молча уезжает под карту. Гейт — только на
-    // первой точке трека (см. have_confirmed в esp_get_boxes): у карты, где
-    // игрок реально стоит в нуле, подтверждённая точка нулём не перестаёт.
-    if (gate_origin && position_near_world_origin(p)) return false;
+    if (position_near_world_origin(p)) return false;
     out = p;
     return true;
 }
@@ -10585,31 +10624,14 @@ static void revalidate_dead_direct_position(const std::vector<uint64_t>& players
 
 static void note_direct_position_health(const std::vector<uint64_t>& players,
                                         const std::vector<char>& sources) {
-    if (!(g_use_direct_player_position && g_player_position_offset != 0 &&
-          s_direct_dead_players > 0 && s_direct_dead_count == s_direct_dead_players)) {
-        s_direct_dead_frames = 0;
-        s_direct_dead_since = 0.0;
-        return;
-    }
-    if (s_direct_dead_since == 0.0) s_direct_dead_since = mono_seconds();
-    ++s_direct_dead_frames;
-    const double now = mono_seconds();
-    const double dead_for = now - s_direct_dead_since;
-    if (dead_for >= 5.0 && now - s_direct_dead_log_at >= 30.0) {
-        s_direct_dead_log_at = now;
-        size_t kcc_n = 0, model_n = 0, cache_n = 0;
-        for (char s : sources) {
-            if (s == 'K') ++kcc_n;
-            else if (s == 'M') ++model_n;
-            else if (s == 'C') ++cache_n;
-        }
-    }
-    // Раз в ~5 c мертвого пути пробуем известные смещения: событие редкое,
-    // а поиск читает позиции всех игроков на каждое смещение.
-    if (s_direct_dead_frames >= 300) {
-        s_direct_dead_frames = 0;
-        revalidate_dead_direct_position(players);
-    }
+    // PlayerManager on the client in 11966 / 11968 has no synced Vector3 world
+    // position field (0x1F4 lastSavedPosition is server-only, and 0x200 in the
+    // 0x1A0..0x300 scan range is lastDeathPosition). Never scan or switch
+    // g_player_position_offset to lastDeathPosition.
+    (void)players;
+    (void)sources;
+    s_direct_dead_frames = 0;
+    s_direct_dead_since = 0.0;
 }
 
 
@@ -11066,15 +11088,27 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (!player) continue;
 
         auto tracked = g_player_track.find(player);
-        if (player != g_local_player && player_is_kcc_hidden(player_aux(player))) {
-            if (tracked != g_player_track.end()) {
-                tracked->second.has_last = false;
-                tracked->second.have_vel_ref = false;
-                tracked->second.filt.has_drawn = false;
-                tracked->second.miss_frames = 0;
+        if (player != g_local_player) {
+            const bool mounted = player_is_mounted(player) || player_mount_engaged(player);
+            bool parked_or_hidden =
+                !player_is_active_client_entity(player, g_local_player) ||
+                player_is_kcc_hidden(player_aux(player), player);
+            if (!parked_or_hidden && player_transform_is_parked(player)) {
+                Vec3 mounted_model{};
+                if (!(mounted && player_model_position(player, mounted_model))) {
+                    parked_or_hidden = true;
+                }
             }
-            g_mount_latch.erase(player);
-            continue;
+            if (parked_or_hidden) {
+                if (tracked != g_player_track.end()) {
+                    tracked->second.has_last = false;
+                    tracked->second.have_vel_ref = false;
+                    tracked->second.filt.has_drawn = false;
+                    tracked->second.miss_frames = 0;
+                }
+                g_mount_latch.erase(player);
+                continue;
+            }
         }
 
         Vec3 candidate{};
@@ -11082,27 +11116,23 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         unsigned short read_flags = PositionDirectTried;
         const bool direct_read_ok = read_entity_position(player, candidate);
         if (direct_read_ok) read_flags |= PositionDirectReadOk;
-        // Пуловой мусор свежего PlayerManager отдаёт в поле позиции вектор
-        // (x, 0.0, 0.0): world-space-гейт его пропускает, и бокс уходит под
-        // карту. В логе 16:05 — pos=(10.9 0.0 0.0), reason=bottom, «ПРОПАЛ»,
-        // возврат через 155 кадров (2.6 c). Сентинель position_near_world_origin
-        // написан ровно под это, но включается ТОЛЬКО пока у трека нет ни одной
-        // подтверждённой позиции: у карты, где игрок реально стоит у нуля
-        // (спавн/стройка в центре), подтверждённая точка нулём быть не
-        // перестаёт, и гейт по ней стёр бы живого игрока с ESP навсегда.
         const bool have_confirmed = tracked != g_player_track.end() && tracked->second.has_last;
         const bool origin_gate = position_near_world_origin(candidate) && !have_confirmed;
         bool read_ok = direct_read_ok && position_looks_like_world_space(candidate) && !origin_gate;
         if (read_ok) {
             read_flags |= PositionDirectValid;
             source = 'D';
-            Vec3 kcc_pos{};
-            if (player_kcc_position(player_aux(player), kcc_pos, !have_confirmed)) {
-                if (!g_use_direct_player_position) kcc_pos.y += 1.60F;
-                if (vec3_horiz2(kcc_pos, candidate) > 0.01F) {
-                    candidate = kcc_pos;
-                    read_flags |= PositionKccTried | PositionKccOk;
-                    source = 'K';
+            if (player == g_local_player ||
+                (!player_is_mounted(player) && !player_mount_engaged(player))) {
+                Vec3 kcc_pos{};
+                if (player_kcc_position(player_aux(player), kcc_pos, !have_confirmed)) {
+                    if (!g_use_direct_player_position) kcc_pos.y += 1.60F;
+                    if (vec3_horiz2(kcc_pos, candidate) <= 25.0F &&
+                        fabsf(kcc_pos.y - candidate.y) <= 5.0F) {
+                        candidate = kcc_pos;
+                        read_flags |= PositionKccTried | PositionKccOk;
+                        source = 'K';
+                    }
                 }
             }
         }
@@ -11750,7 +11780,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         {
             const PlayerAux& aux = player_aux(s_transforms[i]);
             if (aux.kcc) {
-                const int32_t move_state = rd<int32_t>(aux.kcc + KCC_MOVE + 0x00);
+                const uint8_t move_state = rd<uint8_t>(aux.kcc + KCC_MOVE + 0x00);
                 if (move_state == KCC_MOVE_STATE_DEAD) box.dead = true;
             }
         }

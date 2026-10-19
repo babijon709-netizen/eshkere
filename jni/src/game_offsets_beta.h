@@ -228,6 +228,9 @@ inline constexpr std::uint64_t DEATH_HANDLER_REF_TARGET = game_offsets::DEATH_HA
 inline constexpr std::uint64_t DEATH_HANDLER_DEATH = game_offsets::DEATH_HANDLER_DEATH;
 inline constexpr std::uint64_t PLAYER_VITALS = game_offsets::PLAYER_VITALS;
 inline constexpr std::uint64_t VITALS_HEALTH = game_offsets::VITALS_HEALTH;
+inline constexpr std::uint64_t EVENT_HANDLER_HEALTH = game_offsets::EVENT_HANDLER_HEALTH;
+inline constexpr std::uint64_t PLAYER_UKX = 0x270; // private Aia Onb; // 0x270 (было 0x260)
+inline constexpr std::uint64_t UKX_MODEL_INFO = game_offsets::UKX_MODEL_INFO;
 // Виталы в 11968 не перестраивались в этом месте: m_MinFallSpeed 0xC0 и
 // m_MaxFallSpeed 0xC4 сверены по dump.cs (class Oxide.EntityVitals, строка
 // 454330), бэклинк PlayerVitals.Player 0x100 — по строке 455117. Хвост класса
@@ -409,6 +412,8 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_H
 // Move — ydK 0xF0 — но он стоит ДО пары oM/float, а не после PlayerInput.)
 inline constexpr std::uint64_t KCC_MOVE = 0x1AC;
 inline constexpr std::uint64_t KCC_VISIBILITY = 0x308; // public Visibility visibility; // 0x308 (0 = Visible, 1 = Hidden)
+inline constexpr std::uint64_t KCC_MOTOR_ENABLED = 0x30D; // private bool motorEnabled; // 0x30D
+inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE = 0x3C0; // private bool wTd; // 0x3C0 (было 0x350)
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
 // Значение Move в бете то же самое (struct Move, TypeDefIndex 4453): State
 // 0x00, Position 0x0C, RealVelocity 0x18 — сверено по dump.cs 11968.

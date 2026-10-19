@@ -523,10 +523,33 @@ private:
     }
 
     // ELF-заголовок по адресу пробы — и заодно проверка доступа к памяти.
+    // На части устройств с кернел-драйверами (PTE-walk без подкачки страниц)
+    // холодная первая страница libil2cpp.so (base + 0x0, r--p) вытесняется
+    // kswapd после загрузки карты, хотя горячие .data-страницы TypeInfo
+    // (PlayerManager / GameControllerBase) всегда резидентны в ОЗУ.
     bool probe_readable() {
         uint8_t magic[4] = {};
-        if (!raw_read(probe_addr_, magic, sizeof(magic), false)) return false;
-        return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        if (raw_read(probe_addr_, magic, sizeof(magic), false)) {
+            return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        }
+        static constexpr uint64_t kHotTypeInfoPairs[][2] = {
+            {0xDEA09F8ULL, 0xDE9C778ULL}, // Release 11966: PlayerManager, GameControllerBase
+            {0xE628018ULL, 0xE623DA0ULL}, // Beta 11968:    PlayerManager, GameControllerBase
+        };
+        for (const auto& pair : kHotTypeInfoPairs) {
+            uint64_t p0 = 0, p1 = 0;
+            if (!raw_read(probe_addr_ + pair[0], &p0, sizeof(p0), false) ||
+                !raw_read(probe_addr_ + pair[1], &p1, sizeof(p1), false)) {
+                continue;
+            }
+            p0 = untag(p0);
+            p1 = untag(p1);
+            if (p0 >= 0x10000ULL && p0 < kMaxUserAddress && (p0 & 0x7ULL) == 0 &&
+                p1 >= 0x10000ULL && p1 < kMaxUserAddress && (p1 & 0x7ULL) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ---- отказы -------------------------------------------------------------

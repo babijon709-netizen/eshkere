@@ -155,6 +155,7 @@ static int farm_classify_identity(uint64_t identity, uint64_t identity_class,
     if (!rd_buf(array + IL2CPP_ARRAY_FIRST_ELEMENT, comps,
                 (size_t)behaviour_count * sizeof(uint64_t)))
         return 1;   // словарь переписывают на ходу: не вердикт, а повод повторить
+    for (int32_t b = 0; b < behaviour_count; ++b) comps[b] = memio::untag(comps[b]);
 
     // Kind: the entityType enum first (cheap and exact), loot second.
     uint64_t component = 0;
@@ -243,10 +244,12 @@ static void farm_scan_tick() {
         }
         g_farm_scan_ids.resize((size_t)count);
         g_farm_scan_total = count;
-        for (int32_t i = 0; i < count; ++i)
+        for (int32_t i = 0; i < count; ++i) {
             memcpy(&g_farm_scan_ids[(size_t)i],
                    buffer.data() + (size_t)i * DICT_ENTRY_STRIDE + DICT_ENTRY_VALUE,
                    sizeof(uint64_t));
+            g_farm_scan_ids[(size_t)i] = memio::untag(g_farm_scan_ids[(size_t)i]);
+        }
         g_farm_scan_idx = 0;
         g_farm_scan_stage.clear();
         g_farm_scan_run = true;

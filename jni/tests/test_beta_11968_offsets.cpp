@@ -5,6 +5,7 @@
 // релизом 11966 по ЧИТАЕМЫМ именам полей (m_MaxReach, userID, clanId,
 // m_IdleOffset, ...) либо по структурной привязке хвоста класса.
 #include "game_offsets_active.h"
+#include "maps_lookup.h"
 
 #include <cassert>
 
@@ -120,7 +121,7 @@ int main() {
     assert(go_active::KCC_VISIBILITY == 0x308);
     assert(go_active::KCC_MOTOR_ENABLED == 0x30D);
     assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C0);
-    assert(go_active::PLAYER_UKX == 0x270);
+    assert(go_active::PLAYER_UKX == 0x260);
     assert(go_active::UKX_MODEL_INFO == 0x10);
     assert(go_active::EVENT_HANDLER_HEALTH == 0x98);
     assert(go_active::KCC_CHARACTER_ANIMATION == 0xE0);
@@ -189,5 +190,17 @@ int main() {
     assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0x9C);
     assert(go_active::PLAYERWEAPON_VIEW == 0xE8);
     assert(go_active::RAGDOLL_BONES_ARRAY == 0x88);
+
+    // Split APK mapping fallback (when extractNativeLibs="false" maps libil2cpp.so
+    // directly from split_config.arm64_v8a.apk without "libil2cpp.so" in /proc/pid/maps)
+    {
+        const std::string apk_maps =
+            "7100000000-7100004000 r--p 00120000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n"
+            "7100004000-7109004000 r-xp 00124000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n";
+        uint64_t bases[4] = {};
+        const int n = maps::lookup_library_bases(apk_maps, "libil2cpp.so", bases, 4);
+        assert(n >= 1);
+        assert(bases[0] == 0x7100000000ULL);
+    }
     return 0;
 }

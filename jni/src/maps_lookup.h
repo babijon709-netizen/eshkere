@@ -62,7 +62,9 @@ inline uint64_t lookup_library_base(const std::string& text, const char* lib) {
 
         if (name_len < lib_len) continue;
         if (strncmp(slash + name_len - lib_len, lib, lib_len) != 0) continue;
-        if (name_len > lib_len && slash[name_len - lib_len - 1] != '/') continue;
+        if (name_len > lib_len &&
+            slash[name_len - lib_len - 1] != '/' &&
+            slash[name_len - lib_len - 1] != '!') continue;
 
         const uint64_t load_bias = (uint64_t)start - (uint64_t)file_offset;
         if (!fallback || load_bias < fallback) fallback = load_bias;
@@ -89,7 +91,11 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
     const size_t lib_len = strlen(lib);
     uint64_t primary[8] = {};
     uint64_t secondary[8] = {};
-    int primary_count = 0, secondary_count = 0;
+    uint64_t apk_candidates[8] = {};
+    int primary_count = 0, secondary_count = 0, apk_count = 0;
+    const bool want_il2cpp_apk = (strcmp(lib, "libil2cpp.so") == 0);
+    uint64_t prev_apk_ro_start = 0;
+    uint64_t prev_apk_ro_bias = 0;
 
     auto add = [](uint64_t* list, int& count, int cap, uint64_t value) {
         if (!value) return;
@@ -124,9 +130,28 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
             name_len -= deleted_len;
             deleted = true;
         }
+        if (want_il2cpp_apk && !deleted && name_len >= 4 &&
+            strncmp(slash + name_len - 4, ".apk", 4) == 0) {
+            const uint64_t seg_size = (end > start) ? (uint64_t)(end - start) : 0;
+            const uint64_t bias = (uint64_t)start - (uint64_t)file_offset;
+            if (perms[0] == 'r' && perms[2] != 'x') {
+                prev_apk_ro_start = (uint64_t)start;
+                prev_apk_ro_bias = bias;
+            } else if (perms[0] == 'r' && perms[2] == 'x' && seg_size >= (32ULL << 20)) {
+                if (prev_apk_ro_start && prev_apk_ro_bias == bias) {
+                    add(apk_candidates, apk_count, 8, prev_apk_ro_start);
+                }
+                if ((uint64_t)start > 0x4000ULL) {
+                    add(apk_candidates, apk_count, 8, (uint64_t)start - 0x4000ULL);
+                }
+                add(apk_candidates, apk_count, 8, (uint64_t)start);
+            }
+        }
         if (name_len < lib_len) continue;
         if (strncmp(slash + name_len - lib_len, lib, lib_len) != 0) continue;
-        if (name_len > lib_len && slash[name_len - lib_len - 1] != '/') continue;
+        if (name_len > lib_len &&
+            slash[name_len - lib_len - 1] != '/' &&
+            slash[name_len - lib_len - 1] != '!') continue;
 
         const uint64_t load_bias = (uint64_t)start - (uint64_t)file_offset;
         // Живой образ (не «(deleted)») и с нулевым смещением — лучший кандидат.
@@ -146,6 +171,7 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
     };
     sort_asc(primary, primary_count);
     sort_asc(secondary, secondary_count);
+    sort_asc(apk_candidates, apk_count);
 
     int written = 0;
     auto push = [&](uint64_t value) {
@@ -154,6 +180,9 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
     };
     for (int i = 0; i < primary_count; ++i) push(primary[i]);
     for (int i = 0; i < secondary_count; ++i) push(secondary[i]);
+    if (written == 0) {
+        for (int i = 0; i < apk_count; ++i) push(apk_candidates[i]);
+    }
     return written;
 }
 

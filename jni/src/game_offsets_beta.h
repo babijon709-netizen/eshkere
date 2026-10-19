@@ -229,7 +229,7 @@ inline constexpr std::uint64_t DEATH_HANDLER_DEATH = game_offsets::DEATH_HANDLER
 inline constexpr std::uint64_t PLAYER_VITALS = game_offsets::PLAYER_VITALS;
 inline constexpr std::uint64_t VITALS_HEALTH = game_offsets::VITALS_HEALTH;
 inline constexpr std::uint64_t EVENT_HANDLER_HEALTH = game_offsets::EVENT_HANDLER_HEALTH;
-inline constexpr std::uint64_t PLAYER_UKX = 0x270; // private Aia Onb; // 0x270 (было 0x260)
+inline constexpr std::uint64_t PLAYER_UKX = game_offsets::PLAYER_UKX; // 0x260 (лежит ДО вставки 0x270, совпадает с PLAYER_MODEL_INFO_REF)
 inline constexpr std::uint64_t UKX_MODEL_INFO = game_offsets::UKX_MODEL_INFO;
 // Виталы в 11968 не перестраивались в этом месте: m_MinFallSpeed 0xC0 и
 // m_MaxFallSpeed 0xC4 сверены по dump.cs (class Oxide.EntityVitals, строка

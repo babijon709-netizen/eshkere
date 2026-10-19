@@ -79,7 +79,13 @@ static int proc_libil2cpp(pid_t pid) {
         break;
     }
     close(fd);
-    return text.find("libil2cpp.so") != std::string::npos ? 1 : 0;
+    if (text.find("libil2cpp.so") != std::string::npos) return 1;
+    if (text.find("com.catsbit.oxidesurvivalisland") != std::string::npos &&
+        (text.find("split_config.") != std::string::npos ||
+         text.find("/base.apk") != std::string::npos)) {
+        return 1;
+    }
+    return 0;
 }
 
 static pid_t find_game_pid() {

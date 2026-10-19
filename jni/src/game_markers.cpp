@@ -993,6 +993,7 @@ int read_managed_collection(uint64_t object, uint64_t* out, int max_items) {
     if (!valid_obj(array) || count <= 0) return 0;
     if (count > max_items) count = max_items;
     if (!rd_buf(array + IL2CPP_ARRAY_FIRST_ELEMENT, out, (size_t)count * sizeof(uint64_t))) return 0;
+    for (int32_t i = 0; i < count; ++i) out[i] = memio::untag(out[i]);
     return count;
 }
 
@@ -1537,6 +1538,7 @@ static MarkerScanResult rebuild_marker_entities() {
         if (i > g_marker_scan_cursor && mono_seconds() - t_budget > kMarkerScanBudgetSec) break;
         uint64_t identity = 0;
         memcpy(&identity, g_marker_scan_buffer.data() + (size_t)i * DICT_ENTRY_STRIDE + DICT_ENTRY_VALUE, sizeof(identity));
+        identity = memio::untag(identity);
         if (!valid_obj(identity)) continue;
         if (identity_class && rd_ptr(identity) != identity_class) continue;
         uint64_t array = rd_ptr(identity + NETID_BEHAVIOURS);
@@ -1546,6 +1548,7 @@ static MarkerScanResult rebuild_marker_entities() {
         if (behaviour_count > 32) behaviour_count = 32;
         if (!rd_buf(array + IL2CPP_ARRAY_FIRST_ELEMENT, behaviours, (size_t)behaviour_count * sizeof(uint64_t)))
             continue;
+        for (int32_t b = 0; b < behaviour_count; ++b) behaviours[b] = memio::untag(behaviours[b]);
 
         uint64_t death_handler = 0;
         // NPCBrainHumanoid — единственный путь к модели бота, а через неё к

@@ -337,7 +337,7 @@ static void always_day_tick() {
         uint64_t slots[128];
         if (rd_buf(g_il2cpp_base + s_scan_rva, slots, sizeof(slots))) {
             for (int i = 0; i < 128 && !g_day_tod; ++i) {
-                uint64_t klass = slots[i];
+                uint64_t klass = memio::untag(slots[i]);
                 if (klass < 0x10000 || (klass & 0x7) != 0) continue;
                 uint64_t statics = rd_ptr(klass + 0xB8);
                 if (statics < 0x10000) continue;
@@ -868,13 +868,39 @@ int class_identity(uint64_t klass, const char* expected_name, const char* expect
 // выглядит успешной, а весь чит молча не работает.
 static bool base_resolves_game(uint64_t base) {
     if (!base) return false;
-    if (PLAYER_MANAGER_TYPEINFO_RVA != 0) {
-        const uint64_t candidate = rd_ptr(base + PLAYER_MANAGER_TYPEINFO_RVA);
-        if (class_identity(candidate, "PlayerManager", "Oxide") != 0) return true;
-    }
-    if (GAME_CONTROLLER_TYPEINFO_RVA != 0) {
-        const uint64_t candidate = rd_ptr(base + GAME_CONTROLLER_TYPEINFO_RVA);
-        if (class_identity(candidate, "GameControllerBase", "Oxide") != 0) return true;
+    auto resolves_current = [&]() -> bool {
+        if (PLAYER_MANAGER_TYPEINFO_RVA != 0) {
+            const uint64_t candidate = rd_ptr(base + PLAYER_MANAGER_TYPEINFO_RVA);
+            if (class_identity(candidate, "PlayerManager", "Oxide") != 0) return true;
+        }
+        if (GAME_CONTROLLER_TYPEINFO_RVA != 0) {
+            const uint64_t candidate = rd_ptr(base + GAME_CONTROLLER_TYPEINFO_RVA);
+            if (class_identity(candidate, "GameControllerBase", "Oxide") != 0) return true;
+        }
+        return false;
+    };
+    if (resolves_current()) return true;
+
+    // Auto-switch Release <-> Beta if the user tapped the wrong build button on
+    // startup and the alternate build's TypeInfo slots resolve PlayerManager /
+    // GameControllerBase by exact class name (or both live class structures).
+    const go_active::GameVersion cur_ver = go_active::selected_version;
+    const go_active::GameVersion alt_ver =
+        (cur_ver == go_active::GameVersion::Beta) ? go_active::GameVersion::Release
+                                                  : go_active::GameVersion::Beta;
+    const uint64_t alt_pm_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA
+        : game_offsets::PLAYER_MANAGER_TYPEINFO_RVA;
+    const uint64_t alt_gc_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA
+        : game_offsets::GAME_CONTROLLER_TYPEINFO_RVA;
+    const uint64_t alt_pm = alt_pm_rva ? rd_ptr(base + alt_pm_rva) : 0;
+    const uint64_t alt_gc = alt_gc_rva ? rd_ptr(base + alt_gc_rva) : 0;
+    const int pm_id = class_identity(alt_pm, "PlayerManager", "Oxide");
+    const int gc_id = class_identity(alt_gc, "GameControllerBase", "Oxide");
+    if (pm_id == 1 || gc_id == 1 || (pm_id == 2 && gc_id == 2)) {
+        go_active::Select(alt_ver);
+        return true;
     }
     return false;
 }
@@ -946,7 +972,11 @@ uint64_t game_controller_statics() {
 static int resolve_player_lists(uint64_t out[2]) {
     out[0] = out[1] = 0;
     if (!g_player_manager_class && PLAYER_MANAGER_TYPEINFO_RVA != 0) {
-        const uint64_t candidate = rd_ptr(g_il2cpp_base + PLAYER_MANAGER_TYPEINFO_RVA);
+        uint64_t candidate = rd_ptr(g_il2cpp_base + PLAYER_MANAGER_TYPEINFO_RVA);
+        if (class_identity(candidate, "PlayerManager", "Oxide") == 0 &&
+            base_resolves_game(g_il2cpp_base)) {
+            candidate = rd_ptr(g_il2cpp_base + PLAYER_MANAGER_TYPEINFO_RVA);
+        }
         if (class_identity(candidate, "PlayerManager", "Oxide") != 0)
             g_player_manager_class = candidate;
     }
@@ -971,13 +1001,6 @@ static int resolve_player_lists(uint64_t out[2]) {
         bool duplicate = false;
         for (int i = 0; i < count; ++i) duplicate |= out[i] == list;
         if (!duplicate) out[count++] = list;
-        // OnStopClient removes disconnected/despawned players only from
-        // clientPlayerList (+0x10). Do not merge activePlayerList (+0x08) when
-        // clientPlayerList is already populated.
-        if (field == PLAYER_MANAGER_STATIC_FIELDS_LIST &&
-            rd<int32_t>(list + IL2CPP_LIST_SIZE) > 0) {
-            break;
-        }
     }
     if (count == 0) g_player_manager_static_fields = 0;
     return count;
@@ -2611,6 +2634,8 @@ static void freecam_tick() {
     freecam_write();
 }
 
+static bool position_near_world_origin(const Vec3& v);
+
 bool read_transform_hierarchy_position(uint64_t native_transform, Vec3& position) {
     if (!native_transform) return false;
     // The learned layout is only a fast path. It is learned from PLAYER
@@ -2620,32 +2645,75 @@ bool read_transform_hierarchy_position(uint64_t native_transform, Vec3& position
     // below (which needs no players and no learning) was never reached.
     if (g_transform_hierarchy_layout_valid &&
         read_transform_hierarchy_layout(native_transform, g_transform_hierarchy_layout, position) &&
-        vec3_is_finite(position) && position_looks_like_world_space(position))
+        vec3_is_finite(position) && position_looks_like_world_space(position) &&
+        !position_near_world_origin(position))
         return true;
-    // Same probing as read_camera_transform_pose: TransformAccess lives at
-    // +0x38/+0x40 on older builds and at +0x18/+0x20 on this one. Markers ran
-    // only the first probe, which is why they worked ONLY once a nearby
-    // player's skeleton had taught us the layout — the camera (with both
-    // probes) worked solo all along.
-    uint64_t transform_data = rd_ptr(native_transform + 0x38);
-    int32_t transform_index = rd<int32_t>(native_transform + 0x40);
-    if (!transform_data || transform_index < 0 || transform_index > 100000) {
-        transform_data = rd_ptr(native_transform + 0x18);
-        transform_index = rd<int32_t>(native_transform + 0x20);
+    if (g_skeleton_layout_valid &&
+        read_transform_hierarchy_layout(native_transform, g_skeleton_layout, position) &&
+        vec3_is_finite(position) && position_looks_like_world_space(position) &&
+        !position_near_world_origin(position))
+        return true;
+
+    struct AccessCandidate {
+        uint64_t data;
+        int32_t  index;
+    };
+    AccessCandidate access_list[4] = {};
+    int access_count = 0;
+    auto add_access = [&](uint64_t data, int32_t idx) {
+        if (!data || idx < 0 || idx > 100000) return;
+        for (int i = 0; i < access_count; ++i) {
+            if (access_list[i].data == data && access_list[i].index == idx) return;
+        }
+        if (access_count < 4) access_list[access_count++] = {data, idx};
+    };
+    const uint64_t d38 = rd_ptr(native_transform + 0x38);
+    add_access(d38, rd<int32_t>(native_transform + 0x40));
+    add_access(rd_ptr(native_transform + 0x18), rd<int32_t>(native_transform + 0x20));
+    add_access(rd_ptr(native_transform + 0x28), rd<int32_t>(native_transform + 0x30));
+    if (!d38) {
+        add_access(native_transform + 0x28, rd<int32_t>(native_transform + 0x30));
     }
-    if (!transform_data || transform_index < 0 || transform_index > 100000) return false;
-    const uint64_t data_offsets[][2] = {{0x18, 0x20}, {0x08, 0x10}};
-    for (const auto& offsets : data_offsets) {
-        uint64_t matrix_pointer = rd_ptr(transform_data + offsets[0]);
-        uint64_t index_pointer = rd_ptr(transform_data + offsets[1]);
-        if (!matrix_pointer || !index_pointer) continue;
-        const uint64_t matrix_candidates[] = {matrix_pointer, rd_ptr(matrix_pointer)};
-        const uint64_t index_candidates[] = {index_pointer, rd_ptr(index_pointer)};
-        for (uint64_t matrices : matrix_candidates) {
-            for (uint64_t indices_ptr : index_candidates) {
-                if (read_transform_hierarchy_arrays(matrices, indices_ptr, transform_index, position)) return true;
+    if (access_count == 0) return false;
+
+    const uint64_t data_offsets[][2] = {
+        {0x18, 0x20},
+        {0x08, 0x10},
+        {0x10, 0x18},
+        {0x20, 0x28},
+    };
+    Vec3 fallback_pos{};
+    bool have_fallback = false;
+    for (int a = 0; a < access_count; ++a) {
+        const uint64_t transform_data = access_list[a].data;
+        const int32_t transform_index = access_list[a].index;
+        for (const auto& offsets : data_offsets) {
+            uint64_t matrix_pointer = rd_ptr(transform_data + offsets[0]);
+            uint64_t index_pointer = rd_ptr(transform_data + offsets[1]);
+            if (!matrix_pointer || !index_pointer) continue;
+            const uint64_t matrix_candidates[] = {matrix_pointer, rd_ptr(matrix_pointer)};
+            const uint64_t index_candidates[] = {index_pointer, rd_ptr(index_pointer)};
+            for (uint64_t matrices : matrix_candidates) {
+                for (uint64_t indices_ptr : index_candidates) {
+                    Vec3 cand{};
+                    if (!read_transform_hierarchy_arrays(matrices, indices_ptr, transform_index, cand))
+                        continue;
+                    if (vec3_is_finite(cand) && position_looks_like_world_space(cand) &&
+                        !position_near_world_origin(cand)) {
+                        position = cand;
+                        return true;
+                    }
+                    if (!have_fallback && vec3_is_finite(cand)) {
+                        fallback_pos = cand;
+                        have_fallback = true;
+                    }
+                }
             }
         }
+    }
+    if (have_fallback) {
+        position = fallback_pos;
+        return true;
     }
     return false;
 }
@@ -2844,7 +2912,6 @@ static bool read_entity_position(uint64_t source, Vec3& position) {
         position_near_world_origin(raw)) {
         return false;
     }
-    if (g_use_direct_player_position) raw.y -= 1.60F;
     position = raw;
     return true;
 }
@@ -4439,11 +4506,28 @@ static bool player_is_active_client_entity(uint64_t player, uint64_t local_playe
     if (g_player_manager_class && rd_ptr(player) != g_player_manager_class) return false;
     if (!valid_obj(rd_ptr(player + MANAGED_CACHED_PTR))) return false;
     if (player == local_player) return true;
+    const uint64_t net_id = rd_ptr(player + 0x40); // Mirror.NetworkBehaviour.netIdentity
+    if (valid_obj(net_id)) {
+        if (!valid_obj(rd_ptr(net_id + MANAGED_CACHED_PTR))) return false;
+        uint32_t nid = 0;
+        if (rd_exact(net_id + 0x58, nid) && nid == 0) return false;
+    }
     const uint64_t ukx = rd_ptr(player + go_active::PLAYER_UKX);
-    if (!valid_obj(ukx)) return false;
-    const uint64_t model_info = rd_ptr(ukx + go_active::UKX_MODEL_INFO);
-    if (!valid_obj(model_info)) return false;
-    return valid_obj(rd_ptr(model_info + MANAGED_CACHED_PTR));
+    if (valid_obj(ukx)) {
+        const uint64_t model_info = rd_ptr(ukx + go_active::UKX_MODEL_INFO);
+        if (valid_obj(model_info) && valid_obj(rd_ptr(model_info + MANAGED_CACHED_PTR)))
+            return true;
+    }
+    const uint64_t char_model = rd_ptr(player + PLAYER_CHARACTER_MODEL);
+    if (valid_obj(char_model) && valid_obj(rd_ptr(char_model + MANAGED_CACHED_PTR)))
+        return true;
+    const uint64_t kcc_ref = rd_ptr(player + PLAYER_KCC_REFERENCE);
+    if (valid_obj(kcc_ref)) {
+        const uint64_t kcc = rd_ptr(kcc_ref + 0x18);
+        if (valid_obj(kcc) && valid_obj(rd_ptr(kcc + MANAGED_CACHED_PTR)))
+            return true;
+    }
+    return false;
 }
 
 static std::vector<uint64_t> read_configured_player_transforms(bool* player_list_ok) {
@@ -4739,6 +4823,7 @@ static int read_transform_children(uint64_t transform, uint64_t* out, int max_ch
     uint64_t array = rd_ptr(transform + TRANSFORM_CHILDREN_ARRAY);
     if (!array) return 0;
     if (!rd_buf(array, out, (size_t)count * sizeof(uint64_t))) return 0;
+    for (int32_t i = 0; i < count; ++i) out[i] = memio::untag(out[i]);
     return count;
 }
 
@@ -8665,26 +8750,11 @@ unsigned long long esp_mem_read_fails_total() { return g_mem.read_fails_total();
 // leaving KCC.Move.Position frozen (either at (0,1000,0) or at the last
 // visible position, including mid-air).
 static bool player_is_kcc_hidden(const PlayerAux& aux, uint64_t player = 0) {
+    (void)player;
     if (!aux.kcc) return false;
     if (!valid_obj(rd_ptr(aux.kcc + MANAGED_CACHED_PTR))) return true;
     int32_t vis = 0;
     if (rd_exact(aux.kcc + KCC_VISIBILITY, vis) && vis == 1) return true;
-    if (!player) player = rd_ptr(aux.kcc + KCC_PLAYER_BACKREF);
-    if (player && player != g_local_player &&
-        !player_is_mounted(player) && !player_mount_engaged(player)) {
-        // KCC.Xfo (OnStartClient, 0x7C4AA14) initializes Move.Position from the
-        // spawn/prefab transform while RMu == 0, and KCC.FhR (Update, 0x7C59A14)
-        // parks transform.position at (0, -1000, 0) until the first full
-        // ObserverMove sets RMu = 1 in KCC.hPA (0x7C558CC).
-        uint8_t has_obs = 1;
-        if (rd_exact(aux.kcc + go_active::KCC_HAS_OBSERVER_MOVE, has_obs) && has_obs == 0)
-            return true;
-        // KCC.XfE (0x7C510C4) parks transform.position at (0, +/-1000, 0) and
-        // disables Motor.Capsule whenever !motorEnabled || visibility == 1.
-        uint8_t motor_en = 1;
-        if (rd_exact(aux.kcc + go_active::KCC_MOTOR_ENABLED, motor_en) && motor_en == 0)
-            return true;
-    }
     return false;
 }
 
@@ -9627,7 +9697,7 @@ static void resolve_solid_wall_masks(int32_t& out_solid_mask, int32_t& out_strip
     uint64_t slots[256];
     if (rd_buf(g_il2cpp_base + s_hmj_scan_rva, slots, sizeof(slots))) {
         for (int i = 0; i < 256; ++i) {
-            if (try_extract_wall_masks_from_klass(slots[i], out_solid_mask, out_strip_mask)) {
+            if (try_extract_wall_masks_from_klass(memio::untag(slots[i]), out_solid_mask, out_strip_mask)) {
                 s_solid_wall_mask = out_solid_mask;
                 s_strip_prop_mask = out_strip_mask;
                 return;

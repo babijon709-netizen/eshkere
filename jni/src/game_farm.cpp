@@ -308,6 +308,7 @@ static void farm_scan_tick() {
 }
 
 void esp_farm_set_resources(unsigned mask) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (g_farm_mask != mask) {
         g_farm_mask = mask;
         g_farm_entities.clear();
@@ -331,6 +332,7 @@ void esp_farm_set_range(float meters) {
 }
 
 void esp_farm_blacklist(unsigned long long id, float seconds) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!id) return;
     int frames = (int)(seconds * 60.0F);
     if (frames < 60) frames = 60;
@@ -726,6 +728,7 @@ constexpr float kAimFixPullDeg   = 0.010F;
 constexpr int   kAimFixRejectFrames = 90;   // ~1.5 с
 
 bool esp_farm_get_target(FarmTarget& out) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     out = FarmTarget{};
     if (!g_farm_mask) { g_farm_idle_reason = 1; return false; }
     if (g_pid <= 0 || !g_il2cpp_base) { g_farm_idle_reason = 2; return false; }

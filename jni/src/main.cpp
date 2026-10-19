@@ -427,6 +427,7 @@ int main(int argc, char* argv[]) {
         _exit(0);
     }
     start_attach_thread();
+    stealth::ProtectProcess(getpid());
     LoadTabIcons();
     ApplyTheme();
     RestoreLang();          // язык из прошлого запуска (конфиг ниже может его переписать)
@@ -441,6 +442,9 @@ int main(int argc, char* argv[]) {
     unsigned long frame = 0;
     while (main_thread_flag) {
         ++frame;
+        if ((frame % 300UL) == 1UL) {
+            stealth::ProtectProcess(getpid());
+        }
         g_frame_done.store(false);
         // Вскрытие тормозов оверлея (лог 07:37: кадр встаёт на 200–400 мс
         // пачками, писатель при этом ровный — стоит именно main). Если кадр

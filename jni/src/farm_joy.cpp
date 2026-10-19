@@ -435,6 +435,7 @@ void sprint_check() {
 } // namespace
 
 void tick(float dt) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!std::isfinite(dt) || dt <= 0.0f) dt = 1.0f / 60.0f;
     if (dt > 0.25f) dt = 0.25f;
     s_dt = dt;
@@ -459,6 +460,7 @@ bool probe_slot(int candidate) {
 }
 
 bool command(float x, float y) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!std::isfinite(x) || !std::isfinite(y)) { release(); return false; }
     int cur = s_trial.current();
     // Слот B (+0x78) — это look override в PlayerInputHandler; писать туда
@@ -507,6 +509,7 @@ bool command(float x, float y) {
 }
 
 bool attack(bool on) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t handler = 0, klass = 0, owner = 0;
     int why = WHY_OK;
     if (!resolve_handler(handler, klass, owner, why)) {
@@ -533,6 +536,7 @@ bool attack(bool on) {
 }
 
 bool attack_held(bool& held) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     held = false;
     uint64_t handler = 0, klass = 0, owner = 0;
     int why = WHY_OK;
@@ -543,6 +547,7 @@ bool attack_held(bool& held) {
 }
 
 bool sprint(bool on) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!on && !s_sprint_on) return true;          // возвращать нечего
     uint64_t handler = 0, klass = 0, owner = 0;
     int why = WHY_OK;
@@ -603,6 +608,7 @@ bool sprint(bool on) {
 }
 
 void release() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     s_trial.release();
     s_x = 0.0f;
     s_y = 0.0f;

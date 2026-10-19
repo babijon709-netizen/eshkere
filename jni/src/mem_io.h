@@ -183,21 +183,25 @@ class ProcfsTransport : public Transport {
 public:
     const char* name() const override { return "process_vm_readv"; }
 
-    bool open(pid_t pid) override { pid_ = pid; return true; }
+    bool open(pid_t pid) override { pid_.store(pid, std::memory_order_relaxed); return true; }
 
-    void close() override { pid_ = -1; }
+    void close() override { pid_.store(-1, std::memory_order_relaxed); }
 
     ssize_t read_once(uint64_t addr, void* out, size_t len) override {
+        const pid_t pid = pid_.load(std::memory_order_relaxed);
+        if (pid <= 0) { errno = ESRCH; return -1; }
         struct iovec local  { out, len };
         struct iovec remote { (void*)(uintptr_t)addr, len };
-        return (ssize_t)syscall(SYS_process_vm_readv, pid_,
+        return (ssize_t)syscall(SYS_process_vm_readv, pid,
                                 &local, 1L, &remote, 1L, 0L);
     }
 
     ssize_t write_once(uint64_t addr, const void* in, size_t len) override {
+        const pid_t pid = pid_.load(std::memory_order_relaxed);
+        if (pid <= 0) { errno = ESRCH; return -1; }
         struct iovec local  { (void*)in, len };
         struct iovec remote { (void*)(uintptr_t)addr, len };
-        return (ssize_t)syscall(SYS_process_vm_writev, pid_,
+        return (ssize_t)syscall(SYS_process_vm_writev, pid,
                                 &local, 1L, &remote, 1L, 0L);
     }
 
@@ -207,7 +211,7 @@ public:
     void note_open_failed() { open_failed_ = true; }
 
 private:
-    pid_t pid_ = -1;
+    std::atomic<pid_t> pid_{-1};
     bool  open_failed_ = false;
 };
 

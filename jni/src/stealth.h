@@ -23,6 +23,7 @@
 // Исполняемый файл не удаляется: запуск через _exit и аварийное завершение
 // не должны оставлять каталог без бинарника.
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -49,15 +50,56 @@ inline constexpr const char kComm[] = "vold";   // comm ≤ 15 символов
 
 inline int g_daemon_pipe_wr = -1;
 
-// Вывод процесса из cgroup приложения (MT Manager / терминала) в корневые
-// cgroup'ы и защита от Android LMK (oom_score_adj = -1000). Без этого при
-// закрытии MT Manager (или когда система замораживает/убивает фоновый MT
-// Manager во время игры) ActivityManager killProcessGroup и cgroup freezer
-// убивают или замораживают все PID внутри uid_<mt>/pid_<mt>.
+inline void WriteTextFile(const char* path, const char* data, size_t len) {
+    if (!path || !data || !len) return;
+    int fd = ::open(path, O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        (void)::write(fd, data, len);
+        ::close(fd);
+    }
+}
+
+// Вывод процесса и всех его потоков из cgroup приложения (MT Manager /
+// терминала) в листовую cgroup uid_0/pid_<pid> и защита от Android LMK
+// (oom_score_adj = -1000). На Android 12–16 (cgroup v2) у корневой
+// /sys/fs/cgroup включён cgroup.subtree_control, поэтому прямая запись в
+// /sys/fs/cgroup/cgroup.procs отклоняется ядром с EBUSY (no internal process
+// constraint), и процесс оставался в /sys/fs/cgroup/uid_<mt>/pid_<mt>, где его
+// убивал PhantomProcessList / killProcessGroup (SIGKILL) или замораживал
+// cgroup.freeze при сворачивании/закрытии MT Manager.
 inline void ProtectProcess(pid_t pid) {
+    if (pid <= 0) return;
     char pid_str[32]{};
     int len = snprintf(pid_str, sizeof(pid_str), "%d\n", (int)pid);
     if (len <= 0) return;
+
+    // Создаём собственные листовые cgroup под uid_0, чтобы миграция из
+    // uid_<app>/pid_<app> проходила на cgroup v2 (Android 12–16) и /acct.
+    (void)::mkdir("/sys/fs/cgroup/uid_0", 0755);
+    char cg_leaf_dir[96]{};
+    snprintf(cg_leaf_dir, sizeof(cg_leaf_dir), "/sys/fs/cgroup/uid_0/pid_%d", (int)pid);
+    (void)::mkdir(cg_leaf_dir, 0755);
+
+    char cg_leaf_procs[128]{};
+    snprintf(cg_leaf_procs, sizeof(cg_leaf_procs), "%s/cgroup.procs", cg_leaf_dir);
+    WriteTextFile(cg_leaf_procs, pid_str, (size_t)len);
+
+    char cg_leaf_freeze[128]{};
+    snprintf(cg_leaf_freeze, sizeof(cg_leaf_freeze), "%s/cgroup.freeze", cg_leaf_dir);
+    WriteTextFile(cg_leaf_freeze, "0\n", 2);
+
+    (void)::mkdir("/acct/uid_0", 0755);
+    char acct_leaf_dir[96]{};
+    snprintf(acct_leaf_dir, sizeof(acct_leaf_dir), "/acct/uid_0/pid_%d", (int)pid);
+    (void)::mkdir(acct_leaf_dir, 0755);
+
+    char acct_leaf_procs[128]{};
+    snprintf(acct_leaf_procs, sizeof(acct_leaf_procs), "%s/cgroup.procs", acct_leaf_dir);
+    WriteTextFile(acct_leaf_procs, pid_str, (size_t)len);
+
+    char acct_leaf_tasks[128]{};
+    snprintf(acct_leaf_tasks, sizeof(acct_leaf_tasks), "%s/tasks", acct_leaf_dir);
+    WriteTextFile(acct_leaf_tasks, pid_str, (size_t)len);
 
     static const char* const kCgroupFiles[] = {
         "/sys/fs/cgroup/cgroup.procs",
@@ -65,26 +107,52 @@ inline void ProtectProcess(pid_t pid) {
         "/acct/tasks",
         "/dev/cpuctl/cgroup.procs",
         "/dev/cpuctl/tasks",
+        "/dev/cpuset/foreground/cgroup.procs",
+        "/dev/cpuset/foreground/tasks",
+        "/dev/cpuset/top-app/cgroup.procs",
+        "/dev/cpuset/top-app/tasks",
         "/dev/cpuset/cgroup.procs",
         "/dev/cpuset/tasks",
+        "/dev/stune/foreground/cgroup.procs",
+        "/dev/stune/foreground/tasks",
+        "/dev/stune/top-app/cgroup.procs",
+        "/dev/stune/top-app/tasks",
         "/dev/stune/cgroup.procs",
         "/dev/stune/tasks",
+        "/dev/freezer/cgroup.procs",
+        "/dev/freezer/tasks",
     };
     for (const char* path : kCgroupFiles) {
-        int fd = ::open(path, O_WRONLY | O_CLOEXEC);
-        if (fd >= 0) {
-            (void)::write(fd, pid_str, (size_t)len);
-            ::close(fd);
-        }
+        WriteTextFile(path, pid_str, (size_t)len);
     }
 
+    static const char kMinOomScore[] = "-1000\n";
+    static const char kMinOomAdj[]   = "-17\n";
     char oom_path[64]{};
     snprintf(oom_path, sizeof(oom_path), "/proc/%d/oom_score_adj", (int)pid);
-    int oom_fd = ::open(oom_path, O_WRONLY | O_CLOEXEC);
-    if (oom_fd >= 0) {
-        static const char kMinOom[] = "-1000\n";
-        (void)::write(oom_fd, kMinOom, sizeof(kMinOom) - 1);
-        ::close(oom_fd);
+    WriteTextFile(oom_path, kMinOomScore, sizeof(kMinOomScore) - 1);
+    snprintf(oom_path, sizeof(oom_path), "/proc/%d/oom_adj", (int)pid);
+    WriteTextFile(oom_path, kMinOomAdj, sizeof(kMinOomAdj) - 1);
+
+    if (pid == getpid()) {
+        DIR* td = ::opendir("/proc/self/task");
+        if (td) {
+            struct dirent* de = nullptr;
+            while ((de = ::readdir(td)) != nullptr) {
+                if (de->d_name[0] < '1' || de->d_name[0] > '9') continue;
+                char tid_str[32]{};
+                int tlen = snprintf(tid_str, sizeof(tid_str), "%s\n", de->d_name);
+                if (tlen <= 0) continue;
+                WriteTextFile(acct_leaf_tasks, tid_str, (size_t)tlen);
+                WriteTextFile("/dev/cpuctl/tasks", tid_str, (size_t)tlen);
+                WriteTextFile("/dev/cpuset/foreground/tasks", tid_str, (size_t)tlen);
+                WriteTextFile("/dev/stune/foreground/tasks", tid_str, (size_t)tlen);
+                char toom[96]{};
+                snprintf(toom, sizeof(toom), "/proc/self/task/%s/oom_score_adj", de->d_name);
+                WriteTextFile(toom, kMinOomScore, sizeof(kMinOomScore) - 1);
+            }
+            ::closedir(td);
+        }
     }
 }
 
@@ -193,97 +261,17 @@ inline void ApplyEarly(int argc, char* argv[]) {
     prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
 }
 
-// ---- 2) трейсер-страж: занять ptrace-слот, НЕ останавливая процесс -------
+// ---- 2) защита от не-root отладчиков без ptrace-stop рисков ---------------
 //
-// Вызывать ДО ApplyEarly: процесс ещё однопоточен (чистый fork,
-// без GPU-состояния), а PTRACE_SEIZE обязан случиться до
-// PR_SET_DUMPABLE=0 — иначе не-root потомок уже не захватит родителя.
-//
-// КРИТИЧНО: у захваченного потока каждый сигнал превращается в
-// signal-delivery-stop — поток стоит, пока трейсер не продолжит его.
-// Поэтому потомок НЕ спит, а waitpid'ит родителя (после seize трассируемый
-// считается ребёнком трейсера для waitpid) и тут же переправляет сигнал
-// дальше (PTRACE_CONT с доставкой): обработчики, SIG_IGN и дефолты
-// работают ровно как без трейсера. Проверено: без этой петли первый же
-// SIGCHLD/SIGWINCH замораживает GUI насовсем.
+// PR_SET_DUMPABLE=0 под uid 0 уже запрещает ptrace любым не-root процессам
+// (включая процесс игры и античит). Отдельный дочерний процесс с PTRACE_SEIZE
+// не используется: на Android 12–16 фоновые демоны/чистильщики OEM (MIUI
+// PowerKeeper/Joyose, ColorOS Hans, Samsung Freecess) замораживают или убивают
+// спящий в waitpid дочерний процесс, из-за чего основной процесс чита
+// навсегда застревает в TASK_TRACED (signal-delivery-stop) или завершается.
 inline void ApplyTracerGuard() {
-#if STEALTH_PTRACE_OK
-    // Статусы детей никому не нужны — SIG_IGN: ядро убирает умерших детей само,
-    // зомби нет.
     signal(SIGCHLD, SIG_IGN);
-    int pipefd[2];
-    if (pipe(pipefd) != 0) return;   // без трубы просто без синхронизации…
-    const pid_t parent = getpid();
-    const pid_t child = fork();
-    if (child == 0) {
-        const int wr = pipefd[1];
-        prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
-        if (getppid() != parent) { close(wr); _exit(0); }  // родитель умер
-        signal(SIGHUP,  SIG_IGN);
-        signal(SIGINT,  SIG_IGN);
-        signal(SIGTERM, SIG_IGN);
-        signal(SIGQUIT, SIG_IGN);
-        signal(SIGPIPE, SIG_IGN);
-        signal(SIGTTIN, SIG_IGN);
-        signal(SIGTTOU, SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);
-        chdir("/");
-        ProtectProcess(getpid());
-        const int nul = open("/dev/null", O_RDWR | O_CLOEXEC);
-        if (nul >= 0) {
-            dup2(nul, 0); dup2(nul, 1); dup2(nul, 2);
-            if (nul > 2) close(nul);
-        }
-        for (int fd = 3; fd < 1024; ++fd) if (fd != wr) close(fd);
-        if (ptrace(PTRACE_SEIZE, parent, nullptr, nullptr) != 0) {
-            close(wr); _exit(0);      // слот занят/запрещён — идём без стража
-        }
-        const char ok = 'K';
-        write(wr, &ok, 1);            // «захватил» — родитель может жить дальше
-        close(wr);
-        for (;;) {
-            int status = 0;
-            const pid_t r = waitpid(parent, &status, 0);
-            if (r < 0) {
-                if (errno == EINTR) continue;   // нас разбудили — ждём дальше
-                _exit(0);                       // родителя больше нет
-            }
-            if (WIFEXITED(status) || WIFSIGNALED(status)) _exit(0);
-            if (WIFSTOPPED(status)) {
-                // Сигнал родителя доставляем как будто нас нет; собственные
-                // ловушки ptrace (SIGTRAP), group-stop (PTRACE_EVENT_STOP) и
-                // терминальные стоп/хангап-сигналы гасим, чтобы закрытие
-                // терминала или фоновая заморозка никогда не завесили и не
-                // убили основной процесс.
-                const unsigned event = (unsigned)status >> 16;
-                int sig = WSTOPSIG(status);
-                if (event != 0 || sig == SIGTRAP || sig == SIGHUP || sig == SIGINT ||
-                    sig == SIGTERM || sig == SIGPIPE || sig == SIGSTOP ||
-                    sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
-                    sig = 0;
-                }
-                if (ptrace(PTRACE_CONT, parent, 0, (void*)(long)sig) != 0) {
-                    if (sig != 0) ptrace(PTRACE_CONT, parent, 0, nullptr);
-                    if (kill(parent, 0) != 0 && errno == ESRCH) _exit(0);
-                }
-            }
-        }
-    }
-    if (child > 0) {
-        // Ждём подтверждения захвата ДО продолжения: дальше ApplyEarly
-        // ставит PR_SET_DUMPABLE=0, и не-root потомок уже не смог бы
-        // захватить (гонка). 'K' = страж встал, EOF = не вышло (живём без
-        // него — защита от отладчиков ослаблена, но работе не мешает).
-        close(pipefd[1]);
-        char ok = 0;
-        while (read(pipefd[0], &ok, 1) < 0 && errno == EINTR) {}
-        close(pipefd[0]);
-    } else {
-        close(pipefd[0]); close(pipefd[1]);
-    }
-#else
-    (void)0;
-#endif
+    prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
 }
 
 // ---- 3) рантайм-скрытие: терминал -----------------------------------------

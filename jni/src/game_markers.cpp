@@ -123,6 +123,7 @@ void esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
                              bool vehicles, bool bots, bool scrap, bool turrets,
                              bool backpacks, bool sleepers, bool house,
                              bool cupboards, bool pumpkins) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     // Loot, pickups, scrap and house boxes are filtered during the registry walk.
     if (loot != g_markers_loot_enabled || pickups != g_markers_pickup_enabled ||
         scrap != g_markers_scrap_enabled || house != g_markers_house_enabled ||
@@ -164,6 +165,7 @@ static bool ore_type_enabled(int ore_type) {
 }
 
 void esp_set_ore_types_enabled(bool stone, bool iron, bool sulfur) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (stone == g_ore_stone_enabled && iron == g_ore_iron_enabled &&
         sulfur == g_ore_sulfur_enabled)
         return;
@@ -234,6 +236,7 @@ static bool marker_bot_dead(MarkerEntity& entity) {
 }
 
 bool esp_marker_confirmed_dead(uint64_t id) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     for (MarkerEntity& entity : g_marker_entities)
         if (entity.id == id) return marker_bot_dead(entity);
     return false;
@@ -2482,6 +2485,7 @@ void esp_set_bot_aim_enabled(bool enabled) { g_bot_aim_enabled = enabled; }
 // when bot markers are not drawn. Called from esp_get_boxes(), i.e. always
 // before esp_get_markers() in a frame, so drawn pills reuse fresh positions.
 void esp_bot_aim_maintain() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!g_bot_aim_enabled) return;
     if (g_pid <= 0 || !g_il2cpp_base) return;
     const double now = mono_seconds();
@@ -2494,6 +2498,7 @@ void esp_bot_aim_maintain() {
 }
 
 std::vector<BotAimEnt> esp_bot_aim_list() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     std::vector<BotAimEnt> out;
     if (!g_bot_aim_enabled) return out;
     const double now = mono_seconds();

@@ -2142,6 +2142,7 @@ static void freecam_writer_start() {
 }
 
 bool esp_freecam_set(bool on) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (on == g_freecam_on) return g_freecam_on;
     if (!on) {
         g_fc_writer_running.store(false);
@@ -2414,6 +2415,7 @@ static bool freecam_write() {
 }
 
 bool esp_freecam_move(float forward, float right, float up) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!g_freecam_on || !g_freecam_matrices || !g_freecam_indices || g_freecam_index < 0) return false;
     if (g_pid <= 0 || !g_il2cpp_base || !g_mem.bound()) return false;
     if (!std::isfinite(forward) || !std::isfinite(right) || !std::isfinite(up)) return false;
@@ -2443,6 +2445,7 @@ bool esp_freecam_move(float forward, float right, float up) {
 
 
 bool esp_freecam_look(float yaw_delta, float pitch_delta) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (!g_freecam_on) return false;
     if (!std::isfinite(yaw_delta) || !std::isfinite(pitch_delta)) return false;
     if (!g_freecam_has_yawpitch) {
@@ -2970,6 +2973,7 @@ static constexpr uint64_t PLAYER_MOUSE_LOOK_OFFSET      = 0x70;
 static constexpr uint64_t MOUSE_LOOK_SENSITIVITY_OFFSET = 0x34;
 
 bool esp_read_look_sensitivity(float& out) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (g_pid <= 0 || !g_il2cpp_base || !g_mem.bound()) return false;
 
     uint64_t player = resolve_local_player();
@@ -3402,6 +3406,7 @@ static bool resolve_local_mouse_look(uint64_t& out, LookFail* why = nullptr) {
 
 
 bool esp_mem_aim_look_params(float& deg_per_unit, bool& invert_y, bool& gyro) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t mouse_look = 0;
     LookFail why = LookFail::none;
     if (!resolve_local_mouse_look(mouse_look, &why)) {
@@ -3458,6 +3463,7 @@ static float wrap_deg180(float v) {
 }
 
 bool esp_mem_aim_read_angles(float& x_deg, float& y_deg) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t mouse_look = 0;
     if (!resolve_local_mouse_look(mouse_look)) return false;
     float angles[2] = {};
@@ -3500,6 +3506,7 @@ bool esp_mem_aim_read_angles(float& x_deg, float& y_deg) {
 }
 
 bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t mouse_look = 0;
     if (!resolve_local_mouse_look(mouse_look)) return false;
     if (!std::isfinite(x_deg) || !std::isfinite(y_deg)) return false;
@@ -3566,6 +3573,7 @@ uint64_t local_event_handler_checked() {
 }
 
 bool esp_mem_aim_last_shot(float& time_sec) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t handler = 0;
     if (!resolve_event_handler(handler)) return false;
     const uint64_t sv = rd_ptr(handler + EVENT_HANDLER_LAST_HIT_TIME);
@@ -3582,6 +3590,7 @@ static std::atomic<uint64_t> g_axis_addr_logged{0};
 
 
 bool esp_mem_aim_read_fire_dir(float& x, float& y, float& z) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t addr = 0;
     if (!resolve_look_direction(addr)) { return false; }
     const Vec3 dir = rd_v3(addr);
@@ -3599,6 +3608,7 @@ bool esp_mem_aim_read_fire_dir(float& x, float& y, float& z) {
 uint64_t Il2CppBase() { return g_il2cpp_base; }
 
 bool esp_mem_aim_write_fire_dir(float x, float y, float z) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint64_t addr = 0;
     if (!resolve_look_direction(addr)) return false;
     const float len = sqrtf(x * x + y * y + z * z);
@@ -3634,6 +3644,7 @@ bool esp_mem_aim_write_fire_dir(float x, float y, float z) {
 // кэш: у него собственный fd, immutable snapshot и повторная проверка всей
 // цепочки владельцев непосредственно перед каждой 12-байтовой записью.
 bool esp_silent_publish(uint64_t target, const float aim[3]) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     auto fail = [] { silent_aim::clear(); return false; };
     if (g_pid <= 0 || !g_mem.bound() || !g_cam_pose_valid || esp_freecam_active()) return fail();
     silent_aim::Command c;
@@ -7821,6 +7832,7 @@ static bool read_local_aim_state() {
 }
 
 bool esp_local_player_is_aiming() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     if (g_pid <= 0 || !g_il2cpp_base) return false;
     if (!read_local_aim_state()) return false;
     return g_aim_state.aiming;
@@ -10690,13 +10702,14 @@ static bool read_local_move_clock(uint32_t& tick, float& delta) {
     tick = 0;
     delta = 0.0F;
     if (!g_local_player) return false;
-    const PlayerAux& aux = player_aux(g_local_player);
-    if (!aux.kcc) return false;
+    auto it = g_player_aux.find(g_local_player);
+    if (it == g_player_aux.end() || !it->second.kcc) return false;
+    const uint64_t kcc = it->second.kcc;
     uint32_t value = 0;
-    if (!rd_exact(aux.kcc + KCC_MOVE + 0x34, value)) return false;
+    if (!rd_fresh(kcc + KCC_MOVE + 0x34, value)) return false;
     tick = value;
     float dt = 0.0F;
-    if (rd_exact(aux.kcc + KCC_MOVE + 0x30, dt) && std::isfinite(dt) &&
+    if (rd_fresh(kcc + KCC_MOVE + 0x30, dt) && std::isfinite(dt) &&
         dt > 0.0005F && dt < 0.5F) delta = dt;
     return true;
 }
@@ -10726,6 +10739,7 @@ static void game_tick_observe(uint32_t tick, double now) {
 }
 
 bool esp_game_tick_now(uint32_t& tick) {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     float delta = 0.0F;
     if (!read_local_move_clock(tick, delta)) {
         s_game_tick_valid = false;
@@ -10737,6 +10751,7 @@ bool esp_game_tick_now(uint32_t& tick) {
 }
 
 int esp_game_frame_tick() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     uint32_t tick = 0;
     float delta = 0.0F;
     if (!read_local_move_clock(tick, delta)) {

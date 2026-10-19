@@ -668,7 +668,7 @@ static bool read_item_data_display_name(uint64_t item_data, char* out, size_t ca
 // (FPObject -> player back-reference) a relaxed pass accepts the objects as-is.
 static bool fp_object_display_name(uint64_t weapon, uint64_t player, bool strict,
                                    char* out, size_t cap) {
-    if (!valid_obj(weapon)) return false;
+    if (!valid_obj(weapon) || !valid_obj(rd_ptr(weapon + MANAGED_CACHED_PTR))) return false;
     if (strict && rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) != player) return false;
     char tmp[32] = {};
     uint64_t str = rd_ptr(weapon + FPOBJECT_OBJECT_NAME);
@@ -704,9 +704,11 @@ static bool player_weapon_name_raw(uint64_t player, char* out, size_t cap, bool&
     // remote player whose FP MonoBehaviour happens to be instantiated).
     uint64_t fp = rd_ptr(player + PLAYER_FP_MANAGER);
     if (valid_obj(fp)) {
+        const uint64_t cur_obj = rd_ptr(fp + FPMANAGER_CURRENT_OBJECT);
+        const uint64_t cur_wpn = rd_ptr(fp + FPMANAGER_CURRENT_WEAPON);
         uint64_t candidates[2] = {
-            rd_ptr(fp + FPMANAGER_CURRENT_WEAPON),
-            rd_ptr(fp + FPMANAGER_CURRENT_OBJECT),
+            cur_obj,
+            cur_obj ? 0 : cur_wpn,
         };
         for (int strict = 1; strict >= 0; --strict) {
             for (int i = 0; i < 2; ++i) {
@@ -847,11 +849,15 @@ bool class_looks_alive(uint64_t klass) {
 int class_identity(uint64_t klass, const char* expected_name, const char* expected_ns) {
     if (!class_looks_alive(klass)) return 0;
     bool name_readable = false, ns_readable = false;
-    const std::string name  = read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAME), &name_readable);
-    const std::string space = read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAMESPACE), &ns_readable);
-    if (!name_readable && !ns_readable) return 2;
-    if (name_readable && name != expected_name) return 0;
-    if (ns_readable && space != expected_ns) return 0;
+    const std::string name = expected_name
+        ? read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAME), &name_readable)
+        : std::string();
+    const std::string space = expected_ns
+        ? read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAMESPACE), &ns_readable)
+        : std::string();
+    if ((!expected_name || !name_readable) && (!expected_ns || !ns_readable)) return 2;
+    if (expected_name && name_readable && name != expected_name) return 0;
+    if (expected_ns && ns_readable && space != expected_ns) return 0;
     return 1;
 }
 
@@ -6986,7 +6992,7 @@ bool aim_read_weapon_config(uint64_t weapon, uint64_t offset, bool allow_structu
             identity = aim_object_identity(config, "HitscanWeaponConfig", kAimWeaponNamespace);
         }
     }
-    if (identity == 0) return false;
+    if (identity == 0 || (identity == 2 && !allow_structural_fallback)) return false;
 
     float max_distance = 0.0f, bullet_speed = 0.0f;
     if (!aim_read_float(config + HITSCANCONFIG_MAX_DISTANCE, 0.0f, 5000.0f, max_distance) ||
@@ -7001,7 +7007,7 @@ bool aim_read_weapon_config(uint64_t weapon, uint64_t offset, bool allow_structu
         read = {};
     }
 
-    if (identity == 2 && allow_structural_fallback) {
+    if (identity == 2) {
         float fire_rate = 0.0f, dispersion = 0.0f;
         int32_t projectiles = 0;
         uint64_t dispersion_config = 0;
@@ -7031,8 +7037,8 @@ bool aim_read_projectile(uint64_t weapon, uint64_t offset, bool allow_structural
     uint64_t projectile = 0;
     if (!aim_read_pointer_exact(weapon + offset, projectile) || !valid_obj(projectile))
         return false;
-    const int identity = aim_object_identity(projectile, "ShaftedProjectile", nullptr);
-    if (identity == 0) return false;
+    const int identity = aim_object_identity(projectile, "ShaftedProjectile", "Oxide");
+    if (identity == 0 || (identity == 2 && !allow_structural_fallback)) return false;
 
     float max_distance = 0.0f, launch_speed = 0.0f;
     float gravity = 0.0f, air_drag = 0.0f, underwater_drag = 0.0f;
@@ -7045,8 +7051,9 @@ bool aim_read_projectile(uint64_t weapon, uint64_t offset, bool allow_structural
         aim_read_float(projectile + SHAFTEDPROJECTILE_AIR_DRAG, 0.0f, 100.0f, air_drag) &&
         aim_read_float(projectile + SHAFTEDPROJECTILE_UNDERWATER_DRAG, 0.0f, 100.0f,
                        underwater_drag);
-    if (identity == 2 && allow_structural_fallback &&
-        (!(max_distance > 0.0f) || !(launch_speed > 1.0f))) return false;
+    if (identity == 2 &&
+        (!physics_valid || !(max_distance >= 5.0f && max_distance <= 1000.0f) ||
+         !(launch_speed >= 5.0f && launch_speed <= 500.0f))) return false;
 
     read.params.muzzle_speed = launch_speed;
     read.params.max_range = max_distance;
@@ -7202,9 +7209,21 @@ void update_aim_ballistics(uint64_t player) {
             return;
         }
     }
+    uint64_t cached_ptr = 0;
+    if (!aim_read_pointer_exact(weapon + MANAGED_CACHED_PTR, cached_ptr) ||
+        !valid_obj(cached_ptr)) {
+        clear_cache();
+        return;
+    }
     uint64_t weapon_class = 0;
     if (!aim_read_pointer_exact(weapon, weapon_class) || !valid_obj(weapon_class)) {
         restore_cache();
+        return;
+    }
+    uint32_t instance_size = 0;
+    if (rd_exact(weapon_class + 0x120, instance_size) &&
+        instance_size >= 0x80 && instance_size < 0x128) {
+        clear_cache();
         return;
     }
     if (cached_weapon != weapon || cached_weapon_class != weapon_class) {
@@ -7225,17 +7244,17 @@ void update_aim_ballistics(uint64_t player) {
 
     enum class Kind { None, Hitscan, Bow, Crossbow, Rocket, Explosive, Snowball, Spear };
     Kind kind = Kind::None;
-    if (aim_object_identity(weapon, "FPHitscan", "Oxide") != 0) kind = Kind::Hitscan;
-    else if (aim_object_identity(weapon, "FPBow", "Oxide") != 0) kind = Kind::Bow;
-    else if (aim_object_identity(weapon, "FPCrossbow", kAimFirstPersonNamespace) != 0)
+    if (aim_object_identity(weapon, "FPHitscan", "Oxide") == 1) kind = Kind::Hitscan;
+    else if (aim_object_identity(weapon, "FPBow", "Oxide") == 1) kind = Kind::Bow;
+    else if (aim_object_identity(weapon, "FPCrossbow", kAimFirstPersonNamespace) == 1)
         kind = Kind::Crossbow;
-    else if (aim_object_identity(weapon, "FPRocketLauncher", "Oxide") != 0)
+    else if (aim_object_identity(weapon, "FPRocketLauncher", "Oxide") == 1)
         kind = Kind::Rocket;
-    else if (aim_object_identity(weapon, "FPExplosiveCharge", "Oxide") != 0)
+    else if (aim_object_identity(weapon, "FPExplosiveCharge", "Oxide") == 1)
         kind = Kind::Explosive;
-    else if (aim_object_identity(weapon, "FPSnowball", kAimFirstPersonNamespace) != 0)
+    else if (aim_object_identity(weapon, "FPSnowball", kAimFirstPersonNamespace) == 1)
         kind = Kind::Snowball;
-    else if (aim_object_identity(weapon, "FPSpear", "Oxide") != 0)
+    else if (aim_object_identity(weapon, "FPSpear", "Oxide") == 1)
         kind = Kind::Spear;
 
     uint64_t config_offset = 0, projectile_offset = 0;
@@ -7264,10 +7283,14 @@ void update_aim_ballistics(uint64_t player) {
         projectile_ok = aim_read_projectile(weapon, projectile_offset, false, projectile_read);
 
     if (!config_ok && !projectile_ok) {
+        config_ok = aim_lookup_weapon_by_object_id(weapon, config_read);
+    }
+    if (!config_ok && !projectile_ok) {
         const uint64_t config_candidates[] = {
             FPHITSCAN_CONFIG, FPCROSSBOW_CONFIG, FPROCKETLAUNCHER_CONFIG
         };
         for (uint64_t offset : config_candidates) {
+            if (instance_size >= 0x128 && offset + 8 > instance_size) continue;
             if (aim_read_weapon_config(weapon, offset, true, config_read) &&
                 config_read.params.valid) { config_ok = true; break; }
             config_read = {};
@@ -7278,13 +7301,11 @@ void update_aim_ballistics(uint64_t player) {
             FPSNOWBALL_PROJECTILE_PREFAB, FPSPEAR_PROJECTILE_PREFAB
         };
         for (uint64_t offset : projectile_candidates) {
+            if (instance_size >= 0x128 && offset + 8 > instance_size) continue;
             if (aim_read_projectile(weapon, offset, true, projectile_read) &&
                 projectile_read.params.valid) { projectile_ok = true; break; }
             projectile_read = {};
         }
-    }
-    if (!config_ok && !projectile_ok) {
-        config_ok = aim_lookup_weapon_by_object_id(weapon, config_read);
     }
 
     aim_ballistics::Parameters current{};
@@ -7813,8 +7834,11 @@ static bool read_local_aim_state() {
     // aimbot active through that transition.
     const uint64_t fp_manager = rd_ptr(local + PLAYER_FP_MANAGER);
     if (fp_manager) {
+        const uint64_t cur_obj = rd_ptr(fp_manager + FPMANAGER_CURRENT_OBJECT);
         const uint64_t weapon = rd_ptr(fp_manager + FPMANAGER_CURRENT_WEAPON);
-        if (weapon && rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) == local) {
+        if (weapon && (!cur_obj || cur_obj == weapon) &&
+            valid_obj(rd_ptr(weapon + MANAGED_CACHED_PTR)) &&
+            rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) == local) {
             uint8_t is_aiming = 0;
             if (rd_exact(weapon + FPWEAPON_IS_AIMING, is_aiming) && is_aiming <= 1) {
                 fresh.fp_manager = fp_manager;
@@ -7889,12 +7913,13 @@ bool read_local_melee_reach(MeleeReach& out) {
     if (!local) return false;
     const uint64_t fp_manager = rd_ptr(local + PLAYER_FP_MANAGER);
     if (!valid_obj(fp_manager)) return false;
-    uint64_t weapon = rd_ptr(fp_manager + FPMANAGER_CURRENT_WEAPON);
-    if (!valid_obj(weapon) || rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) != local) {
-        weapon = rd_ptr(fp_manager + FPMANAGER_CURRENT_OBJECT);
-        if (!valid_obj(weapon) || rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) != local)
-            return false;
+    uint64_t weapon = rd_ptr(fp_manager + FPMANAGER_CURRENT_OBJECT);
+    if (!valid_obj(weapon)) {
+        weapon = rd_ptr(fp_manager + FPMANAGER_CURRENT_WEAPON);
     }
+    if (!valid_obj(weapon) || !valid_obj(rd_ptr(weapon + MANAGED_CACHED_PTR)) ||
+        rd_ptr(weapon + FPOBJECT_PLAYER_BACKREF) != local)
+        return false;
     const uint64_t klass = rd_ptr(weapon);
     if (!valid_obj(klass)) return false;
     if (klass != s_melee_klass) {  // имя класса читаем один раз на предмет в руках
@@ -9750,11 +9775,26 @@ static void read_gko_ray_sample(uint64_t wrapper, uint64_t local_player, vis_che
 }
 
 static bool weapon_is_melee_class(uint64_t weapon) {
-    if (!valid_obj(weapon)) return false;
+    if (!valid_obj(weapon) || !valid_obj(rd_ptr(weapon + MANAGED_CACHED_PTR))) return false;
+    const uint64_t klass = rd_ptr(weapon);
+    uint32_t instance_size = 0;
+    if (valid_obj(klass) && rd_exact(klass + 0x120, instance_size)) {
+        if (instance_size >= 0x80 && instance_size < 0x128) return true; // non-weapon FPObject
+        if (instance_size >= 0x128) {
+            int32_t wtype = 0;
+            if (rd_exact(weapon + 0xDC, wtype) &&
+                (wtype == 11 || wtype == 12 || wtype == 13 || wtype == 14 || wtype == 15))
+                return true;
+        }
+    }
     return object_class_name_is(weapon, "FPMelee", false) ||
            object_class_name_is(weapon, "FPTool", false) ||
            object_class_name_is(weapon, "FPChainsaw", false) ||
-           object_class_name_is(weapon, "FPKnife", false);
+           object_class_name_is(weapon, "FPKnife", false) ||
+           object_class_name_is(weapon, "FPSpear", false) ||
+           object_class_name_is(weapon, "FPBuildingHammer", false) ||
+           object_class_name_is(weapon, "FPTorch", false) ||
+           object_class_name_is(weapon, "FPExplosiveCharge", false);
 }
 
 // Защита MouseLook::KrI (0x688FFB0) от блокировки камеры:
@@ -9858,7 +9898,11 @@ static void evaluate_boxes_visibility(uint64_t local_player,
     resolve_solid_wall_masks(solid_wall_mask, strip_prop_mask);
 
     const uint64_t fp_mgr  = rd_ptr(local_player + PLAYER_FP_MANAGER);
-    const uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON) : 0;
+    uint64_t cur_wpn = valid_obj(fp_mgr) ? rd_ptr(fp_mgr + FPMANAGER_CURRENT_OBJECT) : 0;
+    if (!valid_obj(cur_wpn) && valid_obj(fp_mgr))
+        cur_wpn = rd_ptr(fp_mgr + FPMANAGER_CURRENT_WEAPON);
+    if (valid_obj(cur_wpn) && !valid_obj(rd_ptr(cur_wpn + MANAGED_CACHED_PTR)))
+        cur_wpn = 0;
     uint64_t rm = rd_ptr(local_player + PLAYER_RAYCAST_MANAGER);
     if (!valid_obj(rm) && valid_obj(cur_wpn)) rm = rd_ptr(cur_wpn + FPOBJECT_RAYCAST_MANAGER);
 

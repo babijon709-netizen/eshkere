@@ -333,6 +333,8 @@ static void always_day_tick() {
     if (!g_day_tod) {
         static uint64_t s_scan_rva = TOD_SCAN_RVA_BEGIN;
         const uint64_t kScanEnd = TOD_SCAN_RVA_END;
+        if (s_scan_rva < TOD_SCAN_RVA_BEGIN || s_scan_rva >= kScanEnd)
+            s_scan_rva = TOD_SCAN_RVA_BEGIN;
         const uint64_t kCycleOff = TOD_SKY_CYCLE;
         uint64_t slots[128];
         if (rd_buf(g_il2cpp_base + s_scan_rva, slots, sizeof(slots))) {
@@ -827,9 +829,9 @@ bool class_looks_alive(uint64_t klass) {
     const uint64_t image = rd_ptr(klass);
     const uint64_t name  = rd_ptr(klass + IL2CPP_CLASS_NAME);
     const uint64_t space = rd_ptr(klass + IL2CPP_CLASS_NAMESPACE);
-    if (!image || !name || !space) return false;
-    // Имя и пространство имён — указатели в память метаданных: не ноль и не мусор.
-    return name >= 0x10000 && space >= 0x10000;
+    if (!valid_obj(image)) return false;
+    return name >= 0x10000 && name < memio::kMaxUserAddress &&
+           space >= 0x10000 && space < memio::kMaxUserAddress;
 }
 
 // Сверка класса с ожидаемым именем и пространством имён.
@@ -855,7 +857,17 @@ int class_identity(uint64_t klass, const char* expected_name, const char* expect
     const std::string space = expected_ns
         ? read_remote_string(rd_ptr(klass + IL2CPP_CLASS_NAMESPACE), &ns_readable)
         : std::string();
-    if ((!expected_name || !name_readable) && (!expected_ns || !ns_readable)) return 2;
+    if ((!expected_name || !name_readable) && (!expected_ns || !ns_readable)) {
+        const uint32_t instance_size = rd<uint32_t>(klass + 0xF8);
+        const uint8_t depth = rd<uint8_t>(klass + 0x12C);
+        const uint64_t th = rd_ptr(klass + 0xA8);
+        if (instance_size < 0x10 || instance_size > 0x4000 ||
+            depth < 1 || depth > 32 || !valid_obj(th) ||
+            rd_ptr(th + (uint64_t)(depth - 1) * 8) != klass) {
+            return 0;
+        }
+        return 2;
+    }
     if (expected_name && name_readable && name != expected_name) return 0;
     if (expected_ns && ns_readable && space != expected_ns) return 0;
     return 1;
@@ -877,13 +889,23 @@ static bool base_resolves_game(uint64_t base) {
             const uint64_t candidate = rd_ptr(base + GAME_CONTROLLER_TYPEINFO_RVA);
             if (class_identity(candidate, "GameControllerBase", "Oxide") != 0) return true;
         }
+        if (PLAYER_LOOP_HELPER_TYPEINFO_RVA != 0) {
+            const uint64_t candidate = rd_ptr(base + PLAYER_LOOP_HELPER_TYPEINFO_RVA);
+            if (class_identity(candidate, "PlayerLoopHelper", "Cysharp.Threading.Tasks") != 0)
+                return true;
+        }
+        if (NETWORK_CLIENT_TYPEINFO_RVA != 0) {
+            const uint64_t candidate = rd_ptr(base + NETWORK_CLIENT_TYPEINFO_RVA);
+            if (class_identity(candidate, "NetworkClient", "Mirror") != 0) return true;
+        }
         return false;
     };
     if (resolves_current()) return true;
 
-    // Auto-switch Release <-> Beta if the user tapped the wrong build button on
-    // startup and the alternate build's TypeInfo slots resolve PlayerManager /
-    // GameControllerBase by exact class name (or both live class structures).
+    // Auto-switch Release <-> Beta ONLY when the alternate build's TypeInfo
+    // slots positively confirm two known classes by exact string name (== 1),
+    // never on unreadable-metadata fallback (== 2), so .data.rel.ro pointers at
+    // Release RVAs inside Beta's libil2cpp.so can never trigger a false switch.
     const go_active::GameVersion cur_ver = go_active::selected_version;
     const go_active::GameVersion alt_ver =
         (cur_ver == go_active::GameVersion::Beta) ? go_active::GameVersion::Release
@@ -894,12 +916,26 @@ static bool base_resolves_game(uint64_t base) {
     const uint64_t alt_gc_rva = (alt_ver == go_active::GameVersion::Beta)
         ? game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA
         : game_offsets::GAME_CONTROLLER_TYPEINFO_RVA;
-    const uint64_t alt_pm = alt_pm_rva ? rd_ptr(base + alt_pm_rva) : 0;
-    const uint64_t alt_gc = alt_gc_rva ? rd_ptr(base + alt_gc_rva) : 0;
-    const int pm_id = class_identity(alt_pm, "PlayerManager", "Oxide");
-    const int gc_id = class_identity(alt_gc, "GameControllerBase", "Oxide");
-    if (pm_id == 1 || gc_id == 1 || (pm_id == 2 && gc_id == 2)) {
+    const uint64_t alt_plh_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA
+        : game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA;
+    const uint64_t alt_pm  = alt_pm_rva  ? rd_ptr(base + alt_pm_rva)  : 0;
+    const uint64_t alt_gc  = alt_gc_rva  ? rd_ptr(base + alt_gc_rva)  : 0;
+    const uint64_t alt_plh = alt_plh_rva ? rd_ptr(base + alt_plh_rva) : 0;
+    const int pm_id  = class_identity(alt_pm,  "PlayerManager",      "Oxide");
+    const int gc_id  = class_identity(alt_gc,  "GameControllerBase", "Oxide");
+    const int plh_id = class_identity(alt_plh, "PlayerLoopHelper",   "Cysharp.Threading.Tasks");
+    const int exact_matches = (pm_id == 1 ? 1 : 0) + (gc_id == 1 ? 1 : 0) + (plh_id == 1 ? 1 : 0);
+    if (exact_matches >= 2) {
         go_active::Select(alt_ver);
+        g_player_manager_class = 0;
+        g_player_manager_static_fields = 0;
+        g_game_controller_class = 0;
+        g_game_controller_static_fields_cached = 0;
+        g_player_position_offset = PLAYER_POSITION;
+        g_transform_hierarchy_layout = {};
+        g_transform_hierarchy_layout_valid = false;
+        reset_marker_caches();
         return true;
     }
     return false;
@@ -1253,7 +1289,7 @@ static Mat4 mat_mul(const Mat4& a, const Mat4& b);
 // позиции не дал ни один (GameObject на месте Transform даёт мусор в +0x38).
 static constexpr uint64_t GAMEOBJECT_COMPONENT_COUNT  = 0x30;  // число компонентов
 static constexpr uint64_t GAMEOBJECT_COMPONENT_STRIDE = 0x10;  // размер пары
-static const uint64_t TRANSFORM_ACCESS_HIERARCHY = TRANSFORM_HIERARCHY_DATA;
+#define TRANSFORM_ACCESS_HIERARCHY (go_active::TRANSFORM_HIERARCHY_DATA)
 
 static uint64_t transform_from_gameobject(uint64_t gameobject) {
     if (gameobject < 0x10000) return 0;
@@ -8740,7 +8776,12 @@ bool esp_alive_check() {
     if (!g_mem.verify()) return false;
     if (!g_player_manager_class && !g_game_controller_class &&
         !base_resolves_game(g_il2cpp_base)) {
-        return false;
+        uint64_t candidates[16] = {};
+        const int n = get_base_candidates("libil2cpp.so", candidates, 16);
+        for (int i = 0; i < n; ++i) {
+            if (candidates[i] == g_il2cpp_base) continue;
+            if (base_resolves_game(candidates[i])) return false;
+        }
     }
     return true;
 }

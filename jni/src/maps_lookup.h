@@ -182,7 +182,6 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
                     prev_lib_ro_start = (uint64_t)start;
                     prev_lib_ro_bias = load_bias;
                 }
-                add(primary, primary_count, 16, prev_lib_ro_start);
             } else if (perms[2] == 'x' && prev_lib_ro_start &&
                        load_bias >= prev_lib_ro_bias &&
                        (load_bias - prev_lib_ro_bias) <= 0x20000ULL) {

@@ -205,11 +205,16 @@ int main() {
 
         const std::string bang_maps =
             "7200000000-72029e8000 r--p 01500000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n"
-            "72029ec000-720b800000 r-xp 03ee8000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n";
-        uint64_t bang_bases[4] = {};
-        const int nb = maps::lookup_library_bases(bang_maps, "libil2cpp.so", bang_bases, 4);
+            "72029ec000-720b800000 r-xp 03ee8000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n"
+            "720de00000-720e391000 r--p 0f2f4000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n"
+            "720e391000-720e9f5000 rw-p 0f885000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n";
+        uint64_t bang_bases[8] = {};
+        const int nb = maps::lookup_library_bases(bang_maps, "libil2cpp.so", bang_bases, 8);
         assert(nb >= 1);
         assert(bang_bases[0] == 0x7200000000ULL);
+        for (int i = 0; i < nb; ++i) {
+            assert(bang_bases[i] != 0x720de00000ULL);
+        }
     }
     return 0;
 }

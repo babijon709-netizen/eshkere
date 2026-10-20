@@ -44,7 +44,7 @@ template<class IO> class Controller {
     std::array<Scalar,6> saved_{};
     uint64_t address(size_t i) const {
         using namespace go_active;
-        static const uint64_t offs[6] = {
+        const uint64_t offs[6] = {
             RECOILCONFIG_MIN_RECOIL, RECOILCONFIG_MIN_RECOIL + 4,
             RECOILCONFIG_MAX_RECOIL, RECOILCONFIG_MAX_RECOIL + 4,
             RECOILCONFIG_MIN_SIDE,   RECOILCONFIG_MAX_SIDE,

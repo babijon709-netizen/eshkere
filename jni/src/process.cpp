@@ -1,5 +1,6 @@
 #include "process.h"
 #include "game.h"
+#include "maps_lookup.h"
 
 #include <atomic>
 #include <chrono>
@@ -31,12 +32,11 @@ static std::atomic<bool> g_attach_running{false};
 // ---- Поиск процесса игры ----------------------------------------------------
 // Раньше брался первый процесс, у которого cmdline совпал с пакетом. Процессов
 // с таким cmdline на устройстве бывает несколько (клон приложения, рабочий
-// профиль, «второе пространство»), и не у каждого отображён libil2cpp.so: если
-// попадался не тот, привязка оставалась ложной навсегда — меню рисовалось, а
-// все функции молчали. Теперь кандидат проверяется по карте памяти, а перебор
-// заканчивается на первом пригодном (лишних обращений к /proc не делаем).
+// профиль, «второе пространство», дочерний fork/crashpad), и не у каждого
+// живой инициализированный libil2cpp.so: если попадался не тот, привязка
+// оставалась ложной навсегда — меню рисовалось, а все функции молчали.
 
-// 2 — основной процесс пакета, 1 — его дочерний (pkg:...), -1 — не он.
+// 2 — основной процесс пакета, 1 — его дочерний/клон (pkg:... / *oxidesurvivalisland*), -1 — не он.
 static int cmdline_rank(pid_t pid, const char* const* pkgs, int pkg_count) {
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
@@ -46,12 +46,22 @@ static int cmdline_rank(pid_t pid, const char* const* pkgs, int pkg_count) {
     const ssize_t n = read(fd, command, sizeof(command) - 1);
     close(fd);
     if (n <= 0) return -1;
+    // Trim trailing spaces/newlines in case argv was padded.
+    size_t cmd_len = strlen(command);
+    while (cmd_len > 0 && (command[cmd_len - 1] == ' ' || command[cmd_len - 1] == '\n' ||
+                           command[cmd_len - 1] == '\r' || command[cmd_len - 1] == '\t')) {
+        command[--cmd_len] = '\0';
+    }
     for (int i = 0; i < pkg_count; ++i) {
         if (!pkgs[i] || !pkgs[i][0]) continue;
         if (strcmp(command, pkgs[i]) == 0) return 2;
         const size_t len = strlen(pkgs[i]);
-        if (strncmp(command, pkgs[i], len) == 0 && command[len] == ':') return 1;
+        if (strncmp(command, pkgs[i], len) == 0 &&
+            (command[len] == ':' || command[len] == '.' || command[len] == '_')) {
+            return command[len] == ':' ? 1 : 2;
+        }
     }
+    if (strstr(command, "oxidesurvivalisland") != nullptr) return 1;
     return -1;
 }
 
@@ -60,7 +70,24 @@ static bool pid_cmdline_matches(pid_t pid) {
     return cmdline_rank(pid, pkgs, 1) >= 1;
 }
 
-// 1 — libil2cpp.so отображён, 0 — нет, -1 — карта не читается.
+// Число потоков в /proc/<pid>/task (до cap): у живого процесса Unity десятки
+// потоков (UnityMain, UnityGfxDeviceW, Job.Worker, GC и т.д.), а у дочернего
+// fork()-хендлера (crashpad/watchdog) — всего 1..3 потока.
+static int proc_thread_count(pid_t pid, int cap = 16) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/task", (int)pid);
+    DIR* dir = opendir(path);
+    if (!dir) return 0;
+    int count = 0;
+    struct dirent* e;
+    while (count < cap && (e = readdir(dir)) != nullptr) {
+        if (e->d_name[0] >= '1' && e->d_name[0] <= '9') ++count;
+    }
+    closedir(dir);
+    return count;
+}
+
+// 1 — libil2cpp.so отображён (включая split APK), 0 — нет, -1 — карта не читается.
 static int proc_libil2cpp(pid_t pid) {
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/maps", pid);
@@ -79,34 +106,64 @@ static int proc_libil2cpp(pid_t pid) {
         break;
     }
     close(fd);
-    if (text.find("libil2cpp.so") != std::string::npos) return 1;
-    if (text.find("com.catsbit.oxidesurvivalisland") != std::string::npos &&
-        (text.find("split_config.") != std::string::npos ||
-         text.find("/base.apk") != std::string::npos)) {
-        return 1;
-    }
-    return 0;
+    uint64_t bases[4] = {};
+    return maps::lookup_library_bases(text, "libil2cpp.so", bases, 4) > 0 ? 1 : 0;
 }
 
-static pid_t find_game_pid() {
+struct PidCandidate {
+    pid_t pid;
+    int   rank;
+    int   threads;
+};
+
+static int find_official_candidates(PidCandidate* out, int capacity) {
+    if (!out || capacity <= 0) return 0;
     DIR* dir = opendir("/proc");
-    if (!dir) return -1;
+    if (!dir) return 0;
     const char* pkgs[1] = {kTargetPackage};
     const pid_t self = getpid();
-    pid_t best = -1;
-    int best_rank = -1;
+    int count = 0;
     struct dirent* entry;
     while ((entry = readdir(dir))) {
         const pid_t pid = (pid_t)atoi(entry->d_name);
         if (pid <= 0 || pid == self) continue;
         const int rank = cmdline_rank(pid, pkgs, 1);
         if (rank < 0) continue;
-        if (proc_libil2cpp(pid) == 1) { best = pid; break; }   // основной процесс игры — дальше не ищем
-        if (best_rank < 0 || rank > best_rank) { best = pid; best_rank = rank; }
+        if (proc_libil2cpp(pid) != 1) continue;
+        const int threads = proc_thread_count(pid, 16);
+        if (count < capacity) {
+            out[count++] = {pid, rank, threads};
+        }
     }
     closedir(dir);
-    if (best > 0) g_target_by_package = true;
-    return best;
+    // Сортируем: сначала многопоточные (>= 8 потоков), затем по убыванию rank,
+    // затем более свежий (больший) pid.
+    for (int i = 1; i < count; ++i) {
+        const PidCandidate cur = out[i];
+        int j = i - 1;
+        while (j >= 0) {
+            const bool cur_mt = cur.threads >= 8;
+            const bool prv_mt = out[j].threads >= 8;
+            const bool better = (cur_mt != prv_mt) ? cur_mt
+                              : (cur.rank != out[j].rank) ? (cur.rank > out[j].rank)
+                              : (cur.pid > out[j].pid);
+            if (!better) break;
+            out[j + 1] = out[j];
+            --j;
+        }
+        out[j + 1] = cur;
+    }
+    return count;
+}
+
+static pid_t find_game_pid() {
+    PidCandidate list[16] = {};
+    const int n = find_official_candidates(list, 16);
+    if (n > 0) {
+        g_target_by_package = true;
+        return list[0].pid;
+    }
+    return -1;
 }
 
 // A release APK may be installed through an app clone/work profile with a
@@ -118,19 +175,36 @@ static int find_renamed_release_candidates(pid_t* out, int capacity) {
     DIR* dir = opendir("/proc");
     if (!dir) return 0;
     const pid_t self = getpid();
+    PidCandidate temp[16] = {};
     int count = 0;
     struct dirent* entry;
-    while (count < capacity && (entry = readdir(dir))) {
+    while (count < 16 && (entry = readdir(dir))) {
         const pid_t pid = (pid_t)atoi(entry->d_name);
         if (pid <= 0 || pid == self) continue;
         char path[32];
         snprintf(path, sizeof(path), "/proc/%d", pid);
         struct stat st{};
         if (stat(path, &st) != 0 || st.st_uid < 10000) continue;
-        if (proc_libil2cpp(pid) == 1) out[count++] = pid;
+        if (proc_libil2cpp(pid) != 1) continue;
+        temp[count++] = {pid, 0, proc_thread_count(pid, 16)};
     }
     closedir(dir);
-    return count;
+    for (int i = 1; i < count; ++i) {
+        const PidCandidate cur = temp[i];
+        int j = i - 1;
+        while (j >= 0) {
+            const bool cur_mt = cur.threads >= 8;
+            const bool prv_mt = temp[j].threads >= 8;
+            const bool better = (cur_mt != prv_mt) ? cur_mt : (cur.pid > temp[j].pid);
+            if (!better) break;
+            temp[j + 1] = temp[j];
+            --j;
+        }
+        temp[j + 1] = cur;
+    }
+    const int written = count < capacity ? count : capacity;
+    for (int i = 0; i < written; ++i) out[i] = temp[i].pid;
+    return written;
 }
 
 // Процесс всё ещё тот самый? Одно чтение cmdline вместо полного перебора /proc:
@@ -156,21 +230,36 @@ void start_attach_thread() {
         while (g_attach_running.load()) {
             if (!g_esp_attached) {
                 pid_t attached_pid = -1;
-                const pid_t official = find_game_pid();
+                PidCandidate officials[16] = {};
+                const int official_count = find_official_candidates(officials, 16);
                 g_attach_scanned.store(true);
-                if (official > 0 && esp_init(official, true)) {
-                    attached_pid = official;
+
+                // Pass 1: strict TypeInfo resolution across all official PIDs.
+                for (int i = 0; i < official_count; ++i) {
+                    if (!esp_init(officials[i].pid, false)) continue;
+                    attached_pid = officials[i].pid;
                     g_target_by_package = true;
-                } else if (official <= 0) {
-                    // Try every renamed Unity application, not just the first:
-                    // unrelated Unity apps are rejected by strict release
-                    // TypeInfo validation in esp_init.
+                    break;
+                }
+                // Pass 2: strict TypeInfo resolution across renamed/cloned Unity PIDs.
+                if (attached_pid <= 0) {
                     pid_t candidates[16] = {};
                     const int count = find_renamed_release_candidates(candidates, 16);
                     for (int i = 0; i < count; ++i) {
-                        if (!esp_init(candidates[i])) continue;
+                        if (!esp_init(candidates[i], false)) continue;
                         attached_pid = candidates[i];
                         g_target_by_package = false;
+                        break;
+                    }
+                }
+                // Pass 3: early-loading fallback for the main multi-threaded
+                // official process while TypeInfo statics are still null.
+                if (attached_pid <= 0) {
+                    for (int i = 0; i < official_count; ++i) {
+                        if (officials[i].rank < 2 || officials[i].threads < 8) continue;
+                        if (!esp_init(officials[i].pid, true)) continue;
+                        attached_pid = officials[i].pid;
+                        g_target_by_package = true;
                         break;
                     }
                 }

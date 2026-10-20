@@ -8676,8 +8676,8 @@ bool esp_init(pid_t pid, bool package_verified_release) {
     g_pid = pid;
     g_mem.clear_last_error();
 
-    uint64_t candidates[8] = {};
-    const int candidate_count = get_base_candidates("libil2cpp.so", candidates, 8);
+    uint64_t candidates[16] = {};
+    const int candidate_count = get_base_candidates("libil2cpp.so", candidates, 16);
     if (candidate_count == 0) {
         g_attach_state = ESP_ATTACH_NO_LIB;
         g_pid = -1;
@@ -8733,10 +8733,17 @@ bool esp_init(pid_t pid, bool package_verified_release) {
 // syscall'а (см. mem_io.h).
 void esp_mem_frame_begin() { g_mem.frame_begin(); }
 
-// Привязка ещё жива? Дешёвая проверка (одно чтение): процесс мог перезапуститься
-// с тем же pid, а доступ — отобрали. Без неё чит оставался «привязанным» и молча
-// ничего не делал до перезапуска приложения.
-bool esp_alive_check() { return g_mem.verify(); }
+// Привязка ещё жива? Дешёвая проверка: процесс мог перезапуститься с тем же
+// pid, а если на раннем старте привязались до инициализации TypeInfo (или к
+// не тому кандидату базы), не зависаем навечно без резолва классов игры.
+bool esp_alive_check() {
+    if (!g_mem.verify()) return false;
+    if (!g_player_manager_class && !g_game_controller_class &&
+        !base_resolves_game(g_il2cpp_base)) {
+        return false;
+    }
+    return true;
+}
 
 // Счётчики чтений памяти для диагностики штормов (см. кадргист в main.cpp):
 // отличают «читаем больше» (аим раздул объём) от «читаем так же, но каждое

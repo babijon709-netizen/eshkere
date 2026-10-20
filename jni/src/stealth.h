@@ -25,13 +25,16 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <csignal>
 #include <cstdlib>
@@ -59,6 +62,68 @@ inline void WriteTextFile(const char* path, const char* data, size_t len) {
     }
 }
 
+// Поднимаем полные root-привилегии, группу AID_READPROC (3009) и SELinux-домен
+// без MCS-категорий (:s0). На Android 10–16 /proc смонтирован с
+// hidepid=2,gid=3009: без GID 3009 в дополнительных группах и при запрете
+// ptrace_may_access политикой SELinux (или из-за унаследованных от терминала
+// категорий s0:cXXX,cYYY в KernelSU/APatch) процесс игры вообще не виден в
+// /proc, а открытие /proc/<pid>/maps и process_vm_readv возвращают EACCES.
+inline void ElevateCredentials() {
+    (void)::setgid(0);
+    (void)::setuid(0);
+
+    // 0=root, 1000=system, 1003=graphics, 1004=input, 1007=log,
+    // 2000=shell, 3003=inet, 3004=net_raw, 3005=net_admin, 3009=readproc
+    static const gid_t kRootGroups[] = {
+        0, 1000, 1003, 1004, 1007, 2000, 3003, 3004, 3005, 3009
+    };
+    (void)::setgroups(sizeof(kRootGroups) / sizeof(kRootGroups[0]), kRootGroups);
+
+#if defined(SYS_capset)
+    struct CapHeader {
+        uint32_t version;
+        int      pid;
+    } hdr = {0x20080522U /* _LINUX_CAPABILITY_VERSION_3 */, 0};
+    struct CapData {
+        uint32_t effective;
+        uint32_t permitted;
+        uint32_t inheritable;
+    } data[2] = {
+        {0xffffffffU, 0xffffffffU, 0xffffffffU},
+        {0xffffffffU, 0xffffffffU, 0xffffffffU},
+    };
+    (void)::syscall(SYS_capset, &hdr, data);
+#endif
+
+    char attr[128]{};
+    int fd = ::open("/proc/self/attr/current", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ssize_t n = ::read(fd, attr, sizeof(attr) - 1);
+        ::close(fd);
+        if (n > 0) {
+            attr[n] = '\0';
+            // Если контекст сохранил MCS-категории приложения (:c...) или
+            // не-root домен (untrusted_app/shell), пробуем перейти в чистый :s0.
+            if (strstr(attr, ":c") != nullptr ||
+                strstr(attr, "untrusted_app") != nullptr ||
+                strstr(attr, ":shell:") != nullptr) {
+                static const char* const kContexts[] = {
+                    "u:r:magisk:s0",
+                    "u:r:su:s0",
+                    "u:r:kernel:s0",
+                };
+                for (const char* ctx : kContexts) {
+                    int wfd = ::open("/proc/self/attr/current", O_WRONLY | O_CLOEXEC);
+                    if (wfd < 0) break;
+                    ssize_t wn = ::write(wfd, ctx, strlen(ctx));
+                    ::close(wfd);
+                    if (wn > 0) break;
+                }
+            }
+        }
+    }
+}
+
 // Вывод процесса и всех его потоков из cgroup приложения (MT Manager /
 // терминала) в листовую cgroup uid_0/pid_<pid> и защита от Android LMK
 // (oom_score_adj = -1000). На Android 12–16 (cgroup v2) у корневой
@@ -69,6 +134,7 @@ inline void WriteTextFile(const char* path, const char* data, size_t len) {
 // cgroup.freeze при сворачивании/закрытии MT Manager.
 inline void ProtectProcess(pid_t pid) {
     if (pid <= 0) return;
+    if (pid == getpid()) ElevateCredentials();
     char pid_str[32]{};
     int len = snprintf(pid_str, sizeof(pid_str), "%d\n", (int)pid);
     if (len <= 0) return;

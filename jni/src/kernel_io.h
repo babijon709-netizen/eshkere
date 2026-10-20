@@ -989,7 +989,8 @@ private:
             q.buffer = (uint64_t)(uintptr_t)p;
             q.size   = (uint64_t)chunk;
             const int cmd = is_read ? kRtHookCmdRead : kRtHookCmdWrite;
-            if (ioctl(kRtAnyFd, (unsigned long)cmd, &q) != 0)
+            if (ioctl(kRtAnyFd, (unsigned long)cmd, &q) != 0 &&
+                ioctl(0, (unsigned long)cmd, &q) != 0)
                 return done ? (ssize_t)done : -1;
             a += chunk;
             p += chunk;

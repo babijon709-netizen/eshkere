@@ -192,15 +192,24 @@ int main() {
     assert(go_active::RAGDOLL_BONES_ARRAY == 0x88);
 
     // Split APK mapping fallback (when extractNativeLibs="false" maps libil2cpp.so
-    // directly from split_config.arm64_v8a.apk without "libil2cpp.so" in /proc/pid/maps)
+    // directly from split_config.arm64_v8a.apk or base.apk!/lib/arm64-v8a/libil2cpp.so
+    // with p_vaddr - p_offset == 0x4000 and non-zero zip entry file_offset)
     {
         const std::string apk_maps =
-            "7100000000-7100004000 r--p 00120000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n"
-            "7100004000-7109004000 r-xp 00124000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n";
+            "7100000000-71029e8000 r--p 01500000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n"
+            "71029ec000-710b800000 --xp 03ee8000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/split_config.arm64_v8a.apk\n";
         uint64_t bases[4] = {};
         const int n = maps::lookup_library_bases(apk_maps, "libil2cpp.so", bases, 4);
         assert(n >= 1);
         assert(bases[0] == 0x7100000000ULL);
+
+        const std::string bang_maps =
+            "7200000000-72029e8000 r--p 01500000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n"
+            "72029ec000-720b800000 r-xp 03ee8000 fe:09 12345 /data/app/com.catsbit.oxidesurvivalisland/base.apk!/lib/arm64-v8a/libil2cpp.so\n";
+        uint64_t bang_bases[4] = {};
+        const int nb = maps::lookup_library_bases(bang_maps, "libil2cpp.so", bang_bases, 4);
+        assert(nb >= 1);
+        assert(bang_bases[0] == 0x7200000000ULL);
     }
     return 0;
 }

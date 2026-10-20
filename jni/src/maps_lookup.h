@@ -89,13 +89,18 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
                                 uint64_t* out, int max) {
     if (text.empty() || !lib || !lib[0] || !out || max <= 0) return 0;
     const size_t lib_len = strlen(lib);
-    uint64_t primary[8] = {};
-    uint64_t secondary[8] = {};
-    uint64_t apk_candidates[8] = {};
+    uint64_t primary[16] = {};
+    uint64_t secondary[16] = {};
+    uint64_t apk_candidates[16] = {};
     int primary_count = 0, secondary_count = 0, apk_count = 0;
-    const bool want_il2cpp_apk = (strcmp(lib, "libil2cpp.so") == 0);
+    const bool want_il2cpp = (strcmp(lib, "libil2cpp.so") == 0);
+    const bool want_unity  = (strcmp(lib, "libunity.so") == 0);
+    const uint64_t min_apk_exec_size = want_il2cpp ? (32ULL << 20)
+                                     : (want_unity ? (8ULL << 20) : 0ULL);
     uint64_t prev_apk_ro_start = 0;
     uint64_t prev_apk_ro_bias = 0;
+    uint64_t prev_lib_ro_start = 0;
+    uint64_t prev_lib_ro_bias = 0;
 
     auto add = [](uint64_t* list, int& count, int cap, uint64_t value) {
         if (!value) return;
@@ -115,6 +120,8 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
         char perms[5] = {};
         if (sscanf(line, "%llx-%llx %4s %llx", &start, &end, perms, &file_offset) != 4)
             continue;
+        // Skip PROT_NONE (---p) guard reservations.
+        if (perms[0] != 'r' && perms[2] != 'x') continue;
         const char* slash = strchr(line, '/');
         if (!slash) continue;
         const size_t path_off = (size_t)(slash - line);
@@ -130,21 +137,29 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
             name_len -= deleted_len;
             deleted = true;
         }
-        if (want_il2cpp_apk && !deleted && name_len >= 4 &&
+        if (min_apk_exec_size > 0 && !deleted && name_len >= 4 &&
             strncmp(slash + name_len - 4, ".apk", 4) == 0) {
             const uint64_t seg_size = (end > start) ? (uint64_t)(end - start) : 0;
             const uint64_t bias = (uint64_t)start - (uint64_t)file_offset;
-            if (perms[0] == 'r' && perms[2] != 'x') {
-                prev_apk_ro_start = (uint64_t)start;
-                prev_apk_ro_bias = bias;
-            } else if (perms[0] == 'r' && perms[2] == 'x' && seg_size >= (32ULL << 20)) {
-                if (prev_apk_ro_start && prev_apk_ro_bias == bias) {
-                    add(apk_candidates, apk_count, 8, prev_apk_ro_start);
+            if (perms[0] == 'r' && perms[1] != 'w' && perms[2] != 'x') {
+                // Latch the first r--p segment of a continuous load_bias run
+                // so split PT_LOAD[0] VMAs still point to the ELF header.
+                if (!prev_apk_ro_start || bias != prev_apk_ro_bias) {
+                    prev_apk_ro_start = (uint64_t)start;
+                    prev_apk_ro_bias = bias;
+                }
+            } else if (perms[2] == 'x' && seg_size >= min_apk_exec_size &&
+                       (!want_unity || seg_size < (48ULL << 20))) {
+                // In libil2cpp.so, PT_LOAD[1] (.text) has p_vaddr - p_offset == 0x4000,
+                // so bias of PT_LOAD[1] is prev_apk_ro_bias + 0x4000 (<= 0x20000).
+                if (prev_apk_ro_start && bias >= prev_apk_ro_bias &&
+                    (bias - prev_apk_ro_bias) <= 0x20000ULL) {
+                    add(apk_candidates, apk_count, 16, prev_apk_ro_start);
                 }
                 if ((uint64_t)start > 0x4000ULL) {
-                    add(apk_candidates, apk_count, 8, (uint64_t)start - 0x4000ULL);
+                    add(apk_candidates, apk_count, 16, (uint64_t)start - 0x4000ULL);
                 }
-                add(apk_candidates, apk_count, 8, (uint64_t)start);
+                add(apk_candidates, apk_count, 16, (uint64_t)start);
             }
         }
         if (name_len < lib_len) continue;
@@ -154,9 +169,29 @@ inline int lookup_library_bases(const std::string& text, const char* lib,
             slash[name_len - lib_len - 1] != '!') continue;
 
         const uint64_t load_bias = (uint64_t)start - (uint64_t)file_offset;
-        // Живой образ (не «(deleted)») и с нулевым смещением — лучший кандидат.
-        if (file_offset == 0 && !deleted) add(primary, primary_count, 8, (uint64_t)start);
-        else add(secondary, secondary_count, 8, load_bias);
+        if (file_offset == 0 && !deleted) {
+            add(primary, primary_count, 16, (uint64_t)start);
+            prev_lib_ro_start = (uint64_t)start;
+            prev_lib_ro_bias = load_bias;
+        } else if (!deleted) {
+            // When mapped from base.apk!/lib/arm64-v8a/libil2cpp.so, file_offset
+            // is the zip entry offset (!= 0), so start of PT_LOAD[0] (r--p) is
+            // the true ELF base, not start - file_offset.
+            if (perms[0] == 'r' && perms[1] != 'w' && perms[2] != 'x') {
+                if (!prev_lib_ro_start || load_bias != prev_lib_ro_bias) {
+                    prev_lib_ro_start = (uint64_t)start;
+                    prev_lib_ro_bias = load_bias;
+                }
+                add(primary, primary_count, 16, prev_lib_ro_start);
+            } else if (perms[2] == 'x' && prev_lib_ro_start &&
+                       load_bias >= prev_lib_ro_bias &&
+                       (load_bias - prev_lib_ro_bias) <= 0x20000ULL) {
+                add(primary, primary_count, 16, prev_lib_ro_start);
+            }
+            add(secondary, secondary_count, 16, load_bias);
+        } else {
+            add(secondary, secondary_count, 16, load_bias);
+        }
     }
 
     // Сортировка по возрастанию адреса внутри каждой группы: порядок карты не

@@ -94,5 +94,12 @@ void CardBg(float h, ImDrawFlags flags = ImDrawFlags_RoundCornersAll);
 void DrawToggle(ImDrawList* dl, float ax, float cy, float t);
 void SHdr(const char* t, float top = 18.f);
 bool CollapsibleHeader(const char* id, const char* lbl, int secId = 0);
+// Inline settings: the chevron/title expands, the separate switch only enables.
+// Expansion lives in the window's ImGuiStorage, never in the saved game config.
+bool SettingsHeader(const char* id, const char* lbl, const char* summary = nullptr,
+                    bool defaultOpen = false, bool* enabled = nullptr,
+                    float anim = 0.f, bool* changed = nullptr);
+bool ChoiceRow(const char* id, int* value, const char* const* labels, int count);
+
 void DrawSheet(float dt, ImVec2 menuPos, float WW, float WH);
 void DrawPopover(float dt, ImVec2 menuPos, float WW, float WH);

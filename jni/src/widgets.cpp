@@ -456,6 +456,116 @@ bool CollapsibleHeader(const char* id, const char* lbl, int secId) {
 }
 
 
+bool SettingsHeader(const char* id, const char* lbl, const char* summary,
+                    bool defaultOpen, bool* enabled, float anim, bool* changed) {
+    if (changed) *changed = false;
+    ImGui::Dummy({1.f, 6.f});
+    ImGui::PushID(id);
+    auto* storage = ImGui::GetStateStorage();
+    const ImGuiID key = ImGui::GetID("expanded");
+    bool open = storage->GetBool(key, defaultOpen);
+    auto* dl = ImGui::GetWindowDrawList();
+    auto* fn = ImGui::GetFont();
+    const auto pos = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float h = Layout::RowH, fs = ImGui::GetFontSize();
+    const float left = pos.x + Layout::Inset, right = pos.x + w - Layout::Inset;
+    const float toggleW = enabled ? 112.f : 0.f;
+    const float split = right - toggleW;
+    const bool blocked = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+    CardBg(h);
+
+    ImGui::SetCursorScreenPos({left, pos.y});
+    ImGui::InvisibleButton("expand", {ImMax(1.f, split - left), h});
+    if (WasTappedHere() && !blocked && !IsScrollDragging() && !g_input.touchConsumed) {
+        open = !open;
+        storage->SetBool(key, open);
+        g_scrollMain.vel = 0.f;
+        g_input.touchConsumed = true;
+        PlaySound(SND_CLICK);
+    }
+    const float cx = left + 22.f, cy = pos.y + h * 0.5f;
+    if (open) {
+        dl->AddLine({cx - 5.f, cy - 3.f}, {cx, cy + 3.f}, C::U(C::Acc()), 2.5f);
+        dl->AddLine({cx, cy + 3.f}, {cx + 5.f, cy - 3.f}, C::U(C::Acc()), 2.5f);
+    } else {
+        dl->AddLine({cx - 3.f, cy - 5.f}, {cx + 3.f, cy}, C::U(C::Dim()), 2.5f);
+        dl->AddLine({cx + 3.f, cy}, {cx - 3.f, cy + 5.f}, C::U(C::Dim()), 2.5f);
+    }
+    const bool hasSummary = summary && summary[0];
+    const float titleFs = fs * 1.05f, subFs = fs * 0.78f;
+    const float titleY = hasSummary ? cy - titleFs - 2.f : cy - titleFs * 0.5f;
+    dl->PushClipRect({left + 42.f, pos.y}, {split - 10.f, pos.y + h}, true);
+    dl->AddText(fn, titleFs, {left + 42.f, titleY}, C::U(C::Txt()), lbl);
+    if (hasSummary)
+        dl->AddText(fn, subFs, {left + 42.f, cy + 4.f}, C::U(C::Dim()), summary);
+    dl->PopClipRect();
+
+    if (enabled) {
+        ImGui::SetCursorScreenPos({split, pos.y});
+        ImGui::InvisibleButton("enable", {toggleW, h});
+        if (WasTappedHere() && !blocked && !IsScrollDragging() && !g_input.touchConsumed) {
+            *enabled = !*enabled;
+            if (changed) *changed = true;
+            char text[160];
+            snprintf(text, sizeof(text), XS("%s|%s"), lbl, *enabled ? XS("Вкл") : XS("Выкл"));
+            ShowToast(text);
+            g_input.touchConsumed = true;
+            PlaySound(SND_CLICK);
+        }
+        DrawToggle(dl, right - Layout::PadX - 72.f, cy, EaseInOut(anim));
+    }
+    ImGui::SetCursorScreenPos({pos.x, pos.y + h});
+    ImGui::Dummy({w, 8.f});
+    ImGui::PopID();
+    return open;
+}
+
+bool ChoiceRow(const char* id, int* value, const char* const* labels, int count) {
+    if (count <= 0) return false;
+    ImGui::PushID(id);
+    const auto pos = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float h = Layout::BtnH, gap = 8.f;
+    const float cellW = (w - 2.f * Layout::Inset - gap * (count - 1)) / count;
+    auto* dl = ImGui::GetWindowDrawList();
+    auto* fn = ImGui::GetFont();
+    const bool blocked = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+    bool changed = false;
+    for (int i = 0; i < count; ++i) {
+        const float x = pos.x + Layout::Inset + i * (cellW + gap);
+        ImGui::SetCursorScreenPos({x, pos.y});
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("choice", {ImMax(1.f, cellW), h});
+        if (WasTappedHere() && !blocked && !IsScrollDragging() && !g_input.touchConsumed && *value != i) {
+            *value = i;
+            changed = true;
+            g_input.touchConsumed = true;
+            PlaySound(SND_CLICK);
+        }
+        ImGui::PopID();
+        const bool selected = *value == i;
+        dl->AddRectFilled({x, pos.y}, {x + cellW, pos.y + h},
+                         selected ? C::UA(C::Acc(), 0.18f) : C::U(C::Card()), R::Btn);
+        if (selected || g_state.ui_show_sep)
+            dl->AddRect({x, pos.y}, {x + cellW, pos.y + h},
+                        C::U(selected ? C::Acc() : C::Sep()), R::Btn, 0, selected ? 2.f : 1.f);
+        float fs = ImGui::GetFontSize();
+        auto size = fn->CalcTextSizeA(fs, FLT_MAX, 0, labels[i]);
+        if (size.x > cellW - 16.f) fs *= ImMax(1.f, cellW - 16.f) / ImMax(1.f, size.x);
+        size = fn->CalcTextSizeA(fs, FLT_MAX, 0, labels[i]);
+        dl->PushClipRect({x, pos.y}, {x + cellW, pos.y + h}, true);
+        dl->AddText(fn, fs, {x + (cellW - size.x) * 0.5f, pos.y + (h - size.y) * 0.5f},
+                    C::U(selected ? C::Acc() : C::Dim()), labels[i]);
+        dl->PopClipRect();
+    }
+    ImGui::SetCursorScreenPos({pos.x, pos.y + h});
+    ImGui::Dummy({w, 8.f});
+    ImGui::PopID();
+    return changed;
+}
+
+
 static void DrawExitButtons(ImDrawList* fg, ImFont* fn, float fs, float alpha,
                              float b1X, float b2X, float bW, float bY, float btnH,
                              bool blocked,

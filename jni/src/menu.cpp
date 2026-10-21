@@ -75,6 +75,35 @@ static constexpr int kAccentCount = 9;   // 8 пресетов + свой
 
 
 
+// Calibration actions occupy full rows and must not use ImGui::Button's
+// activation policy: the Android touch pipeline dispatches on release.
+static void CalibrationRow(const char* id, const char* label, int mode, const char* value = nullptr) {
+    const auto pos = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, h = Layout::RowH;
+    const float left = pos.x + Layout::Inset + Layout::PadX;
+    const float right = pos.x + w - Layout::Inset - Layout::PadX;
+    ImGui::InvisibleButton(id, {w, h});
+    if (WasTappedHere() && !(g_pop.visible && !g_pop.closing) && !g_sheet.visible &&
+        !IsScrollDragging() && !g_input.touchConsumed) {
+        g_calibMode = mode;
+        menu_open = false;
+        g_input.touchConsumed = true;
+        PlaySound(SND_CLICK);
+    }
+    auto* dl = ImGui::GetWindowDrawList();
+    const float fs = ImGui::GetFontSize();
+    const auto vsz = ImGui::GetFont()->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, value ? value : "");
+    const float valueX = right - 24.f - vsz.x;
+    if (value)
+        dl->AddText(ImGui::GetFont(), fs * 0.85f, {valueX, pos.y + (h - vsz.y) * 0.5f}, C::U(C::Dim()), value);
+    dl->PushClipRect({left, pos.y}, {valueX - 10.f, pos.y + h}, true);
+    dl->AddText(ImGui::GetFont(), fs, {left, pos.y + (h - fs) * 0.5f}, C::U(C::Acc()), label);
+    dl->PopClipRect();
+    const float cy = pos.y + h * 0.5f;
+    dl->AddLine({right - 8.f, cy - 5.f}, {right - 3.f, cy}, C::U(C::Acc()), 2.f);
+    dl->AddLine({right - 3.f, cy}, {right - 8.f, cy + 5.f}, C::U(C::Acc()), 2.f);
+}
+
 float TabContent(int tab, float dt, float cW) {
     float sY = ImGui::GetCursorPosY();
 
@@ -90,157 +119,57 @@ float TabContent(int tab, float dt, float cW) {
         cfg::aim::trigger_delay  = g_state.gun_trigger_delay;
         cfg::aim::fire_only      = g_state.aim_fire_only;
 
+        // Keep the feature switch visible; settings do not enable the feature.
+        const char* const modes[] = {XS("Тач"), XS("Память"), XS("Сайлент")};
+        const char* const bones[] = {XS("Голова"), XS("Шея"), XS("Тело")};
+        const char* const priorities[] = {XS("Умный"), XS("Ближе к прицелу"), XS("Ближе ко мне")};
         SHdr(XS("Аим"));
-        CardBg(Layout::RowH * 5);
-        const bool aimWasOn = g_state.aim_touch;
-        ToggleRow("##ta1", XS("Аим"),          &g_state.aim_touch,   g_state.a_aim_touch, false, true);
-        if (aimWasOn != g_state.aim_touch)
-            ;
-        ToggleRow("##ta2", XS("Только видимых"), &g_state.aim_pos,   g_state.a_aim_pos,   false);
-        ToggleRow("##ta6", XS("Только в прицеле"), &g_state.aim_scope_only, g_state.a_aim_scope, false);
-        // Аим ведёт, пока держится кнопка огня: наведение начинается первым
-        // кадром нажатия, а не тогда, когда пуля задела. Пара к предыдущему: тот смотрит на прицел, этот — на
-        // огонь.
-        ToggleRow("##ta7", XS("Только при стрельбе"), &g_state.aim_fire_only, g_state.a_aim_fire, false);
-        ToggleRow("##ta3", XS("Круг FOV"),         &g_state.aim_special, g_state.a_aim_spec,  true, false, &cfg::aim::fov_col);
-
-        // ---- Режим: чем именно аим крутит прицел ---------------------------
-        // Тач — синтетический палец (нужна инъекция касаний); память — запись
-        // ввода взгляда прямо в игру (камера едет как от свайпа, но без
-        // пальца); сайлент — запись оси выстрела (камера стоит на месте, в
-        // цель уходит только выстрел). Последние два работают и там, где
-        // /dev/uinput занят или перехвачен.
+        CardBg(Layout::RowH);
+        ToggleRow("##ta1", XS("Аим"), &g_state.aim_touch, g_state.a_aim_touch, true, true);
         SHdr(XS("Режим"));
-        {
-            const float rowH = Layout::RowH;
-            const float inset = Layout::Inset, padX = Layout::PadX;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto* dl = ImGui::GetWindowDrawList();
-            auto* fn = ImGui::GetFont();
-            const float fs = ImGui::GetFontSize();
-            const bool popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
-            CardBg(rowH * 3.f);
+        ChoiceRow("##aim_mode", &g_state.aim_mode, modes, 3);
 
-            auto modeRow = [&](const char* id, const char* lbl, int mode, bool last, float& anim) {
-                auto pos = ImGui::GetCursorScreenPos();
-                const float cX = pos.x + inset, cW = avW - inset * 2.f;
-                const float cy = pos.y + rowH * 0.5f;
-                ImGui::InvisibleButton(id, {avW, rowH});
-                const bool tapped = WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed;
-                if (tapped && g_state.aim_mode != mode) {
-                    g_state.aim_mode = mode;
-                    PlaySound(SND_CLICK);
-                    g_input.touchConsumed = true;
-                }
-                const bool on = (g_state.aim_mode == mode);
-                const float r = 9.f, dotX = cX + cW - padX - r;
-                dl->AddCircle({dotX, cy}, r, C::UA(on ? C::Acc() : C::Dim(), 1.f), 12, on ? 2.f : 1.6f);
-                if (anim > 0.01f) dl->AddCircleFilled({dotX, cy}, r * 0.5f * anim, C::UA(C::Acc(), 1.f), 12);
-                dl->AddText(fn, fs * 1.15f, {cX + padX, cy - fs * 1.15f * 0.5f},
-                            C::UA(on ? C::Txt() : C::Dim(), 1.f), lbl);
-                if (!last && g_state.ui_show_sep)
-                    dl->AddLine({cX + padX, pos.y + rowH - 0.5f},
-                                {cX + cW - padX, pos.y + rowH - 0.5f}, C::UA(C::Sep(), 1.f), 0.8f);
-            };
-            modeRow("##am0", XS("Тач"),    AIM_MODE_TOUCH,   false, g_state.a_aim_mode0);
-            modeRow("##am1", XS("Память"), AIM_MODE_MEMORY,  false, g_state.a_aim_mode1);
-            modeRow("##am2", XS("Сайлент"), AIM_MODE_SILENT, true,  g_state.a_aim_mode2);
+        char targetSummary[160];
+        snprintf(targetSummary, sizeof(targetSummary), "%s · %s",
+                 bones[ImClamp(g_state.aim_bone, 0, 2)], priorities[ImClamp(g_state.aim_priority, 0, 2)]);
+        if (SettingsHeader("##aim_target", XS("Выбор цели"), targetSummary)) {
+            SHdr(XS("Куда целиться"), 4.f);
+            if (ChoiceRow("##aim_bone", &g_state.aim_bone, bones, 3)) {
+                char text[160]; snprintf(text, sizeof(text), XS("%s|%s"), XS("Куда целиться"), bones[g_state.aim_bone]);
+                ShowToast(text);
+            }
+            SHdr(XS("Выбор цели"), 4.f);
+            if (ChoiceRow("##aim_priority", &g_state.aim_priority, priorities, 3)) {
+                char text[160]; snprintf(text, sizeof(text), XS("%s|%s"), XS("Выбор цели"), priorities[g_state.aim_priority]);
+                ShowToast(text);
+            }
         }
-
-        SHdr(XS("Куда целиться"));
-        {
-            const float rowH = Layout::RowH;
-            const float inset = Layout::Inset, padX = Layout::PadX;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto* dl = ImGui::GetWindowDrawList();
-            auto* fn = ImGui::GetFont();
-            const float fs = ImGui::GetFontSize();
-            const bool popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
-            CardBg(rowH * 3.f);
-            auto boneRow = [&](const char* id, const char* lbl, int slot, bool last, float& anim) {
-                auto pos = ImGui::GetCursorScreenPos();
-                const float cX = pos.x + inset, cW = avW - inset * 2.f;
-                const float cy = pos.y + rowH * 0.5f;
-                ImGui::InvisibleButton(id, {avW, rowH});
-                const bool tapped = WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed;
-                if (tapped && g_state.aim_bone != slot) {
-                    g_state.aim_bone = slot;
-                    char b[160];
-                    snprintf(b, sizeof(b), XS("%s|%s"), XS("Куда целиться"), lbl);
-                    ShowToast(b);
-                    PlaySound(SND_CLICK);
-                    g_input.touchConsumed = true;
-                }
-                const bool on = (g_state.aim_bone == slot);
-                const float r = 9.f, dotX = cX + cW - padX - r;
-                dl->AddCircle({dotX, cy}, r, C::UA(on ? C::Acc() : C::Dim(), 1.f), 12, on ? 2.f : 1.6f);
-                if (anim > 0.01f) dl->AddCircleFilled({dotX, cy}, r * 0.5f * anim, C::UA(C::Acc(), 1.f), 12);
-                dl->AddText(fn, fs * 1.15f, {cX + padX, cy - fs * 1.15f * 0.5f},
-                            C::UA(on ? C::Txt() : C::Dim(), 1.f), lbl);
-                if (!last && g_state.ui_show_sep)
-                    dl->AddLine({cX + padX, pos.y + rowH - 0.5f},
-                                {cX + cW - padX, pos.y + rowH - 0.5f}, C::UA(C::Sep(), 1.f), 0.8f);
-            };
-            boneRow("##ab0", XS("Голова"), 0, false, g_state.a_aim_head);
-            boneRow("##ab1", XS("Шея"),    1, false, g_state.a_aim_chest);
-            boneRow("##ab2", XS("Тело"),   2, true,  g_state.a_aim_pelvis);
+        char filterSummary[48];
+        snprintf(filterSummary, sizeof(filterSummary), "%d / 3", int(g_state.aim_pos) +
+                 int(g_state.aim_scope_only) + int(g_state.aim_fire_only));
+        if (SettingsHeader("##aim_filters", XS("Условия наведения"), filterSummary)) {
+            CardBg(Layout::RowH * 3.f);
+            ToggleRow("##ta2", XS("Только видимых"), &g_state.aim_pos, g_state.a_aim_pos, false, true);
+            ToggleRow("##ta6", XS("Только в прицеле"), &g_state.aim_scope_only, g_state.a_aim_scope, false);
+            ToggleRow("##ta7", XS("Только при стрельбе"), &g_state.aim_fire_only, g_state.a_aim_fire, true);
         }
-
-        // ---- Выбор цели ---------------------------------------------------
-        // Приоритет действует одинаково во всех режимах. Далёкие цели вне
-        // ближайшего диапазона исключаются до ранжирования, а текущая цель
-        // получает только небольшой бонус при почти равном результате.
-        SHdr(XS("Выбор цели"));
-        {
-            const float rowH = Layout::RowH;
-            const float inset = Layout::Inset, padX = Layout::PadX;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto* dl = ImGui::GetWindowDrawList();
-            auto* fn = ImGui::GetFont();
-            const float fs = ImGui::GetFontSize();
-            const bool popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
-            CardBg(rowH * 3.f);
-            auto prioRow = [&](const char* id, const char* lbl, int slot, bool last, float& anim) {
-                auto pos = ImGui::GetCursorScreenPos();
-                const float cX = pos.x + inset, cW = avW - inset * 2.f;
-                const float cy = pos.y + rowH * 0.5f;
-                ImGui::InvisibleButton(id, {avW, rowH});
-                const bool tapped = WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed;
-                if (tapped && g_state.aim_priority != slot) {
-                    g_state.aim_priority = slot;
-                    char b[160];
-                    snprintf(b, sizeof(b), XS("%s|%s"), XS("Выбор цели"), lbl);
-                    ShowToast(b);
-                    PlaySound(SND_CLICK);
-                    g_input.touchConsumed = true;
-                }
-                const bool on = (g_state.aim_priority == slot);
-                const float r = 9.f, dotX = cX + cW - padX - r;
-                dl->AddCircle({dotX, cy}, r, C::UA(on ? C::Acc() : C::Dim(), 1.f), 12, on ? 2.f : 1.6f);
-                if (anim > 0.01f) dl->AddCircleFilled({dotX, cy}, r * 0.5f * anim, C::UA(C::Acc(), 1.f), 12);
-                dl->AddText(fn, fs * 1.15f, {cX + padX, cy - fs * 1.15f * 0.5f},
-                            C::UA(on ? C::Txt() : C::Dim(), 1.f), lbl);
-                if (!last && g_state.ui_show_sep)
-                    dl->AddLine({cX + padX, pos.y + rowH - 0.5f},
-                                {cX + cW - padX, pos.y + rowH - 0.5f}, C::UA(C::Sep(), 1.f), 0.8f);
-            };
-            prioRow("##ap0", XS("Умный"),              0, false, g_state.a_aim_pr0);
-            prioRow("##ap1", XS("Ближе к прицелу"),    1, false, g_state.a_aim_pr1);
-            prioRow("##ap2", XS("Ближе ко мне"),       2, true,  g_state.a_aim_pr2);
+        char aimSummary[64];
+        snprintf(aimSummary, sizeof(aimSummary), XS("%.0f° · %.0f"), g_state.gun_fov, g_state.gun_str);
+        if (SettingsHeader("##aim_tuning", XS("Наводка"), aimSummary)) {
+            CardBg(Layout::SliderH * 2.f + Layout::RowH);
+            SliderRow("##afov", XS("Радиус"), &g_state.gun_fov, 5.f, 180.f, XS("%.0f°"), false, true, g_state.sl_gun_fov, dt);
+            SliderRow("##asmt", XS("Скорость"), &g_state.gun_str, 1.f, 10.f, "%.0f", false, false, g_state.sl_gun_str, dt);
+            ToggleRow("##ta3", XS("Круг FOV"), &g_state.aim_special, g_state.a_aim_spec, true, false, &cfg::aim::fov_col);
         }
-
-        SHdr(XS("Наводка"));
-        CardBg(Layout::SliderH * 2);
-        SliderRow("##afov", XS("Радиус"), &g_state.gun_fov, 5.f, 180.f, XS("%.0f°"), false, true, g_state.sl_gun_fov, dt);
-        SliderRow("##asmt", XS("Скорость"), &g_state.gun_str, 1.f, 10.f, "%.0f", false, false, g_state.sl_gun_str, dt);
 
         // ---- Тач-зона аима -------------------------------------------------
         // Где именно лежит палец, которым аимбот водит камеру. Выбирается
         // тапом по экрану — как зоны автофарма, только точка одна: меню
         // прячется, первый тап записывает её в долях экрана. В режимах записи
         // в память пальца нет вовсе, поэтому секции здесь нет.
-        if (g_state.aim_mode == AIM_MODE_TOUCH) {
-            SHdr(XS("Зоны бота"));
+        if (g_state.aim_mode == AIM_MODE_TOUCH &&
+            SettingsHeader("##aim_touch_settings", XS("Точка пальца"),
+                           g_state.aim_tx >= 0.f ? XS("Настроено") : XS("По умолчанию"))) {
             {
                 const float rowH = Layout::RowH;
                 const float inset = Layout::Inset, padX = Layout::PadX;
@@ -305,7 +234,7 @@ float TabContent(int tab, float dt, float cW) {
 
         ImGui::Dummy({1.f, 12.f});
 
-} else if (tab == 2) {
+    } else if (tab == 2) {
         cfg::esp::box          = g_state.esp_box;
         cfg::esp::name_esp     = g_state.esp_name;
         cfg::esp::distance     = g_state.esp_wall;
@@ -377,115 +306,96 @@ float TabContent(int tab, float dt, float cW) {
                 dl->AddLine({cX+padX, pos.y+rowH-0.5f},{cX+cW2-padX, pos.y+rowH-0.5f}, C::UA(C::Sep(),0.35f), 0.8f);
         };
 
+        struct ERow { const char* id; const char* lbl; bool* v; float* a; ImVec4* col; };
+        auto drawRows = [&](ERow* rows, int count) {
+            CardBg(rowH * count);
+            for (int i = 0; i < count; ++i)
+                EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == count - 1);
+        };
+        auto group = [&](const char* id, const char* label, ERow* rows, int count) {
+            int active = 0;
+            for (int i = 0; i < count; ++i) active += *rows[i].v ? 1 : 0;
+            char summary[32]; snprintf(summary, sizeof(summary), "%d / %d", active, count);
+            return SettingsHeader(id, label, summary);
+        };
         SHdr(XS("Игроки"));
-        {
-            struct ERow { const char* id; const char* lbl; bool* v; float* a; ImVec4* col; };
-            ERow rows[] = {
-                {"##vb",  XS("Боксы"),      &g_state.esp_box,          &g_state.a_esp_box,          &cfg::esp::box_col},
-                {"##vvs", XS("Проверка видимости"), &cfg::esp::vis_check, &g_state.a_esp_vis,       &cfg::esp::box_col_invis},
-                {"##v3",  XS("3D боксы"),   &g_state.esp_chams,        &g_state.a_esp_chams,        &cfg::esp::box_col_invis},
-                {"##vn",  XS("Ники"),       &g_state.esp_name,         &g_state.a_esp_name,         &cfg::esp::name_col},
-                {"##vd",  XS("Дистанция"),  &g_state.esp_wall,         &g_state.a_esp_wall,         &cfg::esp::distance_col},
-                {"##vw",  XS("Оружие"),     &g_state.esp_weapon,       &g_state.a_esp_weapon,       &cfg::esp::weapon_col},
-                {"##vtr", XS("Линии"),      &g_state.esp_tracer,       &g_state.a_esp_tracer,       &cfg::esp::tracer_col},
-                {"##vsk", XS("Скелеты"),    &g_state.esp_skeleton,     &g_state.a_esp_skeleton,     &cfg::esp::skeleton_col},
-                // «Союзники»: показывать ли союзников в ESP совсем (выключено —
-                // на них не рисуется ничего); цвет у них свой, чтобы отличать.
-                {"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
-            };
-            constexpr int NP = 9;
-            CardBg(rowH * NP);
-            for (int i = 0; i < NP; i++)
-                EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == NP-1);
+        ERow players[] = {
+{"##vb",  XS("Боксы"),      &g_state.esp_box,          &g_state.a_esp_box,          &cfg::esp::box_col},
+{"##vvs", XS("Проверка видимости"), &cfg::esp::vis_check, &g_state.a_esp_vis,       &cfg::esp::box_col_invis},
+{"##v3",  XS("3D боксы"),   &g_state.esp_chams,        &g_state.a_esp_chams,        &cfg::esp::box_col_invis},
+{"##vn",  XS("Ники"),       &g_state.esp_name,         &g_state.a_esp_name,         &cfg::esp::name_col},
+{"##vd",  XS("Дистанция"),  &g_state.esp_wall,         &g_state.a_esp_wall,         &cfg::esp::distance_col},
+{"##vw",  XS("Оружие"),     &g_state.esp_weapon,       &g_state.a_esp_weapon,       &cfg::esp::weapon_col},
+{"##vtr", XS("Линии"),      &g_state.esp_tracer,       &g_state.a_esp_tracer,       &cfg::esp::tracer_col},
+{"##vsk", XS("Скелеты"),    &g_state.esp_skeleton,     &g_state.a_esp_skeleton,     &cfg::esp::skeleton_col},
+{"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
+        };
+        if (group("##esp_players", XS("Игроки"), players, 9)) {
+            drawRows(players, 9);
+            SHdr(XS("Линии и боксы"), 8.f);
+            CardBg(Layout::SliderH * 2.f);
+            SliderRow("##esp_stretch", XS("Растяг экрана"), &g_state.screen_stretch_x,
+                      1.f, 2.f, XS("×%.2f"), false, true, g_state.sl_screen_stretch, dt);
+            SliderRow("##esp_thickness", XS("Толщина"), &g_state.esp_thick,
+                      0.5f, 5.f, "%.1f", true, false, g_state.sl_esp_thick, dt);
         }
-
-        // ---- Стрелки и радар 360° ------------------------------------------
-        // Оба визуала читают один снимок пеленгов (esp_get_bearings): кто где,
-        // включая тех, кого в кадре нет вовсе (за спиной, из-за угла). Кольцо
-        // отвечает на «где», радар — на «где и насколько близко». Угол компасный
-        // (0 = прямо перед камерой), поэтому обход за спиной идёт по кругу
-        // плавно, без прыжка с края на край, как это было бы с проекцией точки.
-        ImGui::Dummy({1.f, 12.f});
         SHdr(XS("Стрелки и радар 360°"));
-        {
-            CardBg(rowH * 4 + Layout::SliderH * 3);
-            EspToggleColorRow("##va360",  XS("Стрелки 360°"), &g_state.esp_arrows,
-                              &g_state.a_esp_arrows, &cfg::esp::arrow_col, false);
+        if (SettingsHeader("##esp_arrows", XS("Стрелки 360°"), XS("Цвет, радиус и дистанция"),
+                           false, &g_state.esp_arrows, g_state.a_esp_arrows)) {
+            CardBg(rowH * 3.f + Layout::SliderH);
+            ColorRow("##arrow_color", XS("Цвет"), &cfg::esp::arrow_col, false);
             EspToggleColorRow("##va360o", XS("Только вне экрана"), &g_state.esp_arrows_offscreen,
                               &g_state.a_esp_arrows_off, nullptr, false);
             EspToggleColorRow("##va360d", XS("Дистанция"), &g_state.esp_arrows_dist,
                               &g_state.a_esp_arrows_dist, nullptr, false);
-            EspToggleColorRow("##vrd",    XS("Радар 360°"), &g_state.esp_radar,
-                              &g_state.a_esp_radar, nullptr, false);
             SliderRow("##va360r", XS("Радиус кольца"), &g_state.esp_arrow_ring,
-                      8.f, 60.f, XS("%.0f%%"), false, true, g_state.sl_esp_arrow_ring, dt);
+                      8.f, 60.f, XS("%.0f%%"), true, false, g_state.sl_esp_arrow_ring, dt);
+        }
+        if (SettingsHeader("##esp_radar", XS("Радар 360°"), XS("Размер и дальность"),
+                           false, &g_state.esp_radar, g_state.a_esp_radar)) {
+            CardBg(Layout::SliderH * 2.f);
             SliderRow("##vrd1", XS("Размер радара"), &g_state.esp_radar_size,
-                      90.f, 360.f, XS("%.0f px"), false, false, g_state.sl_esp_radar_size, dt);
-            // Точки дальше дальности прижимаются к кромку круга: «там кто-то
-            // есть» обязано оставаться видимым, а не исчезать.
+                      90.f, 360.f, XS("%.0f px"), false, true, g_state.sl_esp_radar_size, dt);
             SliderRow("##vrd2", XS("Дальность радара"), &g_state.esp_radar_range,
                       10.f, 400.f, XS("%.0f м"), true, false, g_state.sl_esp_radar_range, dt);
         }
-
-        ImGui::Dummy({1.f, 12.f});
         SHdr(XS("Мир"));
-        {
-            struct ERow { const char* id; const char* lbl; bool* v; float* a; ImVec4* col; };
-            ERow rows[] = {
-                // No colour dot: every resource paints itself (stone grey,
-                // metal orange, sulfur yellow).
-                {"##vor", XS("Руда"),      &g_state.esp_ore,          &g_state.a_esp_ore,          nullptr},
-                {"##van", XS("Животные"), &g_state.esp_animal,       &g_state.a_esp_animal,       &cfg::esp::animal_col},
-                {"##vlt", XS("Ящики"),    &g_state.esp_loot,         &g_state.a_esp_loot,         &cfg::esp::loot_col},
-                // Ящики, встроенные в постройки игроков: свой тумблер, цвет —
-                // тот же «ящичный» (loot_col), точки выбора цвета нет.
-                {"##vhb", XS("Ящики в домах"), &g_state.esp_house_boxes, &g_state.a_esp_house_boxes, nullptr},
-                {"##vsc", XS("Скрап"),    &g_state.esp_scrap,        &g_state.a_esp_scrap,        &cfg::esp::scrap_col},
-                {"##vpk", XS("Предметы"), &g_state.esp_pickup,       &g_state.a_esp_pickup,       &cfg::esp::pickup_col},
-                {"##vbt", XS("Боты"),     &g_state.esp_bots,         &g_state.a_esp_bots,         &cfg::esp::bot_col},
-                {"##vvc", XS("Машины"),   &g_state.esp_vehicles,     &g_state.a_esp_vehicles,     &cfg::esp::vehicle_col},
-                {"##vtu", XS("Турели"),   &g_state.esp_turrets,      &g_state.a_esp_turrets,      &cfg::esp::turret_col},
-                {"##vbp", XS("Рюкзаки"),  &g_state.esp_backpacks,    &g_state.a_esp_backpacks,    &cfg::esp::backpack_col},
-                {"##vsl", XS("Спящие"),   &g_state.esp_sleepers,     &g_state.a_esp_sleepers,     &cfg::esp::sleeper_col},
-                {"##vcb", XS("Шкафы"),    &g_state.esp_cupboards,    &g_state.a_esp_cupboards,    &cfg::esp::cupboard_col},
-                {"##vpm", XS("Тыквы"),    &g_state.esp_pumpkins,     &g_state.a_esp_pumpkins,     &cfg::esp::pumpkin_col},
+        if (SettingsHeader("##esp_ore", XS("Руда"), XS("Камень, железо и сера"),
+                           false, &g_state.esp_ore, g_state.a_esp_ore)) {
+            ERow ores[] = {
+{"##orvt", XS("Камень"), &g_state.esp_ore_stone,  &g_state.a_esp_ore_stone,  &cfg::esp::ore_stone_col},
+{"##orvi", XS("Железо"), &g_state.esp_ore_iron,   &g_state.a_esp_ore_iron,   &cfg::esp::ore_metal_col},
+{"##orvs", XS("Сера"),   &g_state.esp_ore_sulfur, &g_state.a_esp_ore_sulfur, &cfg::esp::ore_sulfur_col},
             };
-            constexpr int NW = 13;
-            CardBg(rowH * NW);
-            for (int i = 0; i < NW; i++)
-                EspToggleColorRow(rows[i].id, rows[i].lbl, rows[i].v, rows[i].a, rows[i].col, i == NW-1);
+            drawRows(ores, 3);
         }
-
-        // Типы руды: включение и цвет одного типа в одной строке. Общая
-        // «Руда» (выше, в «Мире») остаётся главным выключателем — здесь
-        // выбирается, какие именно камни через него проходят.
-        SHdr(XS("Руда по типам"));
-        {
-            struct OreRow { const char* id; const char* lbl; bool* v; float* a; ImVec4* col; };
-            OreRow orows[] = {
-                {"##orvt", XS("Камень"), &g_state.esp_ore_stone,  &g_state.a_esp_ore_stone,  &cfg::esp::ore_stone_col},
-                {"##orvi", XS("Железо"), &g_state.esp_ore_iron,   &g_state.a_esp_ore_iron,   &cfg::esp::ore_metal_col},
-                {"##orvs", XS("Сера"),   &g_state.esp_ore_sulfur, &g_state.a_esp_ore_sulfur, &cfg::esp::ore_sulfur_col},
-            };
-            constexpr int NOR = 3;
-            CardBg(rowH * NOR);
-            for (int i = 0; i < NOR; i++)
-                EspToggleColorRow(orows[i].id, orows[i].lbl, orows[i].v, orows[i].a, orows[i].col, i == NOR-1);
+        ERow entities[] = {
+{"##van", XS("Животные"), &g_state.esp_animal,       &g_state.a_esp_animal,       &cfg::esp::animal_col},
+{"##vbt", XS("Боты"),     &g_state.esp_bots,         &g_state.a_esp_bots,         &cfg::esp::bot_col},
+{"##vvc", XS("Машины"),   &g_state.esp_vehicles,     &g_state.a_esp_vehicles,     &cfg::esp::vehicle_col},
+{"##vsl", XS("Спящие"),   &g_state.esp_sleepers,     &g_state.a_esp_sleepers,     &cfg::esp::sleeper_col},
+        };
+        if (group("##esp_entities", XS("Существа и транспорт"), entities, 4)) drawRows(entities, 4);
+        ERow loot[] = {
+{"##vlt", XS("Ящики"),    &g_state.esp_loot,         &g_state.a_esp_loot,         &cfg::esp::loot_col},
+{"##vhb", XS("Ящики в домах"), &g_state.esp_house_boxes, &g_state.a_esp_house_boxes, nullptr},
+{"##vsc", XS("Скрап"),    &g_state.esp_scrap,        &g_state.a_esp_scrap,        &cfg::esp::scrap_col},
+{"##vpk", XS("Предметы"), &g_state.esp_pickup,       &g_state.a_esp_pickup,       &cfg::esp::pickup_col},
+{"##vtu", XS("Турели"),   &g_state.esp_turrets,      &g_state.a_esp_turrets,      &cfg::esp::turret_col},
+{"##vbp", XS("Рюкзаки"),  &g_state.esp_backpacks,    &g_state.a_esp_backpacks,    &cfg::esp::backpack_col},
+{"##vcb", XS("Шкафы"),    &g_state.esp_cupboards,    &g_state.a_esp_cupboards,    &cfg::esp::cupboard_col},
+{"##vpm", XS("Тыквы"),    &g_state.esp_pumpkins,     &g_state.a_esp_pumpkins,     &cfg::esp::pumpkin_col},
+        };
+        if (group("##esp_loot", XS("Предметы и постройки"), loot, 8)) drawRows(loot, 8);
+        char rangeSummary[48]; snprintf(rangeSummary, sizeof(rangeSummary), XS("%.0f м"), g_state.marker_dist);
+        if (SettingsHeader("##esp_distance", XS("Дальность"), rangeSummary)) {
+            CardBg(Layout::SliderH);
+            SliderRow("##vmd", XS("Показывать до"), &g_state.marker_dist,
+                      25.f, 300.f, XS("%.0f м"), true, true, g_state.sl_marker_dist, dt);
         }
-
-        SHdr(XS("Дальность"));
-        CardBg(Layout::SliderH);
-        SliderRow("##vmd", XS("Показывать до"), &g_state.marker_dist,
-                  25.f, 300.f, XS("%.0f м"), true, true, g_state.sl_marker_dist, dt);
-
-        ImGui::Dummy({1.f, 12.f});
-        CollapsibleHeader("##veh1", XS("Ещё настройки"), 1);
-
-        ImGui::Dummy({1.f, 12.f});
 
     } else if (tab == 4) {
-        // Конфиги (saved profiles). Kept at index 4 so the Мемори tab sits
-        // directly above it in the tab bar.
+        // Profile names stay visible; actions expand under their own profile.
 
         auto* dl  = ImGui::GetWindowDrawList();
         auto* fn  = ImGui::GetFont();
@@ -508,7 +418,10 @@ float TabContent(int tab, float dt, float cW) {
             ImGui::InvisibleButton("##cfgcreate", {avW, btnH});
             bool popBlocking2 = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
             bool tapped = WasTappedHere() && !popBlocking2 && !IsScrollDragging() && !g_input.touchConsumed;
-            if (tapped) ConfigSave();
+            if (tapped) {
+                g_input.touchConsumed = true;
+                ConfigSave();
+            }
 
             float cy2 = pos.y + btnH * 0.5f;
             float icX = cardX0 + 28.f + 20.f;
@@ -539,161 +452,23 @@ float TabContent(int tab, float dt, float cW) {
                 {ep.x + (avW - eSz.x) * 0.5f, ep.y + (emptyH - fs * 1.05f) * 0.5f},
                 C::U(C::Dim()), emptyTxt);
         } else {
-            auto& io2 = ImGui::GetIO();
-            bool popBlocking2 = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
-
-            const float padH    = 12.f;
-            const float padTop  = 14.f;
-            const float padBot  = 14.f;
-            const float icSz    = 62.f;
-            const float nameGap = 12.f;
-            const float midGap  = 10.f;
-            const float btnH2   = 46.f;
-            const float btnGapX =  6.f;
-            const float cardGap = 10.f;
-
-            float nameFS = fs * 1.15f;
-            float subFS  = fs * 0.78f;
-            float textH  = fn->CalcTextSizeA(nameFS, FLT_MAX, 0, XS("A")).y;
-            float subH   = fn->CalcTextSizeA(subFS,  FLT_MAX, 0, XS("A")).y;
-            float topH   = ImMax(icSz, textH + 6.f + subH);
-            float cardH  = padTop + topH + midGap + btnH2 + padBot;
-
-            for (int ci = 0; ci < g_configCount; ci++) {
-                float loadA = (ci < kMaxConfigs) ? g_cfgLoadAnim[ci] : 0.f;
-                float easedA = loadA * loadA * (3.f - 2.f * loadA);
-
-                auto pos = ImGui::GetCursorScreenPos();
-                float cx0 = pos.x + inset, cx1 = pos.x + avW - inset;
-                float cw  = cx1 - cx0;
-
-                {
-                    ImVec4 bg = C::Card(), ac = C::Acc();
-                    float mix = (g_darkTheme ? 0.14f : 0.06f) * easedA;
-                    ImU32 cardFill = IM_COL32(
-                        int(bg.x*255*(1.f-mix) + ac.x*255*mix),
-                        int(bg.y*255*(1.f-mix) + ac.y*255*mix),
-                        int(bg.z*255*(1.f-mix) + ac.z*255*mix), 255);
-                    dl->AddRectFilled({cx0, pos.y}, {cx1, pos.y + cardH}, cardFill, R::Card);
-
-                    float borderA = Lerpf(g_state.ui_show_sep ? 0.9f : 0.f, 0.65f, easedA);
-                    ImVec4 borderCol = g_state.ui_show_sep
-                        ? ImVec4{Lerpf(C::Sep().x, ac.x, easedA), Lerpf(C::Sep().y, ac.y, easedA), Lerpf(C::Sep().z, ac.z, easedA), borderA}
-                        : ImVec4{ac.x, ac.y, ac.z, borderA};
-                    if (borderA > 0.01f)
-                        dl->AddRect({cx0, pos.y}, {cx1, pos.y + cardH}, C::U(borderCol), R::Card, 0, Lerpf(1.2f, 2.2f, easedA));
-                }
-
-                float rowCY = pos.y + padTop + topH * 0.5f;
-                float icX  = cx0 + padH;
-                float icY  = rowCY - icSz * 0.5f;
-                float icCX = icX + icSz * 0.5f;
-
-                if (g_tabIcons[4]) {
-                    dl->AddImageRounded((ImTextureID)(intptr_t)g_tabIcons[4],
-                        {icX, icY}, {icX + icSz, icY + icSz},
-                        {0,0}, {1,1}, IM_COL32(255,255,255,255), 12.f);
-                } else {
-                    float icR = 14.f;
-                    ImU32 icBg = g_darkTheme
-                        ? IM_COL32(120, 105, 240, 255)
-                        : IM_COL32(108, 92, 231, 255);
-                    dl->AddRectFilled({icX, icY}, {icX + icSz, icY + icSz}, icBg, icR);
-                    float lh = icSz * 0.20f;
-                    float lx = icCX - lh * 0.45f, ly = rowCY + lh * 0.42f;
-                    dl->AddLine({icCX - lh, rowCY}, {lx, ly},      IM_COL32(255,255,255,245), 3.2f);
-                    dl->AddLine({lx, ly}, {icCX + lh, rowCY - lh}, IM_COL32(255,255,255,245), 3.2f);
-                }
-
-                const char* badgeTxt = XS("Загружен");
-                auto btsz    = fn->CalcTextSizeA(subFS, FLT_MAX, 0, badgeTxt);
-                float dotR   = 3.5f;
-                float bPadX  = 8.f, bPadY = 5.f;
-                float bW     = dotR*2.f + 5.f + btsz.x + bPadX * 2.f;
-                float bH     = btsz.y + bPadY * 2.f;
-
-                float nameAreaR = easedA > 0.01f ? (cx1 - bW * easedA - 10.f) : (cx1 - padH);
-                float nameX = icX + icSz + nameGap;
-                float nameY = rowCY - (textH + 6.f + subH) * 0.5f;
-
-                dl->PushClipRect({nameX, pos.y}, {nameAreaR, pos.y + cardH}, true);
-                dl->AddText(fn, nameFS, {nameX, nameY}, C::U(C::Txt()), g_configs[ci].name);
-                dl->AddText(fn, subFS, {nameX, nameY + textH + 6.f}, C::UA(C::Dim(), 0.7f), XS("config"));
-                dl->PopClipRect();
-
-                if (easedA > 0.01f) {
-                    ImVec4 ac = C::Acc();
-                    float bX  = cx1 - bW - 10.f;
-                    float bY2 = rowCY - bH * 0.5f;
-                    float a   = easedA;
-
-                    dl->AddRectFilled({bX, bY2}, {bX + bW, bY2 + bH},
-                        C::UA(ac, (g_darkTheme ? 0.20f : 0.10f) * a), bH * 0.5f);
-                    dl->AddRect({bX, bY2}, {bX + bW, bY2 + bH},
-                        C::UA(ac, 0.55f * a), bH * 0.5f, 0, 1.3f);
-                    dl->AddCircleFilled({bX + bPadX + dotR, bY2 + bH*0.5f}, dotR, C::UA(ac, 0.95f * a), 16);
-                    dl->AddText(fn, subFS,
-                        {bX + bPadX + dotR*2.f + 5.f, bY2 + bPadY},
-                        C::UA(ac, 0.95f * a), badgeTxt);
-                }
-
-                float bY  = pos.y + padTop + topH + midGap;
-                float totalBtnW = cw - padH * 2.f;
-                float bw3 = (totalBtnW - btnGapX * 2.f) / 3.f;
-                float b1X = cx0 + padH;
-                float b2X = b1X + bw3 + btnGapX;
-                float b3X = b2X + bw3 + btnGapX;
-
-                auto DrawBtn = [&](float bx, float bw, ImU32 fillL, ImU32 fillD, ImU32 txtCol, const char* label) {
-                    ImU32 fill = g_darkTheme ? fillD : fillL;
-                    dl->AddRectFilled({bx, bY}, {bx + bw, bY + btnH2}, fill, R::Btn);
-                    auto lsz = fn->CalcTextSizeA(fs * 0.93f, FLT_MAX, 0, label);
-                    dl->PushClipRect({bx+3.f, bY}, {bx+bw-3.f, bY+btnH2}, true);
-                    dl->AddText(fn, fs * 0.93f,
-                        {bx + bw*0.5f - lsz.x*0.5f, bY + (btnH2 - lsz.y)*0.5f},
-                        txtCol, label);
-                    dl->PopClipRect();
-                };
-
-                DrawBtn(b1X, bw3,
-                    IM_COL32(238, 235, 255, 255),
-                    IM_COL32(58,  48,  140, 255),
-                    g_darkTheme ? IM_COL32(170, 158, 255, 255) : IM_COL32(96, 80, 220, 255),
-                    XS("Загрузить"));
-
-                DrawBtn(b2X, bw3,
-                    IM_COL32(232, 248, 237, 255),
-                    IM_COL32(20,  80,  40,  255),
-                    g_darkTheme ? IM_COL32(80, 210, 120, 255) : IM_COL32(25, 140, 60, 255),
-                    XS("Сохранить"));
-
-                DrawBtn(b3X, bw3,
-                    IM_COL32(255, 237, 236, 255),
-                    IM_COL32(100, 20,  20,  255),
-                    g_darkTheme ? IM_COL32(255, 100, 90, 255) : IM_COL32(210, 30, 20, 255),
-                    XS("Удалить"));
-
-                ImGui::InvisibleButton(("##cfg_" + std::to_string(ci)).c_str(), {avW, cardH});
-
-                if (!popBlocking2 && !IsScrollDragging() && !g_input.touchConsumed && io2.MouseReleased[0]
-                    && PtInClip(io2.MouseClickedPos[0])) {
-                    auto mp  = io2.MousePos;
-                    auto cp2 = io2.MouseClickedPos[0];
-                    if (mp.x  >= b1X && mp.x  <= b1X+bw3 && mp.y  >= bY && mp.y  <= bY+btnH2
-                     && cp2.x >= b1X && cp2.x <= b1X+bw3 && cp2.y >= bY && cp2.y <= bY+btnH2)
-                        ConfigLoad(ci);
-                    else if (mp.x  >= b2X && mp.x  <= b2X+bw3 && mp.y  >= bY && mp.y  <= bY+btnH2
-                     && cp2.x >= b2X && cp2.x <= b2X+bw3 && cp2.y >= bY && cp2.y <= bY+btnH2)
-                        ConfigUpdate(ci);
-                    else if (mp.x  >= b3X && mp.x  <= b3X+bw3 && mp.y  >= bY && mp.y  <= bY+btnH2
-                     && cp2.x >= b3X && cp2.x <= b3X+bw3 && cp2.y >= bY && cp2.y <= bY+btnH2) {
-                        g_configToDelete = ci;
-                        PopoverOpen(XS("Удалить конфиг?"), 3);
+            const char* const actions[] = {XS("Загрузить"), XS("Сохранить"), XS("Удалить")};
+            for (int ci = 0; ci < g_configCount; ++ci) {
+                // Stable across directory reordering/deletion and language changes.
+                ImGui::PushID(g_configs[ci].name);
+                if (SettingsHeader("##config", g_configs[ci].name,
+                                   ci == g_cfgLoadedIdx ? XS("Загружен") : XS("Конфиг"))) {
+                    int action = -1;
+                    if (ChoiceRow("##config_actions", &action, actions, 3)) {
+                        if (action == 0) ConfigLoad(ci);
+                        else if (action == 1) ConfigUpdate(ci);
+                        else {
+                            g_configToDelete = ci;
+                            PopoverOpen(XS("Удалить конфиг?"), 3);
+                        }
                     }
                 }
-
-                if (ci < g_configCount - 1)
-                    ImGui::Dummy({1.f, cardGap});
+                ImGui::PopID();
             }
         }
 
@@ -705,7 +480,8 @@ float TabContent(int tab, float dt, float cW) {
         // подписи визуалов (оружие, предметы, животные, ящики). Переключение
         // применяется сразу, на текущем кадре. Названия самих языков пишем на
         // них самих — так строка понятна при любом выбранном языке.
-        SHdr(XS("Язык"));
+        SHdr(XS("Интерфейс"));
+        if (SettingsHeader("##options_language", XS("Язык"), lang::english() ? "English" : "Русский"))
         {
             auto* dl  = ImGui::GetWindowDrawList();
             auto* fn  = ImGui::GetFont();
@@ -755,63 +531,61 @@ float TabContent(int tab, float dt, float cW) {
             ImGui::Dummy({avW, 0.f});
         }
 
-        SHdr(XS("Интерфейс"));
-        CardBg(Layout::RowH * 1);
-        if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, true))
-            g_darkTheme = g_state.ui_dark_mode;
+        if (SettingsHeader("##options_appearance", XS("Оформление"), XS("Тема и цвет интерфейса"))) {
+            CardBg(Layout::RowH * 1);
+            if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, true))
+                g_darkTheme = g_state.ui_dark_mode;
 
-        // ---- Акцент: палитра стиля всего GUI -------------------------------
-        // Ряд кругов: 8 пресетов + свой цвет (тап открывает палитру, как точки
-        // цвета в ESP; повторный тап по выбранному «своему» открывает её снова).
-        // Круги делят строку поровну: диаметр под ширину, не наоборот.
-        SHdr(XS("Цвет интерфейса"));
-        {
-            auto* dl  = ImGui::GetWindowDrawList();
-            float avW = ImGui::GetContentRegionAvail().x;
-            const float inset = Layout::Inset;
-            const float rowH  = Layout::RowH;
-            auto  pos = ImGui::GetCursorScreenPos();
-            bool  popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+            // ---- Акцент: палитра стиля всего GUI -------------------------------
+            // Ряд кругов: 8 пресетов + свой цвет (тап открывает палитру, как точки
+            // цвета в ESP; повторный тап по выбранному «своему» открывает её снова).
+            // Круги делят строку поровну: диаметр под ширину, не наоборот.
+            SHdr(XS("Цвет интерфейса"));
+            {
+                auto* dl  = ImGui::GetWindowDrawList();
+                float avW = ImGui::GetContentRegionAvail().x;
+                const float inset = Layout::Inset;
+                const float rowH  = Layout::RowH;
+                auto  pos = ImGui::GetCursorScreenPos();
+                bool  popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
 
-            CardBg(rowH);
-            const float avail = avW - inset * 2.f;
-            float d = (avail - (kAccentCount - 1) * 10.f) / kAccentCount;
-            if (d > 60.f) d = 60.f;
-            if (d < 28.f) d = 28.f;
-            float gap = (kAccentCount > 1) ? (avail - d * kAccentCount) / (kAccentCount - 1) : 0.f;
-            if (gap < 0.f) gap = 0.f;
-            const float cy = pos.y + rowH * 0.5f;
-            for (int i = 0; i < kAccentCount; ++i) {
-                const float cx = pos.x + inset + d * 0.5f + i * (d + gap);
-                const bool sel = (g_state.ui_accent_idx == i);
-                const ImVec4 col = (i == kAccentCustom) ? g_state.ui_accent_rgb : kAccentCols[i];
-                dl->AddCircleFilled({cx, cy}, d * 0.5f, C::U(col), 40);
-                if (sel)
-                    dl->AddCircle({cx, cy}, d * 0.5f + 3.f, C::U(C::Txt()), 40, 3.f);
-                else if (g_state.ui_show_sep)
-                    dl->AddCircle({cx, cy}, d * 0.5f + 1.f, C::UA(C::Sep(), 0.9f), 40, 1.2f);
-                char aid[16]; snprintf(aid, sizeof(aid), "##acc%d", i);
-                ImGui::SetCursorScreenPos({cx - d * 0.5f, cy - d * 0.5f});
-                ImGui::InvisibleButton(aid, {d, d});
-                const bool customTap = (i == kAccentCustom);
-                if (WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed &&
-                    (!sel || customTap)) {
-                    g_state.ui_accent_idx = i;
-                    g_input.touchConsumed = true;
-                    if (customTap)
-                        PopoverOpenColor(XS("Свой цвет"), &g_state.ui_accent_rgb);
-                    PlaySound(SND_CLICK);
+                CardBg(rowH);
+                const float avail = avW - inset * 2.f;
+                float d = (avail - (kAccentCount - 1) * 10.f) / kAccentCount;
+                if (d > 60.f) d = 60.f;
+                if (d < 28.f) d = 28.f;
+                float gap = (kAccentCount > 1) ? (avail - d * kAccentCount) / (kAccentCount - 1) : 0.f;
+                if (gap < 0.f) gap = 0.f;
+                const float cy = pos.y + rowH * 0.5f;
+                for (int i = 0; i < kAccentCount; ++i) {
+                    const float cx = pos.x + inset + d * 0.5f + i * (d + gap);
+                    const bool sel = (g_state.ui_accent_idx == i);
+                    const ImVec4 col = (i == kAccentCustom) ? g_state.ui_accent_rgb : kAccentCols[i];
+                    dl->AddCircleFilled({cx, cy}, d * 0.5f, C::U(col), 40);
+                    if (sel)
+                        dl->AddCircle({cx, cy}, d * 0.5f + 3.f, C::U(C::Txt()), 40, 3.f);
+                    else if (g_state.ui_show_sep)
+                        dl->AddCircle({cx, cy}, d * 0.5f + 1.f, C::UA(C::Sep(), 0.9f), 40, 1.2f);
+                    char aid[16]; snprintf(aid, sizeof(aid), "##acc%d", i);
+                    ImGui::SetCursorScreenPos({cx - d * 0.5f, cy - d * 0.5f});
+                    ImGui::InvisibleButton(aid, {d, d});
+                    const bool customTap = (i == kAccentCustom);
+                    if (WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed &&
+                        (!sel || customTap)) {
+                        g_state.ui_accent_idx = i;
+                        g_input.touchConsumed = true;
+                        if (customTap)
+                            PopoverOpenColor(XS("Свой цвет"), &g_state.ui_accent_rgb);
+                        PlaySound(SND_CLICK);
+                    }
                 }
+                ImGui::SetCursorScreenPos({pos.x, pos.y + rowH});
+                ImGui::Dummy({avW, 0.f});
             }
-            ImGui::SetCursorScreenPos({pos.x, pos.y + rowH});
-            ImGui::Dummy({avW, 0.f});
+
         }
 
-        // ---- Худ: где стоит пилюля-счётчик игроков -----------------------
-        // Тап по строке прячет меню и ждёт тап по экрану — туда встанет центр
-        // пилюли (в долях экрана). У середины липнет ровно к центру по каждой
-        // оси: так её ставят и ровно по вертикали, и ровно по горизонтали.
-        SHdr(XS("Худ"));
+        if (SettingsHeader("##options_hud", XS("Худ"), XS("Счётчик игроков")))
         {
             const float rowH = Layout::RowH;
             const float inset = Layout::Inset, padX = Layout::PadX;
@@ -874,7 +648,8 @@ float TabContent(int tab, float dt, float cW) {
 
         // ---- Положение панели вкладок: слева или снизу ------------------
         // Перенесено сюда из удалённой вкладки «Меню».
-        SHdr(XS("Панель вкладок"));
+        if (SettingsHeader("##options_tabs", XS("Панель вкладок"),
+                           g_state.ui_panel_left ? XS("Слева") : XS("Снизу")))
         {
             auto* dl  = ImGui::GetWindowDrawList();
             auto* fn  = ImGui::GetFont();
@@ -959,29 +734,20 @@ float TabContent(int tab, float dt, float cW) {
             dl->AddText(ImGui::GetFont(), exitFS, {tx, ty}, C::U(C::Red()), exitTxt);
         }
     } else if (tab == 3) {
-        // Разное: каждая крупная функция — своя карточка-«вкладка»,
-        // открывающая отдельное окно (как «Ещё настройки» в ESP).
-        SHdr(XS("Функции"));
-        // Вход в окно управления ботом (секция 5). Выбор цветов метки/тела
-        // ноды убран по просьбе пользователя — рисуются фирменными цветами.
-        CollapsibleHeader("##fnfarm", XS("Автофарм"), 5);
-
         auto& vm = g_state.viewmodel;
-        SHdr(XS("Кастомный FOV"));
-        CardBg(Layout::RowH + Layout::SliderH);
-        ToggleRow("##vmfov", XS("Кастомный FOV"), &vm.fov_enabled, g_state.a_custom_fov, false, true);
-        SliderRow("##vmfovvalue", XS("Обзор мира"), &vm.fov,
-                  50.f, 120.f, XS("%.0f°"), true, false, g_state.sl_custom_fov, dt);
-
-        SHdr(XS("Расположение рук"));
-        // «Сброс» — строкой ВНУТРИ карточки: раньше кнопка висела под
-        // карточкой (сломанный отступ), и голый ImGui::Button в этом меню
-        // терял тапы (см. комментарий у чипов FPS ниже). Полная ширина,
-        // тач-паттерн InvisibleButton + WasTappedHere, как у чипов.
+        SHdr(XS("Камера"));
+        char fovSummary[32]; snprintf(fovSummary, sizeof(fovSummary), XS("%.0f°"), vm.fov);
+        if (SettingsHeader("##misc_fov", XS("Кастомный FOV"), fovSummary,
+                           false, &vm.fov_enabled, g_state.a_custom_fov)) {
+            CardBg(Layout::SliderH);
+            SliderRow("##vmfovvalue", XS("Обзор мира"), &vm.fov,
+                      50.f, 120.f, XS("%.0f°"), true, true, g_state.sl_custom_fov, dt);
+        }
+        if (SettingsHeader("##misc_hands", XS("Расположение рук"), XS("X / Y / Z"),
+                           false, &vm.hands_enabled, g_state.a_custom_hands))
         {
             const float resetH = Layout::RowH * 0.9f;
-            CardBg(Layout::RowH + Layout::SliderH * 3.f + resetH);
-            ToggleRow("##vmhands", XS("Кастомные руки"), &vm.hands_enabled, g_state.a_custom_hands, false, true);
+            CardBg(Layout::SliderH * 3.f + resetH);
             SliderRow("##vmx", XS("X: влево / вправо"), &vm.x,
                       -50.f, 50.f, XS("%.0f см"), false, false, g_state.sl_hands_x, dt);
             SliderRow("##vmy", XS("Y: вниз / вверх"), &vm.y,
@@ -1017,188 +783,99 @@ float TabContent(int tab, float dt, float cW) {
                         C::U(C::Dim()), XS("Сброс"));
         }
 
+
+        if (SettingsHeader("##misc_freecam", XS("Фрикам"), XS("Скорость, зоны и кнопка"),
+                           false, &g_state.freecam_on, g_state.a_freecam_on)) {
+            CardBg(Layout::RowH * 4.f + Layout::SliderH * 3.f);
+            ToggleRow("##fc2", XS("Кнопка на экране"), &g_state.freecam_btn_show, g_state.a_freecam_btn_show, false, true);
+            SliderRow("##fc1", XS("Скорость"), &g_state.freecam_speed,
+                      1.f, 60.f, XS("%.0f м/с"), false, false, g_state.sl_freecam, dt);
+            SliderRow("##fclr", XS("Радиус зоны обзора"), &g_state.freecam_look_radius,
+                      0.10f, 0.48f, XS("%.2f"), false, false, g_state.sl_freecam_look_radius, dt);
+            SliderRow("##fcjs", XS("Размер джойстика"), &g_state.freecam_joy_size,
+                      60.f, 200.f, XS("%.0f%%"), false, false, g_state.sl_freecam_joy_size, dt);
+            CalibrationRow("##fcjoy4", XS("Настроить джойстик"), 4);
+            CalibrationRow("##fclook7", XS("Настроить зону обзора"), 7);
+            CalibrationRow("##fcbtn6", XS("Настроить кнопку"), 6);
+        }
+        if (SettingsHeader("##misc_xray", XS("Иксрей"), XS("Дальность и кнопка"),
+                           false, &g_state.xray_on, g_state.a_xray_on)) {
+            CardBg(Layout::RowH * 2.f + Layout::SliderH);
+            ToggleRow("##xrbtn", XS("Кнопка на экране"), &g_state.xray_btn_show, g_state.a_xray_btn_show, false, true);
+            SliderRow("##xr1", XS("Дальность"), &g_state.xray_range,
+                      1.f, 50.f, XS("%.0f м"), false, false, g_state.sl_xray, dt);
+            CalibrationRow("##xrbtn9", XS("Настроить кнопку"), 9);
+        }
+
         SHdr(XS("Оружие"));
-        CardBg(Layout::RowH * 2.f);
-        const bool oldRecoil = vm.no_recoil_button;
-        const bool oldSpread = vm.no_spread;
-        ToggleRow("##norecoil", XS("Без отдачи"), &vm.no_recoil_button, g_state.a_no_recoil, false, true);
-        ToggleRow("##nospread", XS("Без разброса"), &vm.no_spread, g_state.a_no_spread, true, false);
-        if (oldSpread != vm.no_spread || oldRecoil != vm.no_recoil_button) esp_viewmodel_tick(vm);
-        // Диагностические строки («не применено» / «ожидание») убраны по
-        // просьбе пользователя: применение видно в игре, подробности — в журнале.
-        SHdr(XS("Темп оружия"));
-        CardBg(Layout::RowH);
-        const bool oldFastFire = g_state.fast_fire;
-        ToggleRow("##fastfire", XS("Быстрая стрельба"), &g_state.fast_fire,
-                  g_state.a_fast_fire, true, true);
-        if (oldFastFire != g_state.fast_fire) esp_viewmodel_tick(vm);
-
-        SHdr(XS("Сеть"));
-        CardBg(Layout::RowH * 2 + Layout::SliderH);
-        ToggleRow("##fakelag", XS("FakeLag"), &g_state.fake_lag,
-                  g_state.a_fake_lag, false, true);
-        ToggleRow("##flbtn", XS("Кнопка на экране"), &g_state.fakelag_btn_show, g_state.a_fakelag_btn_show);
-        SliderRow("##fakelagpct", XS("Интенсивность"), &g_state.fake_lag_percent,
-                  1.f, 100.f, XS("%.0f%%"), true, false, g_state.sl_fake_lag, dt);
-        {
-            const float rowH = Layout::RowH, inset = Layout::Inset;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto pos = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({pos.x + inset, pos.y});
-            if (ImGui::Button(XS("Настроить кнопку FakeLag"), {avW - inset*2.f, rowH - 8.f})) {
-                g_calibMode = 8;
-                menu_open = false;
-            }
+        char weaponSummary[160];
+        snprintf(weaponSummary, sizeof(weaponSummary), "%d / 3 · %s",
+                 int(vm.no_recoil_button) + int(vm.no_spread) + int(g_state.fast_fire), XS("Отдача, разброс и темп"));
+        if (SettingsHeader("##misc_weapon", XS("Оружие"), weaponSummary)) {
+            CardBg(Layout::RowH * 3.f);
+            const bool oldRecoil = vm.no_recoil_button, oldSpread = vm.no_spread;
+            const bool oldFastFire = g_state.fast_fire;
+            ToggleRow("##norecoil", XS("Без отдачи"), &vm.no_recoil_button, g_state.a_no_recoil, false, true);
+            ToggleRow("##nospread", XS("Без разброса"), &vm.no_spread, g_state.a_no_spread, false);
+            ToggleRow("##fastfire", XS("Быстрая стрельба"), &g_state.fast_fire, g_state.a_fast_fire, true);
+            if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
+                esp_viewmodel_tick(vm);
         }
-
-        // «Быстрый подбор» — обнуление 0.35f-задержек UniTask при «Забрать
-        // все» (логика в fast_loot_memory.h, тик из esp_viewmodel_tick).
-        SHdr(XS("Подбор"));
-        CardBg(Layout::RowH);
-        ToggleRow("##instantloot", XS("Быстрый подбор"), &vm.fast_loot, g_state.a_fast_loot, true, true);
-
-        SHdr(XS("Лимит FPS"));
-        {
-            // Кастомный тач-паттерн строк режимов (InvisibleButton + WasTappedHere):
-            // голый ImGui::Button в этом меню теряет тапы под собственным тач-
-            // пайплайном. Заливка акцентом плавно наезжает через Tick — как у
-            // остальных переключателей, плюс акцентная рамка у выбранного.
-            const float rowH = Layout::RowH;
-            const float inset = Layout::Inset, padX = Layout::PadX;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto* dl = ImGui::GetWindowDrawList();
-            auto* fn = ImGui::GetFont();
-            const float fs = ImGui::GetFontSize() * 1.15f;
-            const bool popBlk = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
-            CardBg(rowH * 2.f);
-            const auto rowPos = ImGui::GetCursorScreenPos();
-            ImGui::Dummy({avW, rowH * 2.f});
-            auto fpsChip = [&](const char* id, const char* lbl, int limit, int slot, bool wide, float anim) {
-                const float gap = 6.f;
-                const float chipW = wide ? (avW - inset * 2.f)
-                                         : (avW - inset * 2.f - gap * 2.f) / 3.f;
-                const float cX = wide ? rowPos.x + inset
-                                      : rowPos.x + inset + (chipW + gap) * slot;
-                const float cY = wide ? rowPos.y + rowH : rowPos.y + 5.f;
-                const float chipH = rowH - 12.f;
-                ImGui::SetCursorScreenPos({cX, cY});
-                ImGui::InvisibleButton(id, {chipW, chipH});
-                const bool tapped = WasTappedHere() && !popBlk && !IsScrollDragging() && !g_input.touchConsumed;
-                if (tapped && vm.fps_limit != limit) {
-                    vm.fps_limit = limit;
-                    esp_viewmodel_tick(vm);
-                    PlaySound(SND_CLICK);
-                    g_input.touchConsumed = true;
+        SHdr(XS("Автофарм"));
+        if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
+                           false, &g_state.farm_on, g_state.a_farm_on)) {
+            CardBg(Layout::RowH * 5.f + Layout::SliderH);
+            ToggleRow("##farm_wood", XS("Дерево"), &g_state.farm_wood, g_state.a_farm_wood, false, true);
+            ToggleRow("##farm_stone", XS("Камень"), &g_state.farm_stone, g_state.a_farm_stone, false);
+            ToggleRow("##farm_metal", XS("Металл"), &g_state.farm_metal, g_state.a_farm_metal, false);
+            ToggleRow("##farm_sulfur", XS("Сера"), &g_state.farm_sulfur, g_state.a_farm_sulfur, false);
+            SliderRow("##farm_range", XS("Искать до"), &g_state.farm_range, 10.f, 300.f,
+                      XS("%.0f м"), false, false, g_state.sl_farm_range, dt);
+            char fireZone[48];
+            if (g_state.farm_fire_x >= 0.f)
+                snprintf(fireZone, sizeof(fireZone), "%d%% %d%%", int(g_state.farm_fire_x * 100.f), int(g_state.farm_fire_y * 100.f));
+            else snprintf(fireZone, sizeof(fireZone), "%s", XS("Задать"));
+            CalibrationRow("##farm_fire2", XS("Зона огня"), 2, fireZone);
+            if (g_state.farm_fire_x >= 0.f) {
+                const char* const reset[] = {XS("Сброс")};
+                int action = -1;
+                if (ChoiceRow("##farm_fire_reset", &action, reset, 1)) {
+                    g_state.farm_fire_x = g_state.farm_fire_y = -1.f;
+                    ShowToast(XS("Зона сброшена"));
                 }
-                const bool on = (vm.fps_limit == limit);
-                dl->AddRectFilled({cX, cY}, {cX + chipW, cY + chipH}, C::U(C::Card()), 6.f);
-                if (anim > 0.01f)
-                    dl->AddRectFilled({cX, cY}, {cX + chipW, cY + chipH}, C::UA(C::Acc(), 0.9f * anim), 6.f);
-                if (on) dl->AddRect({cX, cY}, {cX + chipW, cY + chipH}, C::UA(C::Acc(), 1.f), 6.f, 0, 1.6f);
-                auto tsz = fn->CalcTextSizeA(fs, FLT_MAX, 0, lbl);
-                dl->AddText(fn, fs, {cX + (chipW - tsz.x) * 0.5f, cY + (chipH - tsz.y) * 0.5f},
-                            C::UA(on ? C::Txt() : C::Dim(), 1.f), lbl);
-            };
-            fpsChip("##fps90",  "90 FPS",  90,  0, false, g_state.a_fps_90);
-            fpsChip("##fps120", "120 FPS", 120, 1, false, g_state.a_fps_120);
-            fpsChip("##fps144", "144 FPS", 144, 2, false, g_state.a_fps_144);
-            fpsChip("##fpsrst", XS("Сброс"), 0,  0, true,  g_state.a_fps_rst);
-            // Лямбды чипов двигают курсор в абсолютные координаты — вернуть
-            // под две строки карточки, иначе следующая секция наложится.
-            ImGui::SetCursorScreenPos({rowPos.x, rowPos.y + rowH * 2.f});
-            // Статус-строки («Режим: … применено», «Неопознанная версия игры»)
-            // убраны по просьбе пользователя: состояние видно по подсветке
-            // чипа, неопознанный build id пишется в журнал (game_viewmodel).
+            }
         }
-
-        // Иксрей: рендер отсекает всё ближе выбранной дистанции — стены и
-        // текстуры вокруг игрока пропадают, видно что за ними.
-        SHdr(XS("Иксрей"));
-        CardBg(Layout::RowH * 2 + Layout::SliderH);
-        ToggleRow("##xr0", XS("Иксрей"), &g_state.xray_on, g_state.a_xray_on, false, true);
-        ToggleRow("##xrbtn", XS("Кнопка на экране"), &g_state.xray_btn_show, g_state.a_xray_btn_show);
-        SliderRow("##xr1", XS("Дальность"), &g_state.xray_range,
-                  1.f, 50.f, XS("%.0f м"), true, false, g_state.sl_xray, dt);
-        {
-            const float rowH = Layout::RowH, inset = Layout::Inset;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto pos = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({pos.x + inset, pos.y});
-            // ID из метки совпадал с кнопкой «Настроить кнопку» фрикама —
-            // ImGui кидал нажатие на первую по кадру, вторая не работала.
-            // Видимый текст тот же, уникальность — суффиксом за ##.
-            char lbl[64]; snprintf(lbl, sizeof(lbl), "%s##xrbtn9", XS("Настроить кнопку"));
-            if (ImGui::Button(lbl, {avW - inset*2.f, rowH - 8.f})) {
-                g_calibMode = 9;
-                menu_open = false;
+        char worldSummary[32];
+        snprintf(worldSummary, sizeof(worldSummary), "%d / 3", int(g_state.always_day) + int(g_state.no_grass) + int(vm.fast_loot));
+        if (SettingsHeader("##misc_world", XS("Мир и предметы"), worldSummary)) {
+            CardBg(Layout::RowH * 3.f);
+            ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, false, true);
+            ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, false);
+            ToggleRow("##instantloot", XS("Быстрый подбор"), &vm.fast_loot, g_state.a_fast_loot, true);
+        }
+        SHdr(XS("Сеть и FPS"));
+        if (SettingsHeader("##misc_fakelag", XS("FakeLag"), XS("Интенсивность и кнопка"),
+                           false, &g_state.fake_lag, g_state.a_fake_lag)) {
+            CardBg(Layout::RowH * 2.f + Layout::SliderH);
+            ToggleRow("##flbtn", XS("Кнопка на экране"), &g_state.fakelag_btn_show, g_state.a_fakelag_btn_show, false, true);
+            SliderRow("##fakelagpct", XS("Интенсивность"), &g_state.fake_lag_percent,
+                      1.f, 100.f, XS("%.0f%%"), false, false, g_state.sl_fake_lag, dt);
+            CalibrationRow("##flbtn8", XS("Настроить кнопку FakeLag"), 8);
+        }
+        char fpsSummary[32];
+        if (vm.fps_limit > 0) snprintf(fpsSummary, sizeof(fpsSummary), "%d FPS", vm.fps_limit);
+        else snprintf(fpsSummary, sizeof(fpsSummary), "%s", XS("По умолчанию"));
+        if (SettingsHeader("##misc_fps", XS("Лимит FPS"), fpsSummary)) {
+            const char* const labels[] = {XS("Сброс"), "90", "120", "144"};
+            const int limits[] = {0, 90, 120, 144};
+            int selected = 0;
+            for (int i = 1; i < 4; ++i) if (vm.fps_limit == limits[i]) selected = i;
+            if (ChoiceRow("##fps_limit", &selected, labels, 4)) {
+                vm.fps_limit = limits[selected];
+                esp_viewmodel_tick(vm);
             }
         }
 
-        // Фрикам: камера отделяется от тела и летает сквозь стены — обзор
-        // базы перед рейдом. Пока он включён, аим молчит: точка прицела
-        // считается от глаза персонажа, а камера улетела от него.
-        SHdr(XS("Фрикам"));
-        CardBg(Layout::RowH * 5.f + Layout::SliderH * 3.f);
-        ToggleRow("##fc0", XS("Фрикам"), &g_state.freecam_on, g_state.a_freecam_on, false, true);
-        ToggleRow("##fc2", XS("Кнопка на экране"), &g_state.freecam_btn_show, g_state.a_freecam_btn_show);
-        SliderRow("##fc1", XS("Скорость"), &g_state.freecam_speed,
-                  1.f, 60.f, XS("%.0f м/с"), false, false, g_state.sl_freecam, dt);
-        SliderRow("##fclr", XS("Радиус зоны обзора"), &g_state.freecam_look_radius,
-                  0.10f, 0.48f, XS("%.2f"), false, false, g_state.sl_freecam_look_radius, dt);
-        // Размер джойстика фрикама: 100% = прежние 130 px. Тянутся и основание,
-        // и ручка, и мёртвая зона (долей радиуса) — меняется только масштаб.
-        SliderRow("##fcjs", XS("Размер джойстика"), &g_state.freecam_joy_size,
-                  60.f, 200.f, XS("%.0f%%"), false, false, g_state.sl_freecam_joy_size, dt);
-        {
-            // Кнопка настройки положения джойстика фрикама
-            const float rowH = Layout::RowH, inset = Layout::Inset;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto pos = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({pos.x + inset, pos.y});
-            if (ImGui::Button(XS("Настроить джойстик"), {avW - inset*2.f, rowH - 8.f})) {
-                g_calibMode = 4;
-                menu_open = false;
-            }
-        }
-        {
-            const float rowH = Layout::RowH, inset = Layout::Inset;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto pos = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({pos.x + inset, pos.y});
-            if (ImGui::Button(XS("Настроить зону обзора"), {avW - inset*2.f, rowH - 8.f})) {
-                g_calibMode = 7;
-                menu_open = false;
-            }
-        }
-        {
-            // Кнопка настройки положения экранной кнопки фрикама (квадрата
-            // с глазом) — тем же тапом по экрану, что и джойстик.
-            const float rowH = Layout::RowH, inset = Layout::Inset;
-            const float avW = ImGui::GetContentRegionAvail().x;
-            auto pos = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos({pos.x + inset, pos.y});
-            // Та же пара-дубликат ID, что у иксрея выше: обе метки «Настроить
-            // кнопку» давали один ImGui ID, поэтому нажатие уходило киксрею.
-            // Видимый текст прежний, ID уникален суффиксом за ##.
-            char lbl[64]; snprintf(lbl, sizeof(lbl), "%s##fcbtn6", XS("Настроить кнопку"));
-            if (ImGui::Button(lbl, {avW - inset*2.f, rowH - 8.f})) {
-                g_calibMode = 6;
-                menu_open = false;
-            }
-        }
-
-        // Keep the next section below all three custom freecam button rows.
-        ImGui::Dummy({1.f, 16.f});
-
-        // Клиентские визуалы мира.
-        SHdr(XS("Мир"));
-        CardBg(Layout::RowH);
-        ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, true, true);
-        ImGui::Dummy({1.f, 8.f});
-        CardBg(Layout::RowH);
-        ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, true, true);
-
-        ImGui::Dummy({1.f, 12.f});
     }
 
     ImGui::Dummy({1.f, 12.f});
@@ -2140,12 +1817,9 @@ void RenderMenu() {
                 PlaySound(SND_CLICK);
                 g_calibMode = 0;
                 menu_open = true;
-                // Вернуться туда, откуда калибровку запускали: зоны автофарма —
-                // в окно автофарма, точка аима — на вкладку «Аим», счётчик —
-                // на вкладку «Опции», джойстик и кнопка фрикама — в «Разное».
-                if (farm)            PopoverOpen(XS("Автофарм"), 5);
-                else if (hud)        g_state.cur_tab = 5;
-                else if (fcb || fcj || fcl || flb || xrb) g_state.cur_tab = 3;
+                // Return to the owning inline group, not the retired farm popover.
+                if (hud)             g_state.cur_tab = 5;
+                else if (farm || fcb || fcj || fcl || flb || xrb) g_state.cur_tab = 3;
                 else                 g_state.cur_tab = 1;
                 g_input.touchConsumed = true; // этот тап уже отработал
             }

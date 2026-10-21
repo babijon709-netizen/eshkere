@@ -182,6 +182,7 @@ static void RenderToggleRowVisuals(ImDrawList* dl, ImFont* fn, float fs,
                                     float rowX, float rowY, float rowW,
                                     const char* lbl, float animT, float alpha,
                                     bool showSep, bool last) {
+    if (!DrawRectVisible(dl, {rowX, rowY}, {rowX + rowW, rowY + Layout::RowH})) return;
     const float inset = Layout::Inset, padX = Layout::PadX;
     float cX = rowX + inset, cW = rowW - inset * 2.f;
     const float rowH = Layout::RowH;
@@ -204,6 +205,7 @@ static void RenderSliderVisuals(ImDrawList* dl, ImFont* fn, float fs,
                                  float rowX, float rowY, float rowW, float rowH,
                                  const char* lbl, const char* fmt, float v, float animPos,
                                  bool active, float alpha, bool showSep, bool last) {
+    if (!DrawRectVisible(dl, {rowX, rowY}, {rowX + rowW, rowY + rowH})) return;
     const float inset = Layout::Inset, padX = Layout::PadX;
     const float tH = 11.f, kR = 22.f, padH = 38.f;
     float cX = rowX + inset, cW = rowW - inset * 2.f;
@@ -247,6 +249,7 @@ bool ToggleRow(const char* id, const char* lbl, bool* v, float& anim,
     float fs = ImGui::GetFontSize();
 
     ImGui::InvisibleButton(id, {avW, rowH});
+    if (!DrawRectVisible(dl, pos, {pos.x + avW, pos.y + rowH})) return false;
     bool popBlocking = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
 
     float cy = pos.y + rowH * 0.5f;
@@ -298,6 +301,7 @@ void ColorRow(const char* id, const char* lbl, ImVec4* col, bool last) {
     auto& io2 = ImGui::GetIO();
     float fs = ImGui::GetFontSize();
     ImGui::InvisibleButton(id, {avW, rowH});
+    if (!DrawRectVisible(dl, pos, {pos.x + avW, pos.y + rowH})) return;
     bool popBlocking = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
     float cy = pos.y + rowH * 0.5f;
     float cX = pos.x + inset, cW = avW - inset * 2.f;
@@ -386,6 +390,7 @@ void CardBg(float h, ImDrawFlags flags) {
     const float inset = Layout::Inset;
     ImVec2 bMin = {p0.x + inset, p0.y};
     ImVec2 bMax = {p0.x + w - inset, p0.y + h};
+    if (!DrawRectVisible(dl, bMin, bMax)) return;
     dl->AddRectFilled(bMin, bMax, C::U(C::Card()), R::Card, flags);
     if (g_state.ui_show_sep)
         dl->AddRect(bMin, bMax, C::U(C::Sep()), R::Card, flags, 1.2f);
@@ -469,6 +474,11 @@ bool SettingsHeader(const char* id, const char* lbl, const char* summary,
     const auto pos = ImGui::GetCursorScreenPos();
     const float w = ImGui::GetContentRegionAvail().x;
     const float h = Layout::RowH, fs = ImGui::GetFontSize();
+    if (!DrawRectVisible(dl, pos, {pos.x + w, pos.y + h})) {
+        ImGui::Dummy({w, h + 8.f});
+        ImGui::PopID();
+        return open;
+    }
     const float left = pos.x + Layout::Inset, right = pos.x + w - Layout::Inset;
     const float toggleW = enabled ? 112.f : 0.f;
     const float split = right - toggleW;
@@ -530,6 +540,11 @@ bool ChoiceRow(const char* id, int* value, const char* const* labels, int count)
     const float cellW = (w - 2.f * Layout::Inset - gap * (count - 1)) / count;
     auto* dl = ImGui::GetWindowDrawList();
     auto* fn = ImGui::GetFont();
+    if (!DrawRectVisible(dl, pos, {pos.x + w, pos.y + h})) {
+        ImGui::Dummy({w, h + 8.f});
+        ImGui::PopID();
+        return false;
+    }
     const bool blocked = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
     bool changed = false;
     for (int i = 0; i < count; ++i) {

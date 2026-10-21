@@ -83,6 +83,7 @@ static void CalibrationRow(const char* id, const char* label, int mode, const ch
     const float left = pos.x + Layout::Inset + Layout::PadX;
     const float right = pos.x + w - Layout::Inset - Layout::PadX;
     ImGui::InvisibleButton(id, {w, h});
+    if (!DrawRectVisible(ImGui::GetWindowDrawList(), pos, {pos.x + w, pos.y + h})) return;
     if (WasTappedHere() && !(g_pop.visible && !g_pop.closing) && !g_sheet.visible &&
         !IsScrollDragging() && !g_input.touchConsumed) {
         g_calibMode = mode;
@@ -268,6 +269,7 @@ float TabContent(int tab, float dt, float cW) {
             auto& io2 = ImGui::GetIO();
 
             ImGui::InvisibleButton(id, {avW, rowH});
+            if (!DrawRectVisible(dl, pos, {pos.x + avW, pos.y + rowH})) return;
 
             float dotR = 13.f;
             float dotX = 0.f;
@@ -932,7 +934,7 @@ static float RailTabsW() {
     const float fs = ImGui::GetFontSize() * 0.88f * kRailFS;
     float worst = 0.f;
     for (int k = 1; k < kTabCount; ++k)
-        worst = ImMax(worst, ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0, TabTitle(k)).x);
+        worst = ImMax(worst, MeasureUiTextScaled(TabTitle(k), fs).x + 4.f);
     return kRailPadL + kRailIcon + kRailGap + worst + kRailPadR;
 }
 
@@ -2051,13 +2053,11 @@ void RenderMenu() {
         const float want   = baseFS * kRailFS;               // цель — крупнее базового
         // Если панель уже, чем посчитано в RailTabsW (узкий экран), кегль и
         // иконка ужимаются: сначала меньше становится иконка, потом подпись.
-        auto widest = [&](float fs) {
-            float worst = 0.f;
-            for (int k = 0; k < kTabShown; ++k)
-                worst = ImMax(worst, ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0,
-                                                                    tabNames(kTabOrder[k])).x);
-            return worst;
-        };
+        const float measureSize = ImGui::GetFontSize();
+        float measuredWorst = 0.f;
+        for (int k = 0; k < kTabShown; ++k)
+            measuredWorst = ImMax(measuredWorst, MeasureUiTextScaled(tabNames(kTabOrder[k]), measureSize).x);
+        auto widest = [&](float fs) { return measuredWorst * (fs / measureSize) + 4.f; };
         for (float fs = want; fs > baseFS; fs -= 1.f) {
             for (float icon = kRailIcon; icon >= 45.f; icon -= 5.f) {
                 const float avail = railW - m.padL - m.padR - icon - m.gap;
@@ -2089,7 +2089,9 @@ void RenderMenu() {
             const float padL = padL0 > 0.f ? padL0 : 16.f;
             const float padR = padR0 > 0.f ? padR0 : 12.f;
             const float gap  = gap0  > 0.f ? gap0  : 12.f;
-            auto labelW = [&](float f) { return font->CalcTextSizeA(f, FLT_MAX, 0, tabNames(i)).x; };
+            const float measureSize = ImGui::GetFontSize();
+            const float measuredWidth = MeasureUiTextScaled(tabNames(i), measureSize).x;
+            auto labelW = [&](float f) { return measuredWidth * (f / measureSize) + 4.f; };
             // Подгонка — только на совсем узкой панели: обычно размеры уже
             // посчитаны в RailMetrics под самую длинную подпись.
             const float avail = cellW - padL - padR - gap;

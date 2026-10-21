@@ -16,6 +16,9 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <chrono>
+#include <algorithm>
+#include <vector>
 #include <map>
 #include <set>
 #include <string>
@@ -52,6 +55,7 @@ const char* ImGuiTestEngine_FindItemDebugLabel(ImGuiContext*, ImGuiID) { return 
 extern float TabContent(int, float, float);
 static std::string windowName = "test";
 static float width = 650.f, height = 12000.f;
+static float viewportClip = 0.f;
 static ImGuiID windowId() { return ImHashStr(windowName.c_str()); }
 static ImGuiID id(const char* label) { return ImHashStr(label, 0, windowId()); }
 static ImGuiID groupId(const char* group, const char* child = "expand") {
@@ -76,10 +80,12 @@ static float frame(const std::function<void()>& draw, ImVec2 tap = {-100.f, -100
     ImGui::SetNextWindowSize({width, height});
     ImGui::Begin(windowName.c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
     ImGui::SetCursorPos({0.f, 0.f});
+    if (viewportClip > 0.f) ImGui::GetWindowDrawList()->PushClipRect({0.f, 0.f}, {width, viewportClip}, true);
     if (clipped) ImGui::GetWindowDrawList()->PushClipRect({0.f, 0.f}, {width, 10.f}, true);
     draw();
     const float result = ImGui::GetCursorPosY();
     if (clipped) ImGui::GetWindowDrawList()->PopClipRect();
+    if (viewportClip > 0.f) ImGui::GetWindowDrawList()->PopClipRect();
     ImGui::End();
     ImGui::Render();
     assert(duplicates.empty());
@@ -235,6 +241,78 @@ static void configAndOptionsTests() {
     tap(tab(5), id("##exit")); assert(g_pop.visible && g_pop.sectionId == 2);
 }
 
+static void cullingTests() {
+    fresh("culling");
+    bool enabled = false;
+    float value = 25.f, toggleAnimation = 0.f;
+    AppState::SliderAnim animation;
+    ImVec4 color = {1.f, 0.f, 0.f, 1.f};
+    const char* const labels[] = {"one", "two", "three"};
+    int selected = 0;
+    auto draw = [&] {
+        if (SettingsHeader("group", "settings", nullptr, true)) {
+            CardBg(Layout::RowH * 41.f + Layout::SliderH + Layout::BtnH + 8.f);
+            for (int i = 0; i < 40; ++i) {
+                ImGui::PushID(i);
+                ToggleRow("toggle", "row", &enabled, toggleAnimation);
+                ImGui::PopID();
+            }
+            ColorRow("color", "color", &color);
+            SliderRow("slider", "slider", &value, 0.f, 100.f, "%.0f", true, true, animation, 1.f / 60.f);
+            ChoiceRow("choice", &selected, labels, 3);
+        }
+    };
+    const float fullHeight = frame(draw);
+    const int fullVertices = ImGui::GetDrawData()->TotalVtxCount;
+    viewportClip = 450.f;
+    const float clippedHeight = frame(draw);
+    assert(std::fabs(fullHeight - clippedHeight) < .01f);
+    assert(ImGui::GetDrawData()->TotalVtxCount < fullVertices / 3);
+    assert(!enabled && value == 25.f && selected == 0);
+    // A clipped expanded header must still lay out its entire body. The
+    // slider's animation/state updates must not depend on GPU visibility.
+    animation = {};
+    const float offscreenHeight = frame([&] { ImGui::SetCursorPosY(1000.f); draw(); });
+    assert(std::fabs(offscreenHeight - 1000.f - fullHeight) < .01f);
+    assert(animation.pos >= 0.f && !enabled);
+    viewportClip = 0.f;
+    assert(std::fabs(frame(draw) - fullHeight) < .01f);
+
+    fresh("font-probes");
+    frame([&] {
+        MeasureUiTextScaled("Конфиги", ImGui::GetFontSize());
+        const int before = ImGui::GetIO().Fonts->Builder->BakedPool.Size;
+        for (int size = 8; size <= 90; ++size) {
+            const auto measured = MeasureUiTextScaled("Конфиги", float(size));
+            assert(measured.x > 0.f && measured.y > 0.f);
+        }
+        assert(ImGui::GetIO().Fonts->Builder->BakedPool.Size == before);
+    });
+}
+
+static void benchmark() {
+    fresh("benchmark");
+    width = 650.f; viewportClip = 450.f;
+    frame(tab(3));
+    for (auto group : {"##misc_fov", "##misc_hands", "##misc_freecam", "##misc_xray", "##misc_weapon",
+                       "##misc_farm", "##misc_world", "##misc_fakelag", "##misc_fps"}) {
+        auto* window = ImGui::FindWindowByName(windowName.c_str());
+        window->StateStorage.SetBool(ImHashStr("expanded", 0, id(group)), true);
+    }
+    ImGui::GetCurrentContext()->TestEngineHookItems = false;
+    for (int i = 0; i < 20; ++i) frame(tab(3));
+    std::vector<double> times;
+    for (int i = 0; i < 500; ++i) {
+        const auto start = std::chrono::steady_clock::now();
+        frame(tab(3));
+        times.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+    }
+    std::sort(times.begin(), times.end());
+    auto* draw = ImGui::GetDrawData();
+    std::printf("host CPU, expanded misc / 450 px clip: median %.1f us, p95 %.1f us, %d vertices, %d indices, %d lists\n",
+                times[250], times[475], draw->TotalVtxCount, draw->TotalIdxCount, draw->CmdListsCount);
+}
+
 int main(int argc, char** argv) {
     ImGui::CreateContext();
     auto& io = ImGui::GetIO(); io.IniFilename = nullptr;
@@ -243,6 +321,9 @@ int main(int argc, char** argv) {
     unsigned char* pixels; int w, h; io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
     ImGui::GetCurrentContext()->TestEngineHookItems = true;
     ApplyTheme();
+    if (argc > 1 && std::strcmp(argv[1], "--bench") == 0) {
+        benchmark(); ImGui::DestroyContext(); return 0;
+    }
     if (argc > 1 && std::strcmp(argv[1], "--measure") == 0) {
         for (int i = 1; i <= 5; ++i) {
             fresh(("measure" + std::to_string(i)).c_str());
@@ -251,7 +332,7 @@ int main(int argc, char** argv) {
         ImGui::DestroyContext();
         return 0;
     }
-    widgetTests(); aimTests(); espTests(); miscTests(); configAndOptionsTests();
+    widgetTests(); aimTests(); espTests(); miscTests(); configAndOptionsTests(); cullingTests();
     g_pop = {}; g_sheet = {}; g_calibMode = 0;
     const char* const expandedGroups[] = {
         "##aim_target", "##aim_filters", "##aim_tuning", "##aim_touch_settings",

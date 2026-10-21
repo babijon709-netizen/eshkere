@@ -3,6 +3,7 @@
 ```sh
 tools/tests/run_menu_ui.sh
 tools/tests/run_menu_ui.sh --measure
+tools/tests/run_menu_ui.sh --bench
 ```
 
 Requires a C++17 host compiler (`g++`, or set `CXX`). The runner builds the real
@@ -16,10 +17,15 @@ Checks cover:
 - all previous controls across all five tabs, profile actions and confirmation;
 - calibration entry points, farm/aim point reset and immediate weapon/FPS callbacks;
 - expanded layouts at narrow/wide content widths, both languages and themes;
-- collapsed content height and scroll bounds after content shrinks.
+- collapsed content height and scroll bounds after content shrinks;
+- offscreen culling without changing layout/slider state, and font-size probes
+  that do not allocate a baked font for every trial size.
 
 `--measure` prints default content heights (650 px content width, 28 px font).
 These are layout measurements, not device screenshots or frame-rate benchmarks.
+`--bench` measures warmed host CPU time and submitted geometry for expanded misc
+settings behind a 450 px viewport; it excludes Android, game I/O and GPU work.
+Compare on the same machine/compiler, not with device FPS.
 
 This is **not** an Android build or an on-device integration test. Before shipping,
 build with the project's NDK and check on a device: touch scrolling vs sliders,

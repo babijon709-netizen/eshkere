@@ -3,6 +3,7 @@
 // Вынесено из main.cpp — используют меню, виджеты, тосты и ESP-оверлей.
 
 #include <cmath>
+#include <cfloat>
 #include "imgui.h"
 #include "imgui_internal.h"   // ImClamp / ImMax / ImMin
 #include "widgets.h"          // g_win.closing: лок тапов, пока окно улетает
@@ -11,6 +12,29 @@ inline float Lerpf(float a, float b, float t)   { return a + (b - a) * t; }
 inline float Clamp01(float t)                    { return t < 0.f ? 0.f : t > 1.f ? 1.f : t; }
 inline float EaseOut3(float t)                   { float i = 1 - t; return 1 - i * i * i; }
 inline float EaseInOut(float t)                  { return t * t * (3 - 2 * t); }
+
+// Scissor rectangles only discard GPU pixels. AddRect/AddCircle still build
+// geometry on the CPU, even for rows far outside a scrolled viewport.
+// Keep a small fringe for AA/shadows and check the actual draw-list clip (the
+// content area may be smaller than ImGui's window clip).
+inline bool DrawRectVisible(const ImDrawList* dl, ImVec2 min, ImVec2 max) {
+    const ImVec2 lo = dl->GetClipRectMin(), hi = dl->GetClipRectMax();
+    return lo.x < hi.x && lo.y < hi.y &&
+           max.x + 2.f > lo.x && min.x - 2.f < hi.x &&
+           max.y + 2.f > lo.y && min.y - 2.f < hi.y;
+}
+
+// Layout-only estimate: probing CalcTextSizeA at each candidate size in
+// ImGui 1.92 creates/rasterizes a separate baked font for every trial size.
+// Measure once at the current size; only the final chosen size is baked by
+// the real draw call. Callers leave a small margin for hinting differences.
+inline ImVec2 MeasureUiTextScaled(const char* text, float size) {
+    const float base = ImGui::GetFontSize();
+    ImVec2 measured = ImGui::GetFont()->CalcTextSizeA(base, FLT_MAX, 0.f, text);
+    const float scale = size / base;
+    return {measured.x * scale, measured.y * scale};
+}
+
 
 // Разность углов, приведённая к (-180, 180].
 //

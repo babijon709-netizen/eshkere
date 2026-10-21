@@ -96,7 +96,8 @@ inline bool is_single_layer_bit(std::int32_t m) {
     return u != 0u && (u & (u - 1u)) == 0u;
 }
 
-// Structural validator for hMj.static_fields (TypeDefIndex: 6280, 25 int32 LayerMask fields):
+// Structural validator for release hMj (TypeDefIndex: 6280) and beta 11974 gVF
+// (TypeDefIndex: 6611; 25 int32 LayerMask fields):
 //   +0x00 Default (1<<0), +0x04 Hitbox, +0x08 IgnoreCollision, +0x0C Construction,
 //   +0x10 Deployed, +0x14 Terrain, +0x18 Water (1<<4), +0x1C ProxyEntity, +0x20 Entity,
 //   +0x24 First Person, +0x28 Default|Construction|Deployed|Terrain|Water,

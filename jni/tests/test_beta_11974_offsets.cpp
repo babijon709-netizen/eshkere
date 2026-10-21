@@ -1,9 +1,7 @@
-// Пин beta-профиля сборки 11968 (dumpbeta11968.7z).
+// Пин beta-профиля сборки 11974 (dumpbeta11974.7z).
 //
-// Смысл теста: lockdown смещений, снятых с дампа, чтобы следующее обновление
-// профиля нельзя было сделать «на глаз». Все значения выведены сравнением с
-// релизом 11966 по ЧИТАЕМЫМ именам полей (m_MaxReach, userID, clanId,
-// m_IdleOffset, ...) либо по структурной привязке хвоста класса.
+// Закрепляет TypeInfo RVAs и отличающиеся от release offsets, сверенные с
+// script.json и dump.cs 11974; также проверяет, что release-профиль не меняется.
 #include "game_offsets_active.h"
 #include "maps_lookup.h"
 
@@ -24,16 +22,16 @@ int main() {
     go_active::Select(GameVersion::Beta);
 
     // --- Слоты TypeInfo (внутренние .data, одно разыменование) ---
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE628018);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE627FE0);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE6232A0);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE6272D0);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE62CB98);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE656C70);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE656C38);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE651E98);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE655F78);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE65B7F8);
     // Промисы UniTask: основной класс и его вложенный <>c, шаг 8 байт.
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE636C70);
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0xE638B08);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE636C68);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT == 0xE638B00);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE666148);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0xE668E10);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE666140);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT == 0xE668E08);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA -
                go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT -
@@ -43,30 +41,38 @@ int main() {
                go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0x38);
 
     // --- Окно структурного скана .data ---
-    // Накрывает ApG (маски слоёв), PlayerManager, VM (TOD_Sky) и
-    // WorldStreamingController; при смене дампа его надо пересчитать.
+    // Накрывает beta layer-mask holder gVF, PlayerManager, jZ (TOD_Sky),
+    // WorldStreamingController и UniTask delay-promise TypeInfo slots.
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE650000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE670000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE65D2F8);
     assert(go_active::HMJ_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::HMJ_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE61EE90);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
-    // TOD_Sky (класс VM) ищется сканом по сигнатуре List<Self> + Cycle@0x40,
-    // поэтому его слот отдельной константой не задаётся — но лежать он обязан
-    // внутри окна, иначе день/ночь и маски стен не найдутся.
-    constexpr std::uint64_t kTodSkySlot = 0xE62C300;
-    assert(kTodSkySlot > go_active::TOD_SCAN_RVA_BEGIN);
-    assert(kTodSkySlot < go_active::TOD_SCAN_RVA_END);
+    assert(go_active::WORLD_STREAMING_GRASS_ENABLED_FIELD == 0x18);
+    assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
+    // PlayerManager.lJD -> XN.bhd is the hit-expiry map used by XC.Tick.
+    assert(go_active::PLAYER_HIT_TRACKER == 0x358);
+    assert(go_active::HIT_TRACKER_HIT_DICT == 0x18);
+    // TOD_Sky (jZ) is found by its List<Self> + Cycle@0x40 signature; script.json
+    // places its TypeInfo slot inside the scan window.
+    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE65E1A0;
+    assert(kTodSkyTypeInfoSlot > go_active::TOD_SCAN_RVA_BEGIN);
+    assert(kTodSkyTypeInfoSlot < go_active::TOD_SCAN_RVA_END);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     // TOD_CycleParameters не обфусцован и не менялся.
     assert(go_active::TOD_SKY_CYCLE == 0x40);
     assert(go_active::TOD_CYCLE_HOUR == 0x10);
     assert(go_active::TOD_CYCLE_DAY == 0x14);
 
     // --- Хвост PlayerManager: сдвиг ровно +0x10, начиная с playerFlags ---
-    // Вставлены GameObject OtY (0x270) и ny OtF (0x278). Всё, что лежало
+    // Вставлены GameObject lZY (0x270) и Sb lZO (0x278). Всё, что лежало
     // ДО вставки (AimAssist 0x258, ссылка на PlayerModelInfo 0x260), стоит
     // на месте.
-    assert(go_active::PLAYER_AIM_ASSIST == go_active::PLAYER_AIM_ASSIST);
     assert(go_active::PLAYER_AIM_ASSIST == 0x258);
     assert(go_active::PLAYER_MODEL_INFO_REF == 0x260);
     assert(go_active::PLAYER_USER_ID == 0x2A8);
@@ -98,7 +104,7 @@ int main() {
     assert(go_active::FPMOTION_AIM_OFFSET == 0x60);
     assert(go_active::FPMOTION_LOOK_OFFSET == 0x68);
     assert(go_active::FPMOTION_CLOSE_OFFSET == 0x70);
-    // m_OnLadderOffset и m_JumpOffset в 11968 не существуют; контроллер рук
+    // m_OnLadderOffset и m_JumpOffset в 11974 не существуют; контроллер рук
     // обязан видеть в этих слотах профиль прицеливания, чтобы безопасно их
     // пропустить, а не прочитать мусор.
     assert(go_active::FPMOTION_LADDER_OFFSET == go_active::FPMOTION_AIM_OFFSET);
@@ -132,14 +138,13 @@ int main() {
     assert(go_active::KCC_LOOK_HEIGHT_OFFSET == 0x90);
 
     // --- Падение: виталы и раскладка значения Move в бете совпали с релизом ---
-    // Oxide.EntityVitals (dump.cs 11968, строка 454330): m_MinFallSpeed 0xC0,
-    // m_MaxFallSpeed 0xC4; Oxide.PlayerVitals (455117): Player 0x100,
-    // PlayerEvent 0x108; PlayerManager.vitals (484714+6): 0xC8.
+    // Oxide.EntityVitals в dump.cs 11974: m_MinFallSpeed 0xC0, m_MaxFallSpeed 0xC4;
+    // PlayerVitals.Player 0x100, PlayerEvent 0x108; PlayerManager.vitals 0xC8.
     assert(go_active::PLAYER_VITALS == 0xC8);
     assert(go_active::VITALS_MIN_FALL_SPEED == 0xC0);
     assert(go_active::VITALS_MAX_FALL_SPEED == 0xC4);
     assert(go_active::VITALS_PLAYER_BACKREF == 0x100);
-    // struct Move 4453 — то же значение, что в релизе, хотя поле в KCC переехало.
+    // struct Move 4454 — те же внутренние offsets, хотя поле в KCC переехало.
     assert(go_active::KCC_MOVE_REAL_VELOCITY == 0x18);
     assert(go_active::KCC_MOVE_REAL_VELOCITY_Y - go_active::KCC_MOVE_REAL_VELOCITY == 4);
     assert(go_active::KCC_MOVE_BASE_VELOCITY_Y - go_active::KCC_MOVE_BASE_VELOCITY == 4);

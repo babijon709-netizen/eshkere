@@ -9620,12 +9620,12 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
     return fallback;
 }
 
-// Сброс 2-секундных таймеров попадания в Nt.RWf ([local_player + 0x348] + 0x18):
-// при попадании по врагу Nt::lsM (0x5CFE33C) записывает в RWf[userId] время
-// Time.time + 2.0f, из-за чего Nt::lsh (0x5CFE3C8) возвращает true в течение 2с,
-// Na::Tick ставит NV.RWI (data + 0x73) = 1, NearbyPlayerScreenMarkerView::Tick
-// копирует его в ctx + 0x50 (Rsp), а OcclusionModule::Tick при Rsp != 0 пропускает
-// Physics.Raycast и форсирует RcS = Visible на 2 секунды даже за контейнером.
+// Сброс таймеров попадания локального игрока.
+// Release: Nt.RWf ([PlayerManager + 0x348] + 0x18); Nt::lsM (0x5CFE33C)
+// пишет Time.time + 2.0f, Nt::lsh (0x5CFE3C8) проверяет этот срок, а NearbyPlayer
+// переносит результат в MarkerData+0x73 и дальше в OcclusionModule.
+// Beta 11974: PlayerManager.lJD — XN (+0x358); XN.bhd (+0x18) — та же hit-expiry
+// map: XC.Tick записывает результат XN.jMR в MarkerData+0x73.
 static void expire_local_player_hit_timers(uint64_t local_player) {
     if (!valid_obj(local_player)) return;
     const uint64_t nt = rd_ptr(local_player + PLAYER_HIT_TRACKER);
@@ -9663,7 +9663,9 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 }
 
 // Поиск статического класса hMj (TypeDefIndex: 6280, RVA 0xDEA6BD8 в Release 11966)
-// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98) и извлечение маски твёрдых стен/рельефа
+// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98). В Beta 11974 слот указывает на
+// gVF (TypeDefIndex: 6611), его 25 LayerMask полей проверяются той же сигнатурой.
+// Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
 // ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
 // OcclusionModule::Tick (0x5D097F4) вызывает 4-аргументный Physics.Raycast с

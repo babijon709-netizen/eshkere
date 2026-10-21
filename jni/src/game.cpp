@@ -9624,8 +9624,8 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
 // Release: Nt.RWf ([PlayerManager + 0x348] + 0x18); Nt::lsM (0x5CFE33C)
 // пишет Time.time + 2.0f, Nt::lsh (0x5CFE3C8) проверяет этот срок, а NearbyPlayer
 // переносит результат в MarkerData+0x73 и дальше в OcclusionModule.
-// Beta 11974: PlayerManager.lJD — XN (+0x358); XN.bhd (+0x18) — та же hit-expiry
-// map: XC.Tick записывает результат XN.jMR в MarkerData+0x73.
+// Beta 11977: PlayerManager.cFm — Yf (+0x358); Yf has dictionaries at +0x10
+// and +0x18. The +0x18 hit-map selection remains a beta-profile assumption.
 static void expire_local_player_hit_timers(uint64_t local_player) {
     if (!valid_obj(local_player)) return;
     const uint64_t nt = rd_ptr(local_player + PLAYER_HIT_TRACKER);
@@ -9663,8 +9663,8 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 }
 
 // Поиск статического класса hMj (TypeDefIndex: 6280, RVA 0xDEA6BD8 в Release 11966)
-// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98). В Beta 11974 слот указывает на
-// gVF (TypeDefIndex: 6611), его 25 LayerMask полей проверяются той же сигнатурой.
+// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98). В Beta 11977 слот указывает на
+// IWt (TypeDefIndex: 6610), его 25 LayerMask полей проверяются той же сигнатурой.
 // Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
 // ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
@@ -10744,10 +10744,9 @@ static void revalidate_dead_direct_position(const std::vector<uint64_t>& players
 
 static void note_direct_position_health(const std::vector<uint64_t>& players,
                                         const std::vector<char>& sources) {
-    // PlayerManager on the client in 11966 / 11968 has no synced Vector3 world
-    // position field (0x1F4 lastSavedPosition is server-only, and 0x200 in the
-    // 0x1A0..0x300 scan range is lastDeathPosition). Never scan or switch
-    // g_player_position_offset to lastDeathPosition.
+    // Beta 11977 dump.cs places lastSavedPosition at 0x1F4 and lastDeathPosition
+    // at 0x200; neither is marked SyncVar. Keep lastDeathPosition out of direct
+    // position scans and do not switch g_player_position_offset to that field.
     (void)players;
     (void)sources;
     s_direct_dead_frames = 0;

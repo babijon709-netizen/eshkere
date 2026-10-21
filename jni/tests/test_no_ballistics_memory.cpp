@@ -317,7 +317,7 @@ int main() {
         assert(go_active::FPROCKETLAUNCHER_PROJECTILE_PREFAB == 0x148);
         assert(go_active::FPEXPLOSIVECHARGE_PROJECTILE_PREFAB == 0x130);
         assert(go_active::FPSNOWBALL_PROJECTILE_PREFAB == 0x130);
-        // Бета 11974 использует релизную раскладку копья/ближнего боя/
+        // Бета 11977 использует релизную раскладку копья/ближнего боя/
         // инструмента: прежнего отставания на 8 байт (0x170/0x168/0x1A8,
         // 0x128..0x134, 0x160) в этой сборке нет.
         assert(go_active::FPSPEAR_PROJECTILE_PREFAB == 0x178);

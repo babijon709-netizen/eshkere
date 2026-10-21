@@ -83,7 +83,7 @@ void test_offsets_consistency() {
     assert(game_offsets_beta::AIMASSIST_CUR_TARGET == game_offsets::AIMASSIST_CUR_TARGET);
     assert(game_offsets_beta::AIMASSIST_DELTA_ROT == game_offsets::AIMASSIST_DELTA_ROT);
     assert(game_offsets_beta::MARKER_DATA_IS_HIT == game_offsets::MARKER_DATA_IS_HIT);
-    // Хвост PlayerManager в бете 11974 сдвинут на +0x10 (два поля перед
+    // Хвост PlayerManager в бете 11977 сдвинут на +0x10 (два поля перед
     // playerFlags), трекер попаданий — тоже.
     assert(game_offsets_beta::PLAYER_HIT_TRACKER == game_offsets::PLAYER_HIT_TRACKER + 0x10);
     assert(game_offsets_beta::HIT_TRACKER_HIT_DICT == game_offsets::HIT_TRACKER_HIT_DICT);

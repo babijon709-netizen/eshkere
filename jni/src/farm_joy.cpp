@@ -555,12 +555,12 @@ bool sprint(bool on) {
         s_sprint_why = why;
         return false;
     }
-    // В PlayerInputHandler.BZ / lIb оценщик спринта (0x687F014) вызывается ДО
-    // применения слота A (+0x6C), поэтому видит нулевой вектор стика и ставит
-    // PlayerInput.Sprint = 0. Сразу после слота A игра проверяет Nullable<bool>
-    // по смещению +0x84 (Jjb в 11966, Oua в 11968: hasValue на +0x84, value на
-    // +0x85) и пишет value & 1 в PlayerInput.Sprint (+0x59), откуда KCC.hFr
-    // включает eventHandler->Run.
+    // Оценщик спринта вызывается ДО применения слота A (+0x6C), поэтому видит
+    // нулевой вектор стика и ставит PlayerInput.Sprint = 0. Сразу после слота A
+    // игра проверяет Nullable<bool>
+    // по смещению +0x84 (в beta 11977 это PlayerInputHandler.cGP; hasValue
+    // на +0x84, value на +0x85) и пишет value & 1 в PlayerInput.Sprint (+0x59),
+    // откуда KCC включает eventHandler->Run.
     const uint64_t ovr_addr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
     const unsigned char v = on ? 1u : 0u;
     const unsigned char want_ovr[2] = { v, v };

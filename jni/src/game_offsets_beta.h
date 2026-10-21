@@ -1,15 +1,15 @@
 #pragma once
 #include "game_offsets.h"
 
-// Beta profile, snapshot 2026-10-21, build 11974.
-// Source: dumpbeta11974.7z (dump.cs, script.json, libil2cpp.so).
+// Beta profile, snapshot 2026-10-21, build 11977.
+// Source: dumpbeta11977.7z (dump.cs, script.json, libil2cpp.so).
 // TypeInfo RVAs below come from script.json TypeInfoPointers; field layouts are
 // read from dump.cs. Shared offsets continue to use game_offsets.h unless this
 // profile records a beta-specific difference.
 //
-// The 11974 .data section spans [0xE3C14D0, 0xEA25108). TOD_SCAN_RVA_* stays in
-// that section and covers the layer-mask holder gVF (TypeDefIndex 6611,
-// TypeInfo slot 0xE65D2F8) and TOD sky jZ (TypeDefIndex 706, slot 0xE65E1A0).
+// The 11977 .data section spans [0xE3AFC20, 0xEA5A668). TOD_SCAN_RVA_* stays in
+// that section and covers candidate layer-mask class IWt (TypeDefIndex 6610,
+// TypeInfo slot 0xE6431D8) and TOD sky Gf (TypeDefIndex 706, slot 0xE640D88).
 
 namespace game_offsets_beta {
 inline constexpr std::uint64_t CAMERA_PROJECTION_MATRIX = game_offsets::CAMERA_PROJECTION_MATRIX;
@@ -31,9 +31,9 @@ inline constexpr float PLAYER_BOX_WIDTH_RATIO = game_offsets::PLAYER_BOX_WIDTH_R
 inline constexpr float MIN_PLAYER_DISTANCE = game_offsets::MIN_PLAYER_DISTANCE;
 inline constexpr float MAX_PLAYER_DISTANCE = game_offsets::MAX_PLAYER_DISTANCE;
 // Oxide.PlayerManager, Cysharp.Threading.Tasks.PlayerLoopHelper, Oxide.GameControllerBase,
-// Mirror.NetworkClient: внутренние .data-слоты из TypeInfoPointers сборки 11974.
-inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE656C70;
-inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE656C38;
+// Mirror.NetworkClient: внутренние .data-слоты из TypeInfoPointers сборки 11977.
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE647138;
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE647100;
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = game_offsets::PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST;
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = game_offsets::PLAYER_MANAGER_STATIC_FIELDS_LIST;
 inline constexpr std::uint64_t IL2CPP_CLASS_STATIC_FIELDS_OFFSET = game_offsets::IL2CPP_CLASS_STATIC_FIELDS_OFFSET;
@@ -46,18 +46,18 @@ inline constexpr std::uint64_t DELAYPROMISE_INITIAL_FRAME = game_offsets::DELAYP
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_TIMESPAN = game_offsets::DELAYPROMISE_SCALED_TIMESPAN;
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_ELAPSED = game_offsets::DELAYPROMISE_SCALED_ELAPSED;
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = game_offsets::DELAYPROMISE_SCALED_INITIAL_FRAME;
-// UniTask delay-promise TypeInfo slots for beta 11974: основной класс и его
+// UniTask delay-promise TypeInfo slots for beta 11977: основной класс и его
 // вложенный <>c (запасной кандидат; имя проверяется в рантайме, см.
 // fast_loot_memory.h). Разница основного и запасного слотов та же, что в
 // прошлых сборках: DelayPromise идёт на 8 байт позже DelayIgnoreTimeScalePromise.
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE666148;      // Cysharp...UniTask.DelayPromise
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0xE668E10; // DelayPromise.<>c
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE666140;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0xE668E08;  // DelayIgnoreTimeScalePromise.<>c
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE655EB0;      // Cysharp...UniTask.DelayPromise
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0xE657CB8; // DelayPromise.<>c
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE655EA8;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0xE657CB0;  // DelayIgnoreTimeScalePromise.<>c
 
-// ---- Оружие: в сборке 11974 бета-ветка совпадает с релизом -----------------
+// ---- Оружие: в сборке 11977 бета-ветка совпадает с релизом -----------------
 // В 11959 копьё/ближний бой/инструмент отставали от релиза на 8 байт, поэтому
-// профиль держал «до-11966» значения. В 11974 раскладки этих классов
+// профиль держал «до-11966» значения. В 11977 раскладки этих классов
 // (Oxide.FPMelee, Oxide.FPTool, Oxide.FPSpear) поимённо совпали с релизом:
 //   FPMelee  m_MaxReach 0x130, hitRadius 0x134, m_TimeBetweenAttacks 0x138,
 //            pauseAfterAttack 0x13C (перед ними hitsPerAttack 0x128 и int 0x12C)
@@ -125,9 +125,9 @@ inline constexpr std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK = game_offsets::FPMELE
 inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES = game_offsets::FPTOOL_TOOL_PURPOSES;
 
 // Oxide.GameControllerBase (static_fields) — раскладка поимённо совпала с релизом.
-inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE651E98;
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE640C70;
 // HyperHug.Games.Oxide.Features.WorldStreaming.WorldStreamingController.
-inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE65B7F8;
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE64BC38;
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
 inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled / terrain bushes
 inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD = game_offsets::GAME_CONTROLLER_LOCAL_PLAYER_FIELD;
@@ -152,6 +152,7 @@ inline constexpr std::uint64_t PLAYER_INPUT_TICK = game_offsets::PLAYER_INPUT_TI
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_ATTACK_HELD = game_offsets::PLAYER_INPUT_HANDLER_ATTACK_HELD;
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_A = game_offsets::PLAYER_INPUT_HANDLER_OVERRIDE_A;
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_B = game_offsets::PLAYER_INPUT_HANDLER_OVERRIDE_B;
+// PlayerInputHandler.cGP is Nullable<bool> at 0x84 in dump.cs 11977 (same as release).
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE = game_offsets::PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
 inline constexpr std::uint64_t NULLABLE_HAS_VALUE = game_offsets::NULLABLE_HAS_VALUE;
 inline constexpr std::uint64_t NULLABLE_VALUE = game_offsets::NULLABLE_VALUE;
@@ -170,8 +171,8 @@ inline constexpr std::uint8_t INPUT_ACTION_PHASE_STARTED = game_offsets::INPUT_A
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD = game_offsets::CAMERA_MANAGER_CAMERA_FIELD;
 
 // ---- Oxide.PlayerManager ---------------------------------------------------
-// В 11974 layout до animator (0x1B0) совпадает с релизом. После playerFlags
-// добавлены lZY (GameObject, 0x270) и lZO (Sb, 0x278), поэтому хвост сдвинут
+// В 11977 layout до animator (0x1B0) совпадает с релизом. После playerFlags
+// добавлены cnN (GameObject, 0x270) и cFH (hp, 0x278), поэтому хвост сдвинут
 // на +0x10. Сверка по читаемым полям:
 //   playerFlags     0x270 -> 0x280
 //   prime / kicked  0x274/0x275 -> 0x284/0x285
@@ -193,7 +194,7 @@ inline constexpr std::uint64_t NICKLABEL_PLAYER_BACKREF = game_offsets::NICKLABE
 inline constexpr std::uint64_t NICKLABEL_NICKNAME_TEXT = game_offsets::NICKLABEL_NICKNAME_TEXT;
 inline constexpr std::uint64_t UI_TEXT_MTEXT = game_offsets::UI_TEXT_MTEXT;
 inline constexpr std::uint64_t FPOBJECT_OBJECT_NAME = game_offsets::FPOBJECT_OBJECT_NAME;
-inline constexpr std::uint64_t PLAYER_VOICE_STATE = 0x338;   // PlayerManager.lJj (Dissonance.VoicePlayerState)
+inline constexpr std::uint64_t PLAYER_VOICE_STATE = 0x338;   // PlayerManager.cFu (Dissonance.VoicePlayerState)
 inline constexpr std::uint64_t VOICE_STATE_NAME = game_offsets::VOICE_STATE_NAME;
 inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = game_offsets::PLAYER_VOICE_PLAYER;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG = game_offsets::VOICE_PLAYER_TAG;
@@ -205,7 +206,7 @@ inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = game_offsets::IL2CPP_STRIN
 inline constexpr std::uint64_t IL2CPP_STRING_CHARS = game_offsets::IL2CPP_STRING_CHARS;
 inline constexpr std::uint64_t PLAYER_EVENT_HANDLER = game_offsets::PLAYER_EVENT_HANDLER;
 inline constexpr std::uint64_t EVENT_HANDLER_MANAGER_BACKREF = game_offsets::EVENT_HANDLER_MANAGER_BACKREF;
-// PlayerManager.playerEventHandler (gYD): Run 0x288, Crouch 0x290, Footstep 0x298,
+// PlayerManager.playerEventHandler (IZq): Run 0x288, Crouch 0x290, Footstep 0x298,
 // StepLength 0x2A0, Jump 0x2A8, Aim 0x2B0. Перед Run вставлен SetVehicleLock
 // (0x280, +0x8), а между Crouch и Jump — Footstep и StepLength (+0x10),
 // поэтому Aim относительно релиза уехал на +0x18.
@@ -220,7 +221,7 @@ inline constexpr std::uint64_t VITALS_HEALTH = game_offsets::VITALS_HEALTH;
 inline constexpr std::uint64_t EVENT_HANDLER_HEALTH = game_offsets::EVENT_HANDLER_HEALTH;
 inline constexpr std::uint64_t PLAYER_UKX = game_offsets::PLAYER_UKX; // 0x260 (лежит ДО вставки 0x270, совпадает с PLAYER_MODEL_INFO_REF)
 inline constexpr std::uint64_t UKX_MODEL_INFO = game_offsets::UKX_MODEL_INFO;
-// В dump.cs 11974 Oxide.EntityVitals сохраняет m_MinFallSpeed 0xC0 и
+// В dump.cs 11977 Oxide.EntityVitals сохраняет m_MinFallSpeed 0xC0 и
 // m_MaxFallSpeed 0xC4; PlayerVitals.Player стоит на 0x100, PlayerEvent на
 // 0x108, а PlayerManager.vitals — на 0xC8, как и в релизном профиле.
 inline constexpr std::uint64_t VITALS_MIN_FALL_SPEED = game_offsets::VITALS_MIN_FALL_SPEED;
@@ -233,12 +234,12 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_DATA = game_offsets::INV_PLA
 inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_PLAYER_INVENTORY_CLIENT;
 
 // ---- HyperHug...Weapons.PlayerWeapon (третье лицо) --------------------------
-// В сборке 11974: animator 0xF8, playerWeaponViewReference 0x100, fPManager
+// В сборке 11977: animator 0xF8, playerWeaponViewReference 0x100, fPManager
 // 0x110, SyncVar WeaponPiece 0x130, WeaponState 0x14C, а <player> — 0x160.
 // Между WeaponPiece и WeaponState расположен новый int attackType (0x148).
-inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x100;            // SY playerWeaponViewReference
-inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x130;           // oVj (SyncVar weaponPiece)
-inline constexpr std::uint64_t PLAYERWEAPON_STATE = 0x14C;           // oVw (SyncVar weaponState)
+inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x100;            // hS playerWeaponViewReference
+inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x130;           // jUh (SyncVar weaponPiece)
+inline constexpr std::uint64_t PLAYERWEAPON_STATE = 0x14C;           // jUs (SyncVar weaponState)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160;  // <player>k__BackingField
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER = game_offsets::WEAPONPIECE_NUMBER;
@@ -265,9 +266,9 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG = game_offsets::ACTIVITY_ACT
 inline constexpr std::uint64_t PLAYER_FP_MANAGER = game_offsets::PLAYER_FP_MANAGER;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON = game_offsets::FPMANAGER_CURRENT_WEAPON;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT = game_offsets::FPMANAGER_CURRENT_OBJECT;
-// Хвост Oxide.FPManager сдвинут: AssetReference стоит на 0x80;
-// lGe и backing field lGt занимают 0xAC и 0xB8 соответственно.
-inline constexpr std::uint64_t FPMANAGER_AIM_BLEND = 0xB8;          // <lGt>k__BackingField
+// Хвост Oxide.FPManager: AssetReference на 0x80, поле cdf на 0xAC и
+// backing field <cdg>k__BackingField на 0xB8.
+inline constexpr std::uint64_t FPMANAGER_AIM_BLEND = 0xB8;          // <cdg>k__BackingField
 inline constexpr std::uint64_t FPOBJECT_PLAYER_BACKREF = game_offsets::FPOBJECT_PLAYER_BACKREF;
 inline constexpr std::uint64_t FPWEAPON_IS_AIMING = game_offsets::FPWEAPON_IS_AIMING;
 inline constexpr std::uint64_t FPOBJECT_RAYCAST_MANAGER = game_offsets::FPOBJECT_RAYCAST_MANAGER;
@@ -350,8 +351,9 @@ inline constexpr std::uint64_t MARKER_DATA_HEAD_POS = game_offsets::MARKER_DATA_
 inline constexpr std::uint64_t MARKER_DATA_TRANSFORM = game_offsets::MARKER_DATA_TRANSFORM;
 inline constexpr std::uint64_t MARKER_DATA_USER_ID = game_offsets::MARKER_DATA_USER_ID;
 inline constexpr std::uint64_t MARKER_DATA_IS_HIT = game_offsets::MARKER_DATA_IS_HIT;
-inline constexpr std::uint64_t PLAYER_HIT_TRACKER = 0x358;   // PlayerManager.lJD (XN, build 11974)
-// XN.bhd at +0x18 is the hit-expiry map: XC.Tick writes its jMR result to MarkerData+0x73.
+inline constexpr std::uint64_t PLAYER_HIT_TRACKER = 0x358;   // PlayerManager.cFm (Yf, build 11977)
+// Yf has Dictionary<uint, float> fields at +0x10 and +0x18; +0x18 remains
+// the beta hit-map assumption used by this profile.
 inline constexpr std::uint64_t HIT_TRACKER_HIT_DICT = game_offsets::HIT_TRACKER_HIT_DICT;
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT = game_offsets::SCREEN_MARKER_VIEW_CONTEXT;
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES = game_offsets::SCREEN_MARKER_VIEW_MODULES;
@@ -368,9 +370,9 @@ inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL = game_offsets::OCCLUSION_
 inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME = game_offsets::OCCLUSION_MOD_NEXT_TIME;
 inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL = game_offsets::OCCLUSION_MOD_HAS_VAL;
 inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED = game_offsets::OCCLUSION_MOD_IS_OCCLUDED;
-// Beta 11974: gVF (TypeDefIndex 6611), 25 static LayerMask fields at 0x00..0x60.
-// HMJ_TYPEINFO_RVA keeps its legacy name for the shared structural validator.
-inline constexpr std::uint64_t HMJ_TYPEINFO_RVA = 0xE65D2F8;
+// Beta 11977 candidate: IWt (TypeDefIndex 6610), 25 static LayerMask fields
+// at 0x00..0x60. HMJ_TYPEINFO_RVA keeps its legacy name for the shared validator.
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA = 0xE6431D8;
 inline constexpr std::int32_t MARKER_TYPE_NEARBY_PLAYER = game_offsets::MARKER_TYPE_NEARBY_PLAYER;
 inline constexpr std::uint64_t RAYCASTHIT_DISTANCE = game_offsets::RAYCASTHIT_DISTANCE;
 inline constexpr std::uint64_t RAYCASTHIT_POINT = game_offsets::RAYCASTHIT_POINT;
@@ -392,14 +394,14 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET = game_offsets::KCC_LOOK_H
 // следующего поля (Terrain). Релиз: PlayerInput 0x114 + 0x28 = Move 0x13C,
 // Move 0x13C + 0x6C = Terrain 0x1A8. Бета: PlayerInput 0x184 + 0x28 =
 // Move 0x1AC, Move 0x1AC + 0x6C = Terrain 0x218. (В бету добавлен ещё один
-// Move — ezy 0xF0 — но он стоит ДО полей PlayerInput, а не после них.)
+// Move — pLm 0xF0 — но он стоит ДО полей PlayerInput, а не после них.)
 inline constexpr std::uint64_t KCC_MOVE = 0x1AC;
 inline constexpr std::uint64_t KCC_VISIBILITY = 0x308; // public Visibility visibility; // 0x308 (0 = Visible, 1 = Hidden)
-inline constexpr std::uint64_t KCC_MOTOR_ENABLED = 0x30D; // KCC.ezv in dump.cs 11974
-inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE = 0x3C0; // KCC.eHw in dump.cs 11974
+inline constexpr std::uint64_t KCC_MOTOR_ENABLED = 0x30D; // KCC.plc in dump.cs 11977
+inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE = 0x3C0; // KCC.plV in dump.cs 11977
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD = game_offsets::KCC_MOVE_STATE_DEAD;
-// Значение Move не изменилось (struct Move, TypeDefIndex 4454): State 0x00,
-// Position 0x0C, RealVelocity 0x18 — dump.cs 11974.
+// Значение Move не изменилось (struct Move, TypeDefIndex 4452): State 0x00,
+// Position 0x0C, RealVelocity 0x18 — dump.cs 11977.
 inline constexpr std::uint64_t KCC_MOVE_STATE = game_offsets::KCC_MOVE_STATE;
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY = game_offsets::KCC_MOVE_REAL_VELOCITY;
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY_Y = game_offsets::KCC_MOVE_REAL_VELOCITY_Y;
@@ -432,7 +434,7 @@ inline constexpr std::uint64_t GAMEOBJECT_NAME_GUESS = game_offsets::GAMEOBJECT_
 inline constexpr std::uint64_t IL2CPP_LIST_ITEMS = game_offsets::IL2CPP_LIST_ITEMS;
 inline constexpr std::uint64_t IL2CPP_LIST_SIZE = game_offsets::IL2CPP_LIST_SIZE;
 inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = game_offsets::IL2CPP_ARRAY_FIRST_ELEMENT;
-inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE655F78;
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE646398;
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED = game_offsets::NETWORK_CLIENT_SPAWNED;
 inline constexpr std::uint64_t DICT_ENTRIES = game_offsets::DICT_ENTRIES;
 inline constexpr std::uint64_t DICT_COUNT = game_offsets::DICT_COUNT;
@@ -457,13 +459,13 @@ inline constexpr std::uint64_t PMK_HEALTH = game_offsets::PMK_HEALTH;
 inline constexpr std::uint64_t ARP_LATEST_VALUE = game_offsets::ARP_LATEST_VALUE;
 inline constexpr std::uint64_t HEALTH_VALUE = game_offsets::HEALTH_VALUE;
 inline constexpr std::uint64_t VITALS_MAX_HEALTH = game_offsets::VITALS_MAX_HEALTH;
-// Окно скана держится внутри .data и покрывает PlayerManager, gVF, jZ,
+// Окно скана держится внутри .data и покрывает PlayerManager, IWt, Gf,
 // WorldStreamingController и UniTask delay-promise TypeInfo slots.
-inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE650000;
-inline constexpr std::uint64_t TOD_SCAN_RVA_END = 0xE670000;
-// В 11974 TOD_Sky — jZ: static List<jZ> aeO at 0x0, Cycle at 0x40.
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE640000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END = 0xE660000;
+// В 11977 TOD_Sky — Gf: static List<Gf> Mpd at 0x0, Cycle at 0x40.
 // TOD_CycleParameters остаётся Hour 0x10, Day 0x14, Month 0x18, Year 0x1C.
-// script.json TypeInfoPointers: jZ_TypeInfo at 0xE65E1A0.
+// script.json TypeInfoPointers: Gf_TypeInfo at 0xE640D88.
 inline constexpr std::uint64_t TOD_SKY_CYCLE = game_offsets::TOD_SKY_CYCLE;
 inline constexpr std::uint64_t TOD_CYCLE_HOUR = game_offsets::TOD_CYCLE_HOUR;
 inline constexpr std::uint64_t TOD_CYCLE_DAY = game_offsets::TOD_CYCLE_DAY;
@@ -525,7 +527,7 @@ inline constexpr std::uint64_t GAME_CONTROLLER_NET_IDENTITY_FIELD = game_offsets
 // ---- VIEWMODEL: кастомный FOV и положение рук (Oxide.TransformOffset) -------
 // Oxide.TransformOffset поимённо совпал с релизом (m_LerpSpeed 0x20,
 // m_Position 0x24, кэш текущей позиции 0x44), поэтому правятся только слоты
-// самого Oxide.FPMotion — его перестройка сохраняется в dump.cs 11974:
+// самого Oxide.FPMotion — его перестройка сохраняется в dump.cs 11977:
 //   убраны m_MovementSway/m_RotationSway/aimScale/m_WalkBob/m_AimBob/m_RunBob/
 //   m_LandBob/m_MaxLandSpeed, на их место встал aimMotion (0x38);
 //   позы сдвинулись в начало класса: Idle 0x40, Run 0x48, RunReload 0x50,
@@ -533,12 +535,12 @@ inline constexpr std::uint64_t GAME_CONTROLLER_NET_IDENTITY_FIELD = game_offsets
 //   m_OnLadderOffset и m_JumpOffset ИСЧЕЗЛИ вовсе (их роль уехала в
 //   weaponBody 0x78);
 //   Player 0xE8 -> 0x120, ссылка на оружие 0xC8 -> 0xD0.
-inline constexpr std::uint64_t FPMANAGER_WORLD_FOV_TARGET = 0xAC; // было 0x9C; ONR
+inline constexpr std::uint64_t FPMANAGER_WORLD_FOV_TARGET = 0xAC; // was 0x9C; FPManager.cdf
 inline constexpr std::uint64_t FPOBJECT_DRAW_EVENT = game_offsets::FPOBJECT_DRAW_EVENT;
 inline constexpr std::uint64_t FPDRAW_ACTION = game_offsets::FPDRAW_ACTION;
 inline constexpr std::uint64_t DELEGATE_TARGET = game_offsets::DELEGATE_TARGET;
 inline constexpr std::uint64_t MULTICAST_DELEGATES = game_offsets::MULTICAST_DELEGATES;
-inline constexpr std::uint64_t FPMOTION_OBJECT = 0xD0;  // FPMotion.lry (FPObject)
+inline constexpr std::uint64_t FPMOTION_OBJECT = 0xD0;  // FPMotion.cqp (FPObject)
 inline constexpr std::uint64_t FPMOTION_PLAYER = 0x120; // FPMotion.Player
 inline constexpr std::uint64_t TRANSFORMOFFSET_POSITION = game_offsets::TRANSFORMOFFSET_POSITION;
 inline constexpr std::uint64_t TRANSFORMOFFSET_CURRENT_POSITION = game_offsets::TRANSFORMOFFSET_CURRENT_POSITION;
@@ -547,7 +549,7 @@ inline constexpr std::uint64_t FPMOTION_RUN_OFFSET = 0x48;
 inline constexpr std::uint64_t FPMOTION_RUN_RELOAD_OFFSET = 0x50;
 inline constexpr std::uint64_t FPMOTION_ATTACK_OFFSET = 0x58;
 inline constexpr std::uint64_t FPMOTION_AIM_OFFSET = 0x60;
-// m_OnLadderOffset и m_JumpOffset в 11974 не существуют. Слоты намеренно
+// m_OnLadderOffset и m_JumpOffset в 11977 не существуют. Слоты намеренно
 // указывают на профиль прицеливания: контроллер рук уже умеет отличать такую
 // ситуацию («префаб может делить TransformOffset между позами») и просто
 // пропускает слот, сняв с него владение, — вместо того, чтобы читать мусор и

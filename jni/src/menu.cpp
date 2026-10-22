@@ -105,6 +105,27 @@ static void CalibrationRow(const char* id, const char* label, int mode, const ch
     dl->AddLine({right - 3.f, cy}, {right - 8.f, cy + 5.f}, C::U(C::Acc()), 2.f);
 }
 
+// Вердикт скинченджера для меню. skin_block_text() (viewmodel.h) отдаёт тот же
+// текст, но голой строкой — для лога и CLI, где перевод не нужен. Здесь нужен
+// XS(), а он раскрывается в constexpr-лямбду и принимает ТОЛЬКО литерал, поэтому
+// маппинг перечислен вручную и литералы совпадают с skin_block_text() символ в
+// символ: одна русская строка — одна запись в lang_tables.inc.
+static const char* SkinBlockUi(viewmodel::SkinBlock block) {
+    switch (block) {
+        case viewmodel::SkinBlock::NoPlayer:    return XS("Нет локального игрока");
+        case viewmodel::SkinBlock::NoWeapon:    return XS("Оружие не найдено");
+        case viewmodel::SkinBlock::EmptyHands:  return XS("В руках пусто");
+        case viewmodel::SkinBlock::NoItemData:  return XS("Нет данных предмета");
+        case viewmodel::SkinBlock::NoSkins:     return XS("У предмета нет скинов");
+        case viewmodel::SkinBlock::BadIndex:    return XS("Индекс не подходит стволу");
+        case viewmodel::SkinBlock::Unreadable:  return XS("Поле скина не читается");
+        case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
+        case viewmodel::SkinBlock::Stuck:       return XS("Ствол не вернулся");
+        case viewmodel::SkinBlock::None:
+        default:                                return XS("Скин применён");
+    }
+}
+
 float TabContent(int tab, float dt, float cW) {
     float sY = ImGui::GetCursorPosY();
 
@@ -890,6 +911,25 @@ float TabContent(int tab, float dt, float cW) {
                              XS("Вьюха"), skinUi.fp_stale ? XS("старая") : XS("собрана"),
                              XS("Ассет"), skinUi.handle_live ? XS("загружен") : XS("не загружен"));
                 SHdr(skinLine, 4.f);
+
+                // Вердикт одной строкой и тост на его СМЕНУ: диагностика
+                // должна приходить сама, а не через команду в терминале. Тот же
+                // текст пишет skin_log.h в <каталог конфигов>/skin.log, поэтому
+                // строка в меню и лог не расходятся.
+                const viewmodel::SkinBlock skinBlock = viewmodel::skin_block(skinUi.stage);
+                static viewmodel::SkinBlock skinToasted = viewmodel::SkinBlock::None;
+                if (skinBlock != skinToasted) {
+                    if (skinBlock != viewmodel::SkinBlock::None ||
+                        skinToasted != viewmodel::SkinBlock::None)
+                        ShowToast(SkinBlockUi(skinBlock));
+                    skinToasted = skinBlock;
+                }
+                const char* skinVerdict =
+                    (skinBlock != viewmodel::SkinBlock::None) ? SkinBlockUi(skinBlock)
+                    : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
+                    : (skinUi.fp_stale)  ? XS("Скин записан — уберите и достаньте ствол")
+                                         : XS("Скин применён");
+                SHdr(skinVerdict, 4.f);
 
                 const char* const rebuildNow[] = {XS("Пересобрать сейчас")};
                 int skinAction = -1;

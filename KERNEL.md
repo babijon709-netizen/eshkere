@@ -223,8 +223,9 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 | `jni/src/silent_aim.cpp` | образец фонового потока с доступом через транспорт |
 | `jni/src/fast_loot_memory.h` | быстрый подбор: обход раннеров плеер-лупа UniTask, обнуление 0.35f задержек «Забрать все» (тик из `esp_viewmodel_tick`, память через `HeapMemory`/`g_mem`) |
 | `jni/src/no_recoil_memory.h` | «без отдачи»: гашение амплитуды в ассете `RecoilConfig` хитскан-ствола в руках (6 скаляр), сохранение/возврат оригиналов как у «нет разброса» (тик из `esp_viewmodel_tick`) |
-| `jni/src/skin_changer_memory.h` | скинченджер: `ItemData.skinData[WeaponPiece.Skin]`, запись индекса/уровня в SyncVar `PlayerWeapon.weaponPiece`, перечисление скинов и принудительный холстер/дроу (тик из `esp_viewmodel_tick`) |
-| `jni/src/skin_probe.h` | one-shot CLI `skins` (только чтение: список скинов ствола в руках) и `skin <индекс> [уровень] [--rebuild]` (запись); назначение транспорта + явный pre-bind шаг, как у `dump`/`skel` |
+| `jni/src/skin_changer_memory.h` | скинченджер: `ItemData.skinData[WeaponPiece.Skin]`, запись индекса/уровня в SyncVar `PlayerWeapon.weaponPiece`, перечисление скинов и принудительный холстер/дроу (тик из `esp_viewmodel_tick`); диагноз пишется сам в `CfgDir()/skin.log` (`skin_log.h`) и одной строкой в меню |
+| `jni/src/skin_log.h` | автолог скинченджера: `skinlog::Writer` пишет в `CfgDir()/skin.log` по одной строке на ИЗМЕНЕНИЕ состояния (причина остановки, вьюха, ассет, пересборка), ротация на 64 КБ; всё нужное приходит в `Snapshot`, поэтому класс проверен хост-тестом `jni/tests/test_skin_log.cpp`. Адаптер (каталог, часы, профиль, список скинов) — в `game_viewmodel.cpp` |
+| `jni/src/skin_probe.h` | one-shot CLI `skins` (только чтение: список скинов ствола в руках) и `skin <индекс> [уровень] [--rebuild]` (запись); назначение транспорта + явный pre-bind шаг, как у `dump`/`skel`; логи `skins_cli.log`/`skin_cli.log` — суффикс `_cli` обязателен, иначе `Log::open()` на `w` затирает автолог `skin.log` |
 | `jni/src/stealth.h` | маскировка процесса, unlink/restore бинарника, ptrace-слот |
 | `jni/src/metadata_dump.h` | one-shot CLI `dump`: дамп global-metadata, назначение транспорта + явный pre-bind шаг |
 | `jni/src/skeleton_diag.h` | one-shot CLI `skel`: диагностика скелетов, назначение транспорта + явный pre-bind шаг |

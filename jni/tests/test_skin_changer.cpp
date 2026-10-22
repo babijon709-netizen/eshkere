@@ -528,6 +528,57 @@ void test_beta_profile_layout() {
 }
 }  // namespace
 
+// Группировка стадий в причины (viewmodel.h). Её берут и меню, и автолог
+// skin.log, поэтому проверяем не «как-то работает», а что все 20 стадий куда-то
+// попадают, что у каждой из 9 причин свой непустой текст и что стадии одного
+// смысла не разъехались по разным причинам.
+void test_skin_block_grouping() {
+    using viewmodel::SkinBlock;
+    assert(viewmodel::skin_block(0) == SkinBlock::None);
+    assert(viewmodel::skin_block(21) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(-1) != SkinBlock::None);
+
+    const char* texts[16] = {};
+    int distinct = 0;
+    for (int stage = 1; stage <= 20; ++stage) {
+        const SkinBlock b = viewmodel::skin_block(stage);
+        assert(b != SkinBlock::None);
+        const char* text = viewmodel::skin_block_text(b);
+        assert(text && text[0]);
+        bool seen = false;
+        for (int i = 0; i < distinct; ++i) if (texts[i] == text) { seen = true; break; }
+        if (!seen) {
+            assert(distinct < (int)(sizeof(texts) / sizeof(texts[0])));
+            texts[distinct++] = text;
+            for (int i = 0; i < distinct - 1; ++i)
+                assert(std::strcmp(texts[i], text) != 0);   // формулировки не дублируются
+        }
+    }
+    assert(distinct == 9);      // ровно 9 причин, ни одна стадия не потерялась
+
+    // Конкретные соответствия, которые видит пользователь.
+    assert(viewmodel::skin_block(5)  == SkinBlock::NoWeapon);
+    assert(viewmodel::skin_block(13) == SkinBlock::BadIndex);
+    assert(viewmodel::skin_block(18) == SkinBlock::Stuck);
+    assert(viewmodel::skin_block(10) == SkinBlock::NoItemData);
+    // Чтение и запись — разные причины: «не прочиталось» и «не записалось»
+    // лечатся по-разному, смешивать их нельзя.
+    assert(viewmodel::skin_block(14) == viewmodel::skin_block(15));
+    assert(viewmodel::skin_block(19) == viewmodel::skin_block(14));
+    assert(viewmodel::skin_block(16) == viewmodel::skin_block(17));
+    assert(viewmodel::skin_block(20) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(16) != viewmodel::skin_block(14));
+    // Пустые руки и «нет скинов у предмета» — тоже разные вещи.
+    assert(viewmodel::skin_block(6) == SkinBlock::EmptyHands);
+    assert(viewmodel::skin_block(11) == SkinBlock::NoSkins);
+    assert(viewmodel::skin_block(6) != viewmodel::skin_block(11));
+    // Нет игрока — одна причина на все стадии поиска игрока.
+    for (int stage = 1; stage <= 4; ++stage)
+        assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
+    assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
+    std::printf("  skin_block: 20 stages -> 9 distinct causes, texts unique\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -549,6 +600,7 @@ int main() {
     test_write_failure_is_reported();
     test_sanitize_bounds();
     test_beta_profile_layout();
+    test_skin_block_grouping();
     std::printf("OK\n");
     return 0;
 }

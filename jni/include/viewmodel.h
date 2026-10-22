@@ -194,6 +194,56 @@ struct SkinEntryView {
     char     base_id[32] = {};       // SkinData.baseId — id базового предмета
 };
 
+// Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
+// контроллера двадцать (skin_changer_memory.h), но игроку нужно не «стадия 13»,
+// а что делать. Детальная расшифровка для CLI и разработчика —
+// skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь,
+// чтобы меню и лог брали одну и ту же формулировку, а не две свои.
+enum class SkinBlock : int {
+    None = 0,        // порядок, скин применён
+    NoPlayer,        // нет локального игрока
+    NoWeapon,        // компонент оружия не найден
+    EmptyHands,      // в руках пусто
+    NoItemData,      // нет данных предмета
+    NoSkins,         // у предмета нет массива скинов
+    BadIndex,        // выбранный индекс не подходит этому стволу
+    Unreadable,      // поле скина не читается
+    WriteFailed,     // запись не подтвердилась чтением обратно
+    Stuck,           // ствол не вернулся из холстера
+};
+inline SkinBlock skin_block(int stage) {
+    switch (stage) {
+        case 0:                                   return SkinBlock::None;
+        case 1:  case 2:  case 3:  case 4:        return SkinBlock::NoPlayer;
+        case 5:                                   return SkinBlock::NoWeapon;
+        case 6:  case 7:  case 8:  case 9:        return SkinBlock::EmptyHands;
+        case 10:                                  return SkinBlock::NoItemData;
+        case 11: case 12:                         return SkinBlock::NoSkins;
+        case 13:                                  return SkinBlock::BadIndex;
+        case 14: case 15: case 19:                return SkinBlock::Unreadable;
+        case 16: case 17: case 20:                return SkinBlock::WriteFailed;
+        case 18:                                  return SkinBlock::Stuck;
+        default:                                  return SkinBlock::NoPlayer;
+    }
+}
+// Русские строки: меню пропускает их через XS() (перевод в lang_tables.inc),
+// автолог пишет как есть — весь остальной вывод чита тоже на русском.
+inline const char* skin_block_text(SkinBlock block) {
+    switch (block) {
+        case SkinBlock::None:        return "Применено";
+        case SkinBlock::NoPlayer:    return "Нет локального игрока";
+        case SkinBlock::NoWeapon:    return "Оружие не найдено";
+        case SkinBlock::EmptyHands:  return "В руках пусто";
+        case SkinBlock::NoItemData:  return "Нет данных предмета";
+        case SkinBlock::NoSkins:     return "У предмета нет скинов";
+        case SkinBlock::BadIndex:    return "Индекс не подходит стволу";
+        case SkinBlock::Unreadable:  return "Поле скина не читается";
+        case SkinBlock::WriteFailed: return "Запись не подтвердилась";
+        case SkinBlock::Stuck:       return "Ствол не вернулся";
+        default:                     return "";
+    }
+}
+
 // Снимок состояния для меню: заполняется контроллером (skin_changer_memory.h)
 // и не делает дополнительных обращений к памяти игры на каждый кадр меню.
 struct SkinUiInfo {
@@ -207,6 +257,9 @@ struct SkinUiInfo {
     Status status = Status::Off;
     char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках
 };
+// Подробности выбранного скина (id, тип, уровни, готовность ассета) в снимок не
+// дублируются: и меню, и автолог берут их из esp_skin_entries() по индексу —
+// один источник, а не два, которые могут разойтись.
 }
 
 // Список скинов предмета в руках (кэш контроллера, не чтение памяти на вызов).
@@ -222,7 +275,7 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage);
 // автоматически при смене индекса».
 void esp_skin_request_rebuild();
 // Одноразовый запрос перечитать список скинов. Ставится меню, пока раздел
-// раскрыт, и CLI `skins`: перечитывание读 строки посимвольно, поэтому по
+// раскрыт, и CLI `skins`: перечитывание читает строки посимвольно, поэтому по
 // запросу, а не каждый тик. Работает и при выключенном тумблере — список
 // показывается до включения, записей при этом нет.
 void esp_skin_request_scan();

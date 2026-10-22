@@ -7,7 +7,9 @@
 #include "no_ballistics_memory.h"
 #include "object_data_memory.h"
 #include "skin_changer_memory.h"
+#include "skin_log.h"
 #include "app_state.h"
+#include "config.h"          // CfgDir() для автолога скинов (skin_log.h)
 #include "farm.h"
 #include "maps_lookup.h"
 #include <chrono>
@@ -339,6 +341,40 @@ no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
 skinchanger::Controller<HeapMemory> skin_ctl(heap_memory);
 
+// ---- Автолог скинченджера: skinlog::Writer (skin_log.h) ---------------------
+//
+// Здесь только адаптер — он подставляет то, что знает исключительно этот TU:
+// каталог конфигов, часы, имя профиля и список скинов из контроллера. Сами
+// строки, дедупликация по изменениям и ротация файла живут в skin_log.h и
+// покрыты хост-тестом jni/tests/test_skin_log.cpp.
+//
+// Зачем он вообще: ответ на «применился ли скин» нужен, когда игрок просто
+// включил тумблер и играет, а не когда он вспомнил про терминал. Команды
+// skins/skin остались одноразовой проверкой до включения, а диагноз пишется сам.
+skinlog::Writer skin_log_writer;
+
+class SkinLog {
+public:
+    void reset() { skin_log_writer.reset(); }
+    void note(uint64_t session, bool enabled, bool bound, const viewmodel::SkinUiInfo& ui) {
+        viewmodel::SkinEntryView entries[viewmodel::kSkinEntryMax];
+        skinlog::Snapshot s;
+        s.session = session;
+        s.enabled = enabled;
+        s.bound = bound;
+        s.ui = ui;
+        s.entries = entries;
+        s.count = skin_ctl.entries(entries, viewmodel::kSkinEntryMax);
+        s.want_index = viewmodel::sanitize(g_state.viewmodel).skin_index;
+        s.profile = go_active::VersionName();
+        s.dir = CfgDir();
+        s.now = memio::now_seconds();
+        skin_log_writer.note(s);
+    }
+};
+
+SkinLog skin_log;
+
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
 // fast_fire_memory.h). Стадия 0 + не-Active — ожидание привязки/игрока.
@@ -564,6 +600,7 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!skin_ctl.reset(restore && g_mem.bound()))
         ;
+    skin_log.reset();
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -588,6 +625,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         skin_ctl.reset(false);
         skin_ctl.status = settings.skin_enabled ? viewmodel::Status::Waiting : viewmodel::Status::Off;
+        skin_log.note(epoch, settings.skin_enabled, false, skin_ctl.ui());
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -655,6 +693,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
             skin_ctl.tick(epoch, g_il2cpp_base, 0, settings);
+            skin_log.note(epoch, settings.skin_enabled, true, skin_ctl.ui());
             return;
         }
         local_source_failed=false;
@@ -680,6 +719,10 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
         no_ballistics_ctl.tick(epoch, g_il2cpp_base, player, settings.no_ballistics);
         skin_ctl.tick(epoch, g_il2cpp_base, player, settings);
+        // Автолог — внутри того же блока и под тем же мьютексом: строки
+        // появляются только когда тикался сам контроллер (раз в 100 мс),
+        // а не на каждый кадр оверлея.
+        skin_log.note(epoch, settings.skin_enabled, true, skin_ctl.ui());
     }
     {
         // Log no-spread resolution changes only.

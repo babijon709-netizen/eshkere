@@ -35,6 +35,11 @@
 // откатывается на выходе: смысл команды в том, чтобы игра подхватила его уже
 // после завершения процесса.
 //
+// Логи этих команд — skins_cli.log и skin_cli.log в каталоге конфигов. Суффикс
+// _cli обязателен: рядом живёт skin.log, который ведёт сам чит (skin_log.h),
+// а metadump::Log::open() открывает файл на "w" и стёр бы его в первый же вызов
+// команды.
+//
 // Коды выхода: 0 — порядок, 1 — игра не найдена или транспорт не привязался,
 // 2 — привязались, но контроллер не дошёл до списка/записи (стадия в выводе),
 // 3 — esp_init не подтвердил игру, 4 — у предмета в руках нет скинов,
@@ -246,7 +251,7 @@ inline int List(int argc, char* argv[]) {
 
     mkdir(CfgDir(), 0777);
     metadump::Log log;
-    log.open((std::string(CfgDir()) + "/skins.log").c_str());
+    log.open((std::string(CfgDir()) + "/skins_cli.log").c_str());
     log.say("== benzware skins: скины ствола в руках ==");
     log.say("uid/euid : %d / %d%s", (int)getuid(), (int)geteuid(),
             geteuid() == 0 ? " (root)" : "  <-- НЕ ROOT");
@@ -263,7 +268,7 @@ inline int List(int argc, char* argv[]) {
     PrintUi(log, ui);
     log.say("дальше   : benzware skin <индекс> — записать, затем в игре "
             "убрать/достать ствол");
-    log.say("== конец (код %d) ==, лог %s/skins.log", rc_entries, CfgDir());
+    log.say("== конец (код %d) ==, лог %s/skins_cli.log", rc_entries, CfgDir());
     return rc_entries;
 }
 
@@ -277,7 +282,7 @@ inline int Set(int argc, char* argv[]) {
 
     mkdir(CfgDir(), 0777);
     metadump::Log log;
-    log.open((std::string(CfgDir()) + "/skin.log").c_str());
+    log.open((std::string(CfgDir()) + "/skin_cli.log").c_str());
     log.say("== benzware skin: запись индекса %d (уровень %d%s) ==",
             options.index, options.level, options.rebuild ? ", с пересборкой" : "");
     log.say("uid/euid : %d / %d%s", (int)getuid(), (int)geteuid(),
@@ -351,7 +356,7 @@ inline int Set(int argc, char* argv[]) {
                 "процессом не поднять.");
     // Намеренно БЕЗ esp_viewmodel_reset(true): записанное должно пережить
     // завершение этого процесса, иначе игра ничего не успеет подхватить.
-    log.say("== конец (код 0) ==, лог %s/skin.log", CfgDir());
+    log.say("== конец (код 0) ==, лог %s/skin_cli.log", CfgDir());
     return 0;
 }
 

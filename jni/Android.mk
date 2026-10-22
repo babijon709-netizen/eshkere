@@ -4,7 +4,15 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := benzware
 
-_CF := -O3 -ffast-math -march=armv8-a+simd \
+# Штамп сборки (commit + UTC-время): попадает в шапку skin.log, чтобы лог с
+# устройства однозначно сопоставлялся со сборкой. Устройство уже дважды
+# прошивалось устаревшим artifact'ом, и версию приходилось угадывать по
+# формулировкам строк.
+_BUILD_SHA  := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
+_BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+_CF := -DBENZWARE_BUILD_SHA=\"$(_BUILD_SHA)\" -DBENZWARE_BUILD_DATE=\"$(_BUILD_DATE)\" \
+       -O3 -ffast-math -march=armv8-a+simd \
        -fomit-frame-pointer -ffunction-sections -fdata-sections \
        -fvisibility=hidden -fvisibility-inlines-hidden \
        -DUSE_OPENGL -DIMGUI_IMPL_OPENGL_ES3 -DNDEBUG \

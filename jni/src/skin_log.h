@@ -50,6 +50,7 @@ struct Snapshot {
     int count = 0;              // сколько элементов в entries
     int want_index = 0;         // индекс из настроек (уже sanitize-нутый)
     const char* profile = "?";  // go_active::VersionName()
+    const char* build = "";     // штамп сборки (commit + дата), пустой = не знать
     const char* dir = "";       // CfgDir()
     double now = 0;             // memio::now_seconds()
 };
@@ -150,8 +151,14 @@ inline void Writer::note(const Snapshot& s) {
     if (enabled_ != 1) {
         enabled_ = 1;
         if (!ensure_open(s)) return;
-        say(s, "== skin.log: профиль %s, сессия %llu ==", s.profile,
-            (unsigned long long)s.session);
+        // Штамп сборки в шапке: по нему лог устройства сверяется с коммитом,
+        // без гадания по формулировкам строк.
+        if (s.build && s.build[0])
+            say(s, "== skin.log: профиль %s, сессия %llu, сборка %s ==", s.profile,
+                (unsigned long long)s.session, s.build);
+        else
+            say(s, "== skin.log: профиль %s, сессия %llu ==", s.profile,
+                (unsigned long long)s.session);
     }
     if (!ensure_open(s)) return;
 

@@ -476,6 +476,24 @@ void test_view_line_gated_by_stage() {
     std::printf("  'view built' line waits for stage 0; 'stale' line reports anyway\n");
 }
 
+// Штамп сборки в шапке: лог с устройства должен однозначно говорить, какая
+// сборка его писала (устройство дважды прошивалось устаревшим артефактом).
+void test_build_stamp_in_header() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    s.build = "c75ec59 2026-10-22T08:52:02Z";
+    w.note(s);
+    const std::string text = slurp(log_path());
+    assert(count_of(text, "== skin.log: профиль release, сессия 1, сборка c75ec59 2026-10-22T08:52:02Z ==") == 1);
+    // Без штампа (хост/старые снимки) шапка остаётся прежней.
+    fresh();
+    skinlog::Writer w2;
+    w2.note(make_snap(0.0));
+    assert(count_of(slurp(log_path()), "== skin.log: профиль release, сессия 1 ==") == 1);
+    std::printf("  build stamp: in header when known, absent when not\n");
+}
+
 void test_unwritable_dir_is_survivable() {
     skinlog::Writer w;
     skinlog::Snapshot s = make_snap(0.0);
@@ -504,6 +522,7 @@ int main() {
     test_unidentified_kind_no_asset_claim();
     test_local_head_line();
     test_view_line_gated_by_stage();
+    test_build_stamp_in_header();
     test_unwritable_dir_is_survivable();
     ::unlink(log_path().c_str());
     std::printf("OK\n");

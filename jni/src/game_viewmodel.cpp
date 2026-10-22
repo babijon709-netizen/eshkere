@@ -351,6 +351,14 @@ skinchanger::Controller<HeapMemory> skin_ctl(heap_memory);
 // Зачем он вообще: ответ на «применился ли скин» нужен, когда игрок просто
 // включил тумблер и играет, а не когда он вспомнил про терминал. Команды
 // skins/skin остались одноразовой проверкой до включения, а диагноз пишется сам.
+// Штамп сборки задаёт jni/Android.mk (git commit + UTC-время ndk-build).
+// Вне Android-сборки (хост-тесты этот TU не компилируют) — честное «dev».
+#ifndef BENZWARE_BUILD_SHA
+#define BENZWARE_BUILD_SHA "dev"
+#define BENZWARE_BUILD_DATE "local"
+#endif
+static constexpr char kBuildTag[] = BENZWARE_BUILD_SHA " " BENZWARE_BUILD_DATE;
+
 skinlog::Writer skin_log_writer;
 
 class SkinLog {
@@ -367,6 +375,7 @@ public:
         s.count = skin_ctl.entries(entries, viewmodel::kSkinEntryMax);
         s.want_index = viewmodel::sanitize(g_state.viewmodel).skin_index;
         s.profile = go_active::VersionName();
+        s.build = kBuildTag;
         s.dir = CfgDir();
         s.now = memio::now_seconds();
         skin_log_writer.note(s);

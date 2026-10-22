@@ -80,7 +80,7 @@ private:
     // Снимок того, о чём уже сообщали: строка пишется только по расхождению.
     // Начальные значения заведомо «невозможные», чтобы первое же сравнение
     // дало строку, а не тишину.
-    int  enabled_ = -1, skin_ = -2, level_ = -2, count_ = -2, stage_ = -2;
+    int  enabled_ = -1, skin_ = -2, level_ = -2, count_ = -2, stage_ = -2, known_ = -1;
     // stale_/handle_ стартуют с «неизвестно», чтобы первый же тик отчитался о
     // состоянии вьюхи и ассета. rebuild_ стартует с нуля: «ствол возвращён»
     // имеет смысл только как КОНЕЦ цикла пересборки, а не как новость о том,
@@ -94,7 +94,7 @@ private:
         open_tried_ = false;
     }
     void clear_snapshot() {
-        enabled_ = -1; skin_ = level_ = count_ = stage_ = -2;
+        enabled_ = -1; skin_ = level_ = count_ = stage_ = -2; known_ = -1;
         stale_ = handle_ = -1; rebuild_ = 0;
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
@@ -163,12 +163,14 @@ inline void Writer::note(const Snapshot& s) {
     }
     count_ = s.ui.count;
 
-    // Что реально лежит в SyncVar. Пишем только когда игра подтвердила чтение
-    // (стадия 0): иначе цифры были бы из прошлого ствола.
-    if (s.ui.skin != skin_ || s.ui.level != level_) {
-        skin_ = s.ui.skin; level_ = s.ui.level;
-        if (s.ui.stage == 0 && s.ui.count > 0)
-            say(s, "в памяти игры Skin=%d SkinLevel=%d", s.ui.skin, s.ui.level);
+    // Что реально лежит в SyncVar — в том числе когда запись не удалась: это
+    // главная строка диагноза. Отрицательный Skin у ствола без скина показывается
+    // как есть, а «не прочиталось» отличается от значения отдельной строкой.
+    const int known = s.ui.piece_read ? 1 : 0;
+    if (known != known_ || (known && (s.ui.skin != skin_ || s.ui.level != level_))) {
+        known_ = known; skin_ = s.ui.skin; level_ = s.ui.level;
+        if (known) say(s, "в памяти игры Skin=%d SkinLevel=%d", s.ui.skin, s.ui.level);
+        else say(s, "в памяти игры Skin/SkinLevel не прочитались");
     }
 
     // Причина остановки — главное, ради чего лог существует.

@@ -96,13 +96,15 @@ template<class T> struct Slot {
         out = {};
         return address >= 0x10000 && io.read(address, out);
     }
-    template<class IO> bool sample(IO& io, uint64_t addr) {
-        T current{};
-        if (addr < 0x10000 || !io.read(addr, current) || !viewmodel::valid(current)) return false;
+    // Значение уже прочитано (голова WeaponPiece берётся одним запросом, см.
+    // read_piece), поэтому ни чтения, ни проверки значения на диапазон здесь
+    // нет. Адрес доказывает структура piece, а сам Skin у ствола без скина
+    // legitimately отрицательный — range-проверка прочитанного значения и
+    // ставила скинченджер на «поле скина не читается» на исправном билде.
+    void sample_value(uint64_t addr, T current) {
         // Оригиналом считается то, что лежит в поле, пока это НЕ наша запись.
         if (!owned || address != addr || !same(current, last)) original = current;
         address = addr; sampled = current; fresh = true;
-        return true;
     }
     template<class IO> bool put(IO& io, T value) {
         if (!viewmodel::valid(value) || address < 0x10000) return false;
@@ -126,6 +128,66 @@ template<class T> struct Slot {
         return true;
     }
 };
+
+// Oxide.WeaponPiece как он лежит внутри PlayerWeapon. В релизе 0x10 байт, в бете
+// 0x18 (добавился EmptyHands 0x10), но интересующая нас голова Enabled..Loaded
+// — первые 8 байт в обоих профилях, поэтому размер берётся из профиля, а
+// проверяется только голова.
+struct Piece {
+    uint8_t enabled = 0;   // 0x0 bool
+    int16_t number = 0;    // 0x2 номер предмета (item id из EG.Rpc/Rpk)
+    int16_t skin = 0;      // 0x4 индекс в ItemData.skinData[] этого предмета
+    uint8_t level = 0;     // 0x6 уровень WeaponProgressionSkinData
+    uint8_t loaded = 0;    // 0x7 bool, «визуал скина загружен»
+};
+
+enum class PieceRead : int {
+    Ok = 0,
+    Unreadable,   // транспорт не смог прочитать голову: адрес/привязка
+    NotAPiece,    // прочиталось, но это не WeaponPiece: оффсет не от этого билда
+};
+
+// Номер предмета — короткий id из таблицы EG.Rpc. Верхняя граница взята с
+// большим запасом: её задача отсечь мусор по неверному адресу, а не описать
+// реальное количество предметов.
+inline constexpr int kPieceNumberMax = 4095;
+// Голова piece — Enabled 0x0, Number 0x2, Skin 0x4, SkinLevel 0x6, Loaded 0x7:
+// 8 байт, одинаковые в релизе (sizeof 0x10) и в бете (0x18, добавился EmptyHands
+// 0x10). Читаем ровно её: хвост (Mods/EmptyHands) не нужен, а лишние байты —
+// лишний шанс упереться в конец отображения.
+inline constexpr size_t kPieceHead = 8;
+
+// Голова piece ОДНИМ чтением. Три отдельных чтения int16/uint8 стоили бы трёх
+// обращений к транспорту на тик и могли бы прийти из разных состояний поля
+// (игра пересинкивает SyncVar между чтениями).
+//
+// Адрес доказывается СТРУКТУРОЙ, а не диапазоном skin: Enabled и Loaded — bool,
+// обязаны быть 0/1, Number — неотрицательный короткий id. Такое доказательство
+// не отвергает легитимные значения Skin (отрицательное «скина нет», индекс
+// больше 63 у предмета с большим набором), в отличие от range-проверки самого
+// поля, из-за которой исправный билд выглядел как «поле не читается».
+template<class IO>
+PieceRead read_piece(IO& io, uint64_t addr, Piece& out) {
+    using namespace go_active;
+    out = {};
+    if (addr < 0x10000) return PieceRead::Unreadable;
+    // Профиль обязан описывать голову внутри этих 8 байт: иначе раскладка чужая,
+    // и это NotAPiece, а не выход за границу буфера.
+    if (WEAPONPIECE_ENABLED >= kPieceHead || WEAPONPIECE_SKIN_LEVEL >= kPieceHead ||
+        WEAPONPIECE_LOADED >= kPieceHead || WEAPONPIECE_NUMBER + 1 >= kPieceHead ||
+        WEAPONPIECE_SKIN + 1 >= kPieceHead)
+        return PieceRead::NotAPiece;
+    uint8_t raw[kPieceHead] = {};
+    if (!io.read_range(addr, raw, kPieceHead)) return PieceRead::Unreadable;
+    out.enabled = raw[WEAPONPIECE_ENABLED];
+    out.loaded  = raw[WEAPONPIECE_LOADED];
+    out.level   = raw[WEAPONPIECE_SKIN_LEVEL];
+    std::memcpy(&out.number, raw + WEAPONPIECE_NUMBER, sizeof(out.number));
+    std::memcpy(&out.skin,   raw + WEAPONPIECE_SKIN,   sizeof(out.skin));
+    if (out.enabled > 1 || out.loaded > 1) return PieceRead::NotAPiece;
+    if (out.number < 0 || out.number > kPieceNumberMax) return PieceRead::NotAPiece;
+    return PieceRead::Ok;
+}
 
 struct Context {
     Identity player, weapon, fp, fp_object, item, item_data, skins;
@@ -286,6 +348,7 @@ template<class IO> class Controller {
     int  entry_count_ = 0;
     char weapon_name_[48] = {};
     int  live_skin_ = -1, live_level_ = -1;
+    bool piece_read_ = false;   // live_skin_/live_level_ действительно прочитаны
     bool fp_stale_ = false, handle_live_ = false;
 
     int stage_ = 0;
@@ -410,23 +473,29 @@ template<class IO> class Controller {
     }
 
     // Что сейчас в памяти игры: индекс, уровень, свежесть FP-вьюхи и ручки.
-    void read_live_state() {
+    // piece передаётся, когда голова уже прочитана (путь записи), и читается
+    // здесь, когда нет (перечитывание списка при выключенном тумблере). Skin
+    // показывается как есть, в том числе отрицательный «скина нет»: раньше
+    // значение фильтровалось по знаку, и -1 в памяти было не отличить от
+    // «не прочиталось».
+    void read_live_state(const Piece* piece = nullptr) {
         using namespace go_active;
-        live_skin_ = live_level_ = -1;
+        Piece local;
+        if (!piece)
+            piece = (read_piece(io, context_.piece, local) == PieceRead::Ok) ? &local : nullptr;
+        piece_read_ = piece != nullptr;
+        live_skin_ = piece ? piece->skin : -1;
+        live_level_ = piece ? piece->level : -1;
         fp_stale_ = handle_live_ = false;
-        int16_t skin = 0;
-        uint8_t level = 0;
-        if (io.read(context_.piece + WEAPONPIECE_SKIN, skin) && skin >= 0) live_skin_ = skin;
-        if (io.read(context_.piece + WEAPONPIECE_SKIN_LEVEL, level)) live_level_ = level;
         uint64_t model = 0;
         if (pointer(io, context_.weapon.object + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL, model))
             handle_live_ = (model != 0);
         // Копия piece, ИЗ КОТОРОЙ FP-вьюха действительно построена: пока её
         // индекс не равен нашему, визуал старый (пересборки ещё не было).
-        if (context_.fp_view >= 0x10000 && live_skin_ >= 0) {
-            int16_t view_skin = 0;
-            if (io.read(context_.fp_view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN, view_skin))
-                fp_stale_ = (view_skin != (int16_t)live_skin_);
+        if (piece && context_.fp_view >= 0x10000) {
+            Piece view_piece;
+            if (read_piece(io, context_.fp_view + FPWEAPONVIEW_PIECE, view_piece) == PieceRead::Ok)
+                fp_stale_ = (view_piece.skin != piece->skin);
         }
     }
 
@@ -463,6 +532,7 @@ public:
         info.count = entry_count_;
         info.skin = live_skin_;
         info.level = live_level_;
+        info.piece_read = piece_read_;
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
         info.rebuild_busy = rebuild_ > 0;
@@ -482,6 +552,7 @@ public:
         for (auto& e : entries_) e = {};
         weapon_name_[0] = '\0';
         live_skin_ = live_level_ = -1;
+        piece_read_ = false;
         fp_stale_ = handle_live_ = false;
         session_ = base_ = 0;
         status = viewmodel::Status::Off;
@@ -504,6 +575,7 @@ public:
             else { applied_index_ = applied_level_ = -1; rebuild_ = 0; }
             if (!has_state()) {
                 live_skin_ = live_level_ = -1;
+                piece_read_ = false;
                 fp_stale_ = handle_live_ = false;
             }
             // Выключенная функция не пишет НИЧЕГО, но список по явному запросу
@@ -564,12 +636,22 @@ public:
         }
         if (!index_known) { status = Status::Failed; stage_ = 13; return; }
 
-        if (!skin_.sample(io, context_.piece + go_active::WEAPONPIECE_SKIN)) {
-            status = Status::Failed; stage_ = 14; return;
+        Piece piece;
+        const PieceRead piece_read = read_piece(io, context_.piece, piece);
+        if (piece_read != PieceRead::Ok) {
+            // При NotAPiece сырые значения всё равно показываются: мусорный
+            // Skin в логе и в меню видно глазами, и это отличает «оффсет не от
+            // этого билда» от «транспорт не читает».
+            piece_read_ = (piece_read == PieceRead::NotAPiece);
+            live_skin_ = piece_read_ ? piece.skin : -1;
+            live_level_ = piece_read_ ? piece.level : -1;
+            status = Status::Failed;
+            stage_ = (piece_read == PieceRead::Unreadable) ? 14 : 15;
+            return;
         }
-        if (!level_.sample(io, context_.piece + go_active::WEAPONPIECE_SKIN_LEVEL)) {
-            status = Status::Failed; stage_ = 15; return;
-        }
+        skin_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN, piece.skin);
+        level_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN_LEVEL, piece.level);
+        enabled_.sample_value(context_.piece + go_active::WEAPONPIECE_ENABLED, piece.enabled);
         const int16_t want_skin = (int16_t)s.skin_index;
         uint8_t want_level = (uint8_t)(s.skin_level < levels ? s.skin_level : levels - 1);
         if (!skin_.put(io, want_skin)) { status = Status::Failed; stage_ = 16; return; }
@@ -577,7 +659,13 @@ public:
         // Снимок ДЛЯ МЕНЮ снимается после записи: иначе первый же тик показывал
         // бы значение до применения, и «индекс записался» было не отличить от
         // «индекс не записался» (обе строки выглядели как старый скин).
-        read_live_state();
+        // put() подтвердил каждую запись чтением обратно, поэтому локальная
+        // копия головы отражает память точно: перечитывать её не нужно. А
+        // сравнивать вьюху со значением ДО записи — значит всегда видеть
+        // «не устарела» (fp_stale_ навсегда остался бы false).
+        piece.skin = want_skin;
+        piece.level = want_level;
+        read_live_state(&piece);
 
         // ---- принудительная пересборка -----------------------------------
         const bool changed = applied_index_ != s.skin_index || applied_level_ != want_level;
@@ -590,12 +678,10 @@ public:
                 if (!enabled_.restore(io)) { status = Status::Failed; stage_ = 18; return; }
             }
         } else if (want_rebuild && !rebuild_armed_) {
-            if (!enabled_.sample(io, context_.piece + go_active::WEAPONPIECE_ENABLED)) {
-                status = Status::Failed; stage_ = 19; return;
-            }
+            // Enabled пришёл в той же голове piece — отдельного чтения нет.
             // Уже убрано (Enabled == 0) — гасить нечего, ждём дроу игры.
-            if (enabled_.sampled != 0) {
-                if (!enabled_.put(io, (uint8_t)0)) { status = Status::Failed; stage_ = 20; return; }
+            if (piece.enabled != 0) {
+                if (!enabled_.put(io, (uint8_t)0)) { status = Status::Failed; stage_ = 19; return; }
                 rebuild_ = kRebuildHoldTicks;
             }
             rebuild_armed_ = true;

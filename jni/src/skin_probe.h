@@ -211,7 +211,10 @@ inline void PrintUi(metadump::Log& log, const viewmodel::SkinUiInfo& ui) {
     const viewmodel::Status status = ui.status;
     log.say("предмет  : %s", ui.weapon[0] ? ui.weapon : "(не прочитан)");
     log.say("скинов   : %d", ui.count);
-    log.say("в памяти : Skin=%d SkinLevel=%d", ui.skin, ui.level);
+    if (ui.piece_read)
+        log.say("в памяти : Skin=%d SkinLevel=%d", ui.skin, ui.level);
+    else
+        log.say("в памяти : Skin/SkinLevel не прочитались (голова WeaponPiece)");
     log.say("вьюха    : %s", ui.fp_stale
             ? "FP-вьюха собрана из ДРУГОГО индекса (пересборки ещё не было)"
             : "FP-вьюха собрана из текущего индекса");

@@ -118,7 +118,8 @@ static const char* SkinBlockUi(viewmodel::SkinBlock block) {
         case viewmodel::SkinBlock::NoItemData:  return XS("Нет данных предмета");
         case viewmodel::SkinBlock::NoSkins:     return XS("У предмета нет скинов");
         case viewmodel::SkinBlock::BadIndex:    return XS("Индекс не подходит стволу");
-        case viewmodel::SkinBlock::Unreadable:  return XS("Поле скина не читается");
+        case viewmodel::SkinBlock::Unreadable:  return XS("WeaponPiece не читается");
+        case viewmodel::SkinBlock::WrongLayout: return XS("Оффсеты WeaponPiece не от этого билда");
         case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
         case viewmodel::SkinBlock::Stuck:       return XS("Ствол не вернулся");
         case viewmodel::SkinBlock::None:

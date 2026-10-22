@@ -42,6 +42,13 @@ struct FakeIO {
         put(a, v);
         return true;
     }
+    // Диапазонное чтение: голова WeaponPiece берётся одним запросом (8 байт).
+    bool read_range(uint64_t a, void* out, std::size_t size) {
+        auto* bytes = static_cast<uint8_t*>(out);
+        for (std::size_t i = 0; i < size; ++i)
+            if (!read(a + i, bytes[i])) return false;
+        return true;
+    }
     bool named(uint64_t a, const char* n, const char* ns) {
         auto it = types.find(a);
         return it != types.end() && it->second.first == n && it->second.second == ns;
@@ -132,8 +139,18 @@ struct Fixture {
         // Копия piece, из которой FP-вьюха построена: индекс совпадает с
         // исходным, то есть на старте визуал НЕ устарел.
         io.plain(fp_view);
+        // Голова piece читается ОДНИМ запросом на 8 байт, поэтому отображены
+        // должны быть все байты, включая паддинг между Enabled (0x0) и
+        // Number (0x2) — в живой памяти он есть, а в плоской карте FakeIO нет.
+        for (uint64_t off = 0; off < (uint64_t)skinchanger::kPieceHead; ++off) {
+            io.put<uint8_t>(view_piece() + off, 0);
+            io.put<uint8_t>(piece() + off, 0);
+        }
+        io.put<uint8_t>(view_piece() + WEAPONPIECE_ENABLED, 1);
+        io.put<int16_t>(view_piece() + WEAPONPIECE_NUMBER, 114);
         io.put<int16_t>(view_piece() + WEAPONPIECE_SKIN, original_skin);
         io.put<uint8_t>(view_piece() + WEAPONPIECE_SKIN_LEVEL, original_level);
+        io.put<uint8_t>(view_piece() + WEAPONPIECE_LOADED, 1);
         // Сам SyncVar.
         io.put<uint8_t>(piece() + WEAPONPIECE_ENABLED, 1);
         io.put<int16_t>(piece() + WEAPONPIECE_NUMBER, 114);
@@ -528,19 +545,92 @@ void test_beta_profile_layout() {
 }
 }  // namespace
 
+// ---- Отрицательный Skin в памяти: «скина нет», а не «не читается» ----------
+void test_negative_skin_is_accepted() {
+    Fixture f;
+    // У ствола без надетого скина в SyncVar лежит отрицательное значение.
+    // Range-проверка прочитанного значения резала его, и скинченджер вставал на
+    // «поле скина не читается» на полностью исправном билде.
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, -1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.stage() == 0);
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.live_skin() == 1);
+    assert(f.c.ui().piece_read);
+    // Оригинал возвращается тем значением, которое было, а не нулём.
+    f.tick(f.settings(false));
+    assert(f.live_skin() == -1);
+    std::printf("  original skin=-1: applied, then restored as -1\n");
+}
+
+// ---- Значение больше старого предела 63 тоже легитимно --------------------
+void test_large_skin_value_in_memory() {
+    Fixture f;
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, 3000);
+    f.tick(f.settings(true, 2));
+    assert(f.c.stage() == 0);
+    assert(f.live_skin() == 2);
+    f.tick(f.settings(false));
+    assert(f.live_skin() == 3000);
+    std::printf("  original skin=3000: accepted, restored\n");
+}
+
+// ---- Голова piece не читается транспортом: стадия 14 ----------------------
+void test_piece_unreadable() {
+    Fixture f;
+    f.io.fail_read = piece() + go_active::WEAPONPIECE_ENABLED;   // первый байт головы
+    f.tick(f.settings(true, 1));
+    assert(f.c.stage() == 14);
+    assert(f.c.status == viewmodel::Status::Failed);
+    assert(viewmodel::skin_block(14) == viewmodel::SkinBlock::Unreadable);
+    const viewmodel::SkinUiInfo ui = f.c.ui();
+    assert(!ui.piece_read && ui.skin == -1);
+    assert(f.io.writes == 0);           // не пишем, пока не прочитали
+    std::printf("  piece unreadable: stage 14, 0 writes\n");
+}
+
+// ---- Прочиталось, но это не WeaponPiece: стадия 15 ------------------------
+void test_piece_wrong_layout() {
+    Fixture f;
+    // Enabled обязан быть bool: мусор на его месте означает, что
+    // PLAYERWEAPON_PIECE указывает не на WeaponPiece (оффсет не от этого билда).
+    f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED, 0x5A);
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, 1234);
+    f.tick(f.settings(true, 1));
+    assert(f.c.stage() == 15);
+    assert(viewmodel::skin_block(15) == viewmodel::SkinBlock::WrongLayout);
+    const viewmodel::SkinUiInfo ui = f.c.ui();
+    // Сырое значение показывается: мусорный Skin в логе видно глазами, и это
+    // отличает «оффсет не от билда» от «транспорт не читает».
+    assert(ui.piece_read && ui.skin == 1234);
+    assert(f.io.writes == 0);
+    std::printf("  not a WeaponPiece: stage 15, raw skin=%d shown\n", ui.skin);
+}
+
+// ---- Number вне диапазона — та же причина --------------------------------
+void test_piece_bad_number() {
+    Fixture f;
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, -7);
+    f.tick(f.settings(true, 1));
+    assert(f.c.stage() == 15);
+    assert(f.io.writes == 0);
+    std::printf("  negative item number: rejected as wrong layout\n");
+}
+
 // Группировка стадий в причины (viewmodel.h). Её берут и меню, и автолог
-// skin.log, поэтому проверяем не «как-то работает», а что все 20 стадий куда-то
-// попадают, что у каждой из 9 причин свой непустой текст и что стадии одного
+// skin.log, поэтому проверяем не «как-то работает», а что все 19 стадий куда-то
+// попадают, что у каждой из 10 причин свой непустой текст и что стадии одного
 // смысла не разъехались по разным причинам.
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(21) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(20) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(21) != SkinBlock::None);
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 20; ++stage) {
+    for (int stage = 1; stage <= 19; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -554,20 +644,25 @@ void test_skin_block_grouping() {
                 assert(std::strcmp(texts[i], text) != 0);   // формулировки не дублируются
         }
     }
-    assert(distinct == 9);      // ровно 9 причин, ни одна стадия не потерялась
+    assert(distinct == 10);     // ровно 10 причин, ни одна стадия не потерялась
 
     // Конкретные соответствия, которые видит пользователь.
     assert(viewmodel::skin_block(5)  == SkinBlock::NoWeapon);
+    // «не читается» и «прочиталось, но это не WeaponPiece» — разные причины:
+    // первая про транспорт, вторая про оффсеты не от этого билда.
+    assert(viewmodel::skin_block(14) == SkinBlock::Unreadable);
+    assert(viewmodel::skin_block(15) == SkinBlock::WrongLayout);
+    assert(viewmodel::skin_block(14) != viewmodel::skin_block(15));
     assert(viewmodel::skin_block(13) == SkinBlock::BadIndex);
     assert(viewmodel::skin_block(18) == SkinBlock::Stuck);
     assert(viewmodel::skin_block(10) == SkinBlock::NoItemData);
     // Чтение и запись — разные причины: «не прочиталось» и «не записалось»
     // лечатся по-разному, смешивать их нельзя.
-    assert(viewmodel::skin_block(14) == viewmodel::skin_block(15));
-    assert(viewmodel::skin_block(19) == viewmodel::skin_block(14));
     assert(viewmodel::skin_block(16) == viewmodel::skin_block(17));
-    assert(viewmodel::skin_block(20) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(19) == viewmodel::skin_block(16));   // холстер
     assert(viewmodel::skin_block(16) != viewmodel::skin_block(14));
+    assert(viewmodel::skin_block(18) == SkinBlock::Stuck);
+    assert(viewmodel::skin_block(18) != viewmodel::skin_block(19));
     // Пустые руки и «нет скинов у предмета» — тоже разные вещи.
     assert(viewmodel::skin_block(6) == SkinBlock::EmptyHands);
     assert(viewmodel::skin_block(11) == SkinBlock::NoSkins);
@@ -576,7 +671,7 @@ void test_skin_block_grouping() {
     for (int stage = 1; stage <= 4; ++stage)
         assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 20 stages -> 9 distinct causes, texts unique\n");
+    std::printf("  skin_block: 19 stages -> 10 distinct causes, texts unique\n");
 }
 
 int main() {
@@ -600,6 +695,11 @@ int main() {
     test_write_failure_is_reported();
     test_sanitize_bounds();
     test_beta_profile_layout();
+    test_negative_skin_is_accepted();
+    test_large_skin_value_in_memory();
+    test_piece_unreadable();
+    test_piece_wrong_layout();
+    test_piece_bad_number();
     test_skin_block_grouping();
     std::printf("OK\n");
     return 0;

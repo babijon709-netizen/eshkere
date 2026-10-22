@@ -195,8 +195,10 @@ struct SkinEntryView {
 };
 
 // Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
-// контроллера двадцать (skin_changer_memory.h), но игроку нужно не «стадия 13»,
-// а что делать. Детальная расшифровка для CLI и разработчика —
+// контроллера девятнадцать (skin_changer_memory.h), но игроку нужно не «стадия
+// 13», а что делать. Unreadable и WrongLayout разделены намеренно: первое —
+// транспорт не читает голову WeaponPiece, второе — читает, но это не
+// WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии). Детальная расшифровка для CLI и разработчика —
 // skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь,
 // чтобы меню и лог брали одну и ту же формулировку, а не две свои.
 enum class SkinBlock : int {
@@ -207,7 +209,8 @@ enum class SkinBlock : int {
     NoItemData,      // нет данных предмета
     NoSkins,         // у предмета нет массива скинов
     BadIndex,        // выбранный индекс не подходит этому стволу
-    Unreadable,      // поле скина не читается
+    Unreadable,      // WeaponPiece не читается транспортом
+    WrongLayout,     // читается, но это не WeaponPiece: оффсеты не от этого билда
     WriteFailed,     // запись не подтвердилась чтением обратно
     Stuck,           // ствол не вернулся из холстера
 };
@@ -220,8 +223,9 @@ inline SkinBlock skin_block(int stage) {
         case 10:                                  return SkinBlock::NoItemData;
         case 11: case 12:                         return SkinBlock::NoSkins;
         case 13:                                  return SkinBlock::BadIndex;
-        case 14: case 15: case 19:                return SkinBlock::Unreadable;
-        case 16: case 17: case 20:                return SkinBlock::WriteFailed;
+        case 14:                                  return SkinBlock::Unreadable;
+        case 15:                                  return SkinBlock::WrongLayout;
+        case 16: case 17: case 19:                return SkinBlock::WriteFailed;
         case 18:                                  return SkinBlock::Stuck;
         default:                                  return SkinBlock::NoPlayer;
     }
@@ -237,7 +241,8 @@ inline const char* skin_block_text(SkinBlock block) {
         case SkinBlock::NoItemData:  return "Нет данных предмета";
         case SkinBlock::NoSkins:     return "У предмета нет скинов";
         case SkinBlock::BadIndex:    return "Индекс не подходит стволу";
-        case SkinBlock::Unreadable:  return "Поле скина не читается";
+        case SkinBlock::Unreadable:  return "WeaponPiece не читается";
+        case SkinBlock::WrongLayout: return "Оффсеты WeaponPiece не от этого билда";
         case SkinBlock::WriteFailed: return "Запись не подтвердилась";
         case SkinBlock::Stuck:       return "Ствол не вернулся";
         default:                     return "";
@@ -253,6 +258,7 @@ struct SkinUiInfo {
     bool fp_stale = false;      // PlayerFPWeaponView собран из ДРУГОГО индекса
     bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
     bool rebuild_busy = false;  // идёт принудительный холстер/дроу
+    bool piece_read = false;    // skin/level действительно прочитаны из памяти
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;
     char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках

@@ -103,6 +103,7 @@ skinlog::Snapshot make_snap(double now) {
     s.ui.level = 0;
     s.ui.stage = 0;
     s.ui.status = viewmodel::Status::Active;
+    s.ui.piece_read = true;             // Skin/SkinLevel действительно прочитаны
     s.ui.fp_stale = false;              // вьюха собрана из нашего индекса
     s.ui.handle_live = true;            // ассет загружен
     s.ui.rebuild_busy = false;
@@ -179,6 +180,49 @@ void test_off_and_lost_bind_are_different() {
     text = slurp(log_path());
     assert(count_of(text, "связь с игрой потеряна — записанное осталось в памяти игры") == 1);
     std::printf("  off vs lost-bind: distinct single lines\n");
+}
+
+void test_unreadable_piece_values() {
+    fresh();
+    skinlog::Writer w;
+    // Голова WeaponPiece не прочиталась: значений нет, и лог обязан это сказать
+    // словами, а не напечатать Skin=-1 (минус один — легитимное «скина нет»).
+    skinlog::Snapshot s = make_snap(0.0);
+    s.ui.piece_read = false;
+    s.ui.skin = -1;
+    s.ui.level = -1;
+    s.ui.stage = 14;
+    s.ui.status = viewmodel::Status::Failed;
+    w.note(s);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "в памяти игры Skin/SkinLevel не прочитались") == 1);
+    assert(count_of(text, "Skin=-1") == 0);
+    assert(count_of(text, "!! WeaponPiece не читается (стадия 14: stage-14)") == 1);
+
+    // Прочиталось, но это не WeaponPiece: показываем сырое значение — мусорный
+    // Skin видно глазами, и это отличает оффсеты не от билда от мёртвого
+    // транспорта.
+    skinlog::Snapshot bad = make_snap(1.0);
+    bad.ui.piece_read = true;
+    bad.ui.skin = 1234;
+    bad.ui.level = 90;
+    bad.ui.stage = 15;
+    w.note(bad);
+    text = slurp(log_path());
+    assert(count_of(text, "в памяти игры Skin=1234 SkinLevel=90") == 1);
+    assert(count_of(text, "!! Оффсеты WeaponPiece не от этого билда (стадия 15: stage-15)") == 1);
+
+    // Отрицательный Skin у ствола без скина — нормальное значение, а не ошибка:
+    // строка про него пишется, тревоги нет.
+    skinlog::Snapshot none = make_snap(2.0);
+    none.ui.piece_read = true;
+    none.ui.skin = -1;
+    none.ui.level = 0;
+    none.ui.stage = 0;
+    w.note(none);
+    text = slurp(log_path());
+    assert(count_of(text, "в памяти игры Skin=-1 SkinLevel=0") == 1);
+    std::printf("  piece values: unknown vs garbage vs legitimate -1\n");
 }
 
 void test_block_cause_is_reported() {
@@ -335,6 +379,7 @@ int main() {
     test_unbound_writes_nothing();
     test_enable_reports_state_once();
     test_off_and_lost_bind_are_different();
+    test_unreadable_piece_values();
     test_block_cause_is_reported();
     test_stale_view_and_asset_warnings();
     test_rebuild_cycle();

@@ -814,13 +814,12 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 11:         return "ItemData.skinData array not found";
         case 12:         return "skinData length out of range (item has no skins)";
         case 13:         return "selected index is not in this item's skinData";
-        case 14:         return "WeaponPiece.Skin unreadable";
-        case 15:         return "WeaponPiece.SkinLevel unreadable";
+        case 14:         return "WeaponPiece head unreadable";
+        case 15:         return "WeaponPiece head is not a WeaponPiece (offset mismatch)";
         case 16:         return "Skin write not confirmed by readback";
         case 17:         return "SkinLevel write not confirmed by readback";
         case 18:         return "WeaponPiece.Enabled not restored (weapon stays holstered)";
-        case 19:         return "WeaponPiece.Enabled unreadable";
-        case 20:         return "holster write not confirmed by readback";
+        case 19:         return "holster write not confirmed by readback";
         default:         return "waiting for bind or player";
     }
 }

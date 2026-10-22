@@ -282,6 +282,35 @@ void test_stale_view_and_asset_warnings() {
     std::printf("  stale view, handle, missing asset: warned once each\n");
 }
 
+// Чередование стадий ВНУТРИ одной причины не должно спамить: на загрузке игры
+// «нет локального игрока» прыгает между стадиями 1 и 2 каждый тик, и дедуп по
+// стадии превращал лог в простыню из 577 одинаковых строк.
+void test_same_cause_is_one_line() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot a = make_snap(0.0);
+    a.ui.stage = 1;
+    a.ui.status = viewmodel::Status::Waiting;
+    w.note(a);
+    skinlog::Snapshot b = a; b.now = 0.1; b.ui.stage = 2;
+    w.note(b);
+    skinlog::Snapshot c = b; c.now = 0.2; c.ui.stage = 1;
+    w.note(c);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "Нет локального игрока") == 1);
+    assert(count_of(text, "стадия 1:") == 1 && count_of(text, "стадия 2:") == 0);
+
+    // Успех виден и при включённой автопересборке: индекс подтверждён чтением,
+    // а статус станет Active только после холстер/дроу.
+    skinlog::Snapshot ok = make_snap(0.3);
+    ok.ui.status = viewmodel::Status::Waiting;
+    ok.ui.rebuild_busy = true;
+    w.note(ok);
+    text = slurp(log_path());
+    assert(count_of(text, "применено") == 1);
+    std::printf("  same cause: 1 line; success visible during rebuild\n");
+}
+
 void test_rebuild_cycle() {
     fresh();
     skinlog::Writer w;
@@ -382,6 +411,7 @@ int main() {
     test_unreadable_piece_values();
     test_block_cause_is_reported();
     test_stale_view_and_asset_warnings();
+    test_same_cause_is_one_line();
     test_rebuild_cycle();
     test_weapon_switch_and_session_change();
     test_rotation_is_bounded();

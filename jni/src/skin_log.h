@@ -80,7 +80,8 @@ private:
     // Снимок того, о чём уже сообщали: строка пишется только по расхождению.
     // Начальные значения заведомо «невозможные», чтобы первое же сравнение
     // дало строку, а не тишину.
-    int  enabled_ = -1, skin_ = -2, level_ = -2, count_ = -2, stage_ = -2, known_ = -1;
+    int  enabled_ = -1, skin_ = -2, level_ = -2, count_ = -2, known_ = -1;
+    int  block_ = -1;   // последняя сообщённая ПРИЧИНА (SkinBlock), не стадия
     // stale_/handle_ стартуют с «неизвестно», чтобы первый же тик отчитался о
     // состоянии вьюхи и ассета. rebuild_ стартует с нуля: «ствол возвращён»
     // имеет смысл только как КОНЕЦ цикла пересборки, а не как новость о том,
@@ -94,7 +95,7 @@ private:
         open_tried_ = false;
     }
     void clear_snapshot() {
-        enabled_ = -1; skin_ = level_ = count_ = stage_ = -2; known_ = -1;
+        enabled_ = -1; skin_ = level_ = count_ = -2; known_ = -1; block_ = -1;
         stale_ = handle_ = -1; rebuild_ = 0;
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
@@ -173,15 +174,23 @@ inline void Writer::note(const Snapshot& s) {
         else say(s, "в памяти игры Skin/SkinLevel не прочитались");
     }
 
-    // Причина остановки — главное, ради чего лог существует.
-    if (s.ui.stage != stage_) {
-        stage_ = s.ui.stage;
-        if (s.ui.stage != 0)
-            say(s, "!! %s (стадия %d: %s)",
-                viewmodel::skin_block_text(viewmodel::skin_block(s.ui.stage)), s.ui.stage,
-                skin_change_stop_reason(s.ui.status, s.ui.stage));
-        else if (s.ui.status == viewmodel::Status::Active)
-            say(s, "применено");
+    // Причина остановки — главное, ради чего лог существует. Дедупликация по
+    // ПРИЧИНЕ, а не по стадии: стадии внутри одной причины («нет игрока» 1 и 2,
+    // «пусто в руках» 7 и 9) на загрузке/смене ствола чередуются каждый тик, и
+    // дедуп по стадии давал сотни одинаковых строк подряд. Стадию пишем внутрь
+    // строки: она нужна разработчику, а не игроку.
+    const int block = (int)viewmodel::skin_block(s.ui.stage);
+    if (s.ui.stage == 0) {
+        // «Применено» пишем и когда статус Waiting: при включённой
+        // автопересборке индекс уже подтверждён чтением, а статус станет
+        // Active только после холстер/дроу — и перехода стадии при этом нет,
+        // то есть со старым условием строку успеха не было видно НИКОГДА.
+        if (block_ != 0) { block_ = 0; say(s, "применено"); }
+    } else if (block != block_) {
+        block_ = block;
+        say(s, "!! %s (стадия %d: %s)",
+            viewmodel::skin_block_text(viewmodel::skin_block(s.ui.stage)), s.ui.stage,
+            skin_change_stop_reason(s.ui.status, s.ui.stage));
     }
 
     const int stale = s.ui.fp_stale ? 1 : 0;

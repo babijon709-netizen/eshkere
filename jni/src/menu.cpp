@@ -907,10 +907,21 @@ float TabContent(int tab, float dt, float cW) {
                 if (n <= 0)
                     snprintf(skinLine, sizeof(skinLine), "%s",
                              XS("В руках нет предмета со скинами"));
-                else
+                else {
+                    // «Ассет загружен» для моделей — это живой handle визуала
+                    // (skinVisualHandle._model). У перекрасок handle не
+                    // появляется вовсе, там признак один: запрашивался ли
+                    // материал (AssetReference.m_Operation), то есть ready.
+                    // Показывать перекраске «ассет не загружен» — врать.
+                    const viewmodel::SkinEntryView& sel = skinEntries[vm.skin_index];
+                    const bool recolor = sel.kind == viewmodel::SkinKind::WeaponRecolor ||
+                                         sel.kind == viewmodel::SkinKind::EquipRecolor;
                     snprintf(skinLine, sizeof(skinLine), "%s: %s · %s: %s",
                              XS("Вьюха"), skinUi.fp_stale ? XS("старая") : XS("собрана"),
-                             XS("Ассет"), skinUi.handle_live ? XS("загружен") : XS("не загружен"));
+                             recolor ? XS("Материал") : XS("Ассет"),
+                             recolor ? (sel.ready ? XS("запрашивался") : XS("не запрашивался"))
+                                     : (skinUi.handle_live ? XS("загружен") : XS("не загружен")));
+                }
                 SHdr(skinLine, 4.f);
 
                 // Вердикт одной строкой и тост на его СМЕНУ: диагностика
@@ -925,11 +936,17 @@ float TabContent(int tab, float dt, float cW) {
                         ShowToast(SkinBlockUi(skinBlock));
                     skinToasted = skinBlock;
                 }
+                // Ассета на устройстве нет — это не сбой записи и не старая
+                // вьюха: игре нечего собирать. Скины докачиваются по требованию,
+                // внешний процесс Addressables не поднимает, поэтому вердикт
+                // прямой: сначала скачать скин в игре.
                 const char* skinVerdict =
                     (skinBlock != viewmodel::SkinBlock::None) ? SkinBlockUi(skinBlock)
                     : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
-                    : (skinUi.fp_stale)  ? XS("Скин записан — уберите и достаньте ствол")
-                                         : XS("Скин применён");
+                    : (n > 0 && !skinEntries[vm.skin_index].ready)
+                                          ? XS("Ассета скина нет на устройстве — скачай его в игре")
+                    : (skinUi.fp_stale)   ? XS("Скин записан — уберите и достаньте ствол")
+                                          : XS("Скин применён");
                 SHdr(skinVerdict, 4.f);
 
                 const char* const rebuildNow[] = {XS("Пересобрать сейчас")};

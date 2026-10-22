@@ -959,6 +959,12 @@ float TabContent(int tab, float dt, float cW) {
                     : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
                     : (n > 0 && !viewmodel::skin_kind_identified(skinEntries[vm.skin_index].kind))
                                           ? XS("Тип скина не распознан — перезапустите игру и чит")
+                    // Перекраска — легальная строка списка, но модель она не
+                    // меняет (материал), и пользователь об этом узнаёт только
+                    // из лога. Устройство показало: раз за разом выбирают
+                    // именно recolor и ждут смены модели.
+                    : (n > 0 && !viewmodel::skin_kind_is_object(skinEntries[vm.skin_index].kind))
+                                          ? XS("Это перекраска — материал, а не модель")
                     : (n > 0 && !skinEntries[vm.skin_index].ready)
                                           ? XS("Ассета скина нет на устройстве — скачай его в игре")
                     : (skinUi.fp_stale)   ? XS("Скин записан — поменяйте насадку/мод в игре")

@@ -260,12 +260,17 @@ inline void Writer::note(const Snapshot& s) {
     if (s.want_index != picked_index_ || ready != picked_ready_) {
         picked_index_ = s.want_index; picked_ready_ = ready;
         if (picked) {
-            say(s, "выбран #%d %s: %s, уровней %d, ассет %s", s.want_index,
+            // Перекраску подписываем прямо в строке выбора: устройство раз за
+            // разом выбирает recolor и ждёт смены МОДЕЛИ.
+            const bool recolor = picked->kind == viewmodel::SkinKind::WeaponRecolor ||
+                                 picked->kind == viewmodel::SkinKind::EquipRecolor;
+            say(s, "выбран #%d %s: %s, уровней %d, ассет %s%s", s.want_index,
                 picked->id[0] ? picked->id : "(id не прочитан)",
                 viewmodel::skin_kind_name(picked->kind), picked->levels,
                 ready == 1 ? "запрашивался"
                 : ready == 0 ? "НЕ запрашивался"
-                             : "не проверить (тип не распознан)");
+                             : "не проверить (тип не распознан)",
+                recolor ? " — перекраска (материал, не модель)" : "");
             if (ready == 0)
                 say(s, "!! чего нет на устройстве, внешним процессом не загрузить");
             else if (ready == 2)

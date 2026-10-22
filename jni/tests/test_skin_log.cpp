@@ -280,7 +280,15 @@ void test_stale_view_and_asset_warnings() {
     text = slurp(log_path());
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет НЕ запрашивался") == 1);
     assert(count_of(text, "!! чего нет на устройстве, внешним процессом не загрузить") == 1);
-    std::printf("  stale view, handle, missing asset: warned once each\n");
+
+    // Перекраска подписана в самой строке выбора: на устройстве раз за разом
+    // выбирают recolor и ждут смены модели.
+    skinlog::Snapshot rec = make_snap(3.0);
+    rec.want_index = 2;                  // dmr_red — WeaponRecolor
+    w.note(rec);
+    text = slurp(log_path());
+    assert(count_of(text, "выбран #2 dmr_red: recolor, уровней 1, ассет НЕ запрашивался — перекраска (материал, не модель)") == 1);
+    std::printf("  stale view, handle, missing asset: warned once each; recolor labeled\n");
 }
 
 // Чередование стадий ВНУТРИ одной причины не должно спамить: на загрузке игры

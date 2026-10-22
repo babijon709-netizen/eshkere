@@ -275,6 +275,7 @@ static const LangPair kUiEn[] = {
     {"Штатно в прицеле", "Default while aiming"},
     {"Экстернал", "External"},
     {"Экстернал режим", "External mode"},
+    {"Это перекраска — материал, а не модель", "This is a recolor — material, not a model"},
     {"Язык", "Language"},
     {"Ящики", "Crates"},
     {"Ящики в домах", "House boxes"},

@@ -323,8 +323,10 @@ inline constexpr std::uint64_t ITEM_DATA            = 0x20; // <LIN>k__BackingFi
 // дизассемблером dump11966: Item..ctor 0x69C8174 кладёт аргумент skin в +0x30
 // (int, -1 = «скина нет»; диапазон проверяется по ItemData.skinData), а
 // skinLevel в +0x34 (byte); ItemPickup.KZq 0x6926BDC при дропе берёт скин из
-// +0x30 в SyncVar дропа (KZv), уровень из +0x34 — в piece дропа. Поэтому
-// запись сюда делает дроп/подбор рабочим триггером пересборки вьюхи.
+// +0x30 в SyncVar дропа (KZv), уровень из +0x34 — в piece дропа, а
+// PlayerInventory.Gah/Gaz читают +0x30 в RPC синка инвентаря. Запись сюда
+// несёт наш скин в дроп и сохранение; пересборка вьюхи — только на спавне
+// (OnStartClient читает SyncVar), KERNEL.md §4.17–4.18.
 inline constexpr std::uint64_t ITEM_SKIN            = 0x30; // <uyQ>k__BackingField
 inline constexpr std::uint64_t ITEM_SKIN_LEVEL      = 0x34; // <uya>k__BackingField
 inline constexpr std::uint64_t ITEMDATA_NAME        = 0x18; // m_Name

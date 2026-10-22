@@ -20,8 +20,8 @@ inline bool valid(float v) { return finite(v) && v > 1.f && v < 179.f; }
 // Пределы совпадают с game_offsets::SKIN_INDEX_MAX / SKIN_LEVEL_MAX.
 inline bool valid(std::int16_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_MAX; }
 //   int32_t — Oxide.Item.skin: тот же индекс скина, но поле предмета
-//             4-байтовое (третья точка записи скинченджера — триггер
-//             дроп/подбор, см. skin_changer_memory.h и KERNEL.md §4.17).
+//             4-байтовое (третья точка записи скинченджера — её несут дроп и
+//             сохранение, см. skin_changer_memory.h и KERNEL.md §4.17–4.18).
 inline bool valid(std::int32_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_MAX; }
 inline bool valid(std::uint8_t v) { return v <= go_active::SKIN_LEVEL_MAX; }
 inline bool valid(Position v) {

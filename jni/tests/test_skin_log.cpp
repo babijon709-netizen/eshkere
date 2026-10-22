@@ -145,7 +145,7 @@ void test_enable_reports_state_once() {
     assert(count_of(text, "применено (обе копии piece)") == 1);
     assert(count_of(text, "вьюха собрана из нашего индекса") == 1);
     assert(count_of(text, "рабочая копия piece: наш индекс") == 1);
-    assert(count_of(text, "скин предмета (Oxide.Item): наш индекс — дроп/подбор перенесут его") == 1);
+    assert(count_of(text, "скин предмета (Oxide.Item): наш индекс — дроп и сохранение несут его") == 1);
     assert(count_of(text, "визуал скина загружен") == 1);
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет запрашивался") == 1);
     assert(text.compare(0, 6, "+0.0s ") == 0);   // время — от первого открытия
@@ -264,7 +264,7 @@ void test_stale_view_and_asset_warnings() {
     stale.ui.handle_live = false;
     w.note(stale);
     std::string text = slurp(log_path());
-    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — пересоберётся на событие игры: смена насадки/мода, дроп и подбор ствола, респаун") == 1);
+    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — пересборка только на событие игры: смена насадки/мода или спавн (перезапуск игры/повторный вход в мир)") == 1);
     assert(count_of(text, "!! визуал скина НЕ загружен: игра докачает ассет сама при сборке вьюхи") == 1);
 
     // Игрок убрал и достал ствол: обе строки меняются, и это видно без CLI.
@@ -281,7 +281,7 @@ void test_stale_view_and_asset_warnings() {
     w.note(no_asset);
     text = slurp(log_path());
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет НЕ запрашивался") == 1);
-    assert(count_of(text, "!! ассет ещё не запрашивался: нужна одна сборка вьюхи (смена насадки/мода, дроп и подбор ствола, респаун) — закачает игра сама") == 1);
+    assert(count_of(text, "!! ассет ещё не запрашивался: нужна одна сборка вьюхи (смена насадки/мода или спавн — перезапуск/повторный вход в мир) — закачает игра сама") == 1);
 
     // Перекраска подписана в самой строке выбора: на устройстве раз за разом
     // выбирают recolor и ждут смены модели.
@@ -341,9 +341,9 @@ void test_local_copy_line() {
     std::printf("  local copy: ours/overwritten/restored, one line per change\n");
 }
 
-// Oxide.Item.skin (+0x30) — третья точка записи: триггер дроп/подбор
-// (KERNEL.md §4.17). «Игра перезаписала» объясняет, почему подбор не перенёс
-// скин, а молчание выглядело бы как «записали и потеряли».
+// Oxide.Item.skin (+0x30) — третья точка записи: дроп и сохранение несут её
+// (KERNEL.md §4.17–4.18). «Игра перезаписала» объясняет, почему дроп не
+// перенёс скин, а молчание выглядело бы как «записали и потеряли».
 void test_item_copy_line() {
     fresh();
     skinlog::Writer w;
@@ -354,7 +354,7 @@ void test_item_copy_line() {
     w.note(overwritten);                 // без перемен — одна строка
     w.note(make_snap(0.5));              // тик восстановил наш индекс
     const std::string text = slurp(log_path());
-    assert(count_of(text, "скин предмета (Oxide.Item): наш индекс — дроп/подбор перенесут его") == 2);
+    assert(count_of(text, "скин предмета (Oxide.Item): наш индекс — дроп и сохранение несут его") == 2);
     assert(count_of(text, "скин предмета (Oxide.Item): ОТЛИЧАЕТСЯ (игра перезаписала — восстанавливаем)") == 1);
     std::printf("  item copy: ours/overwritten/restored, one line per change\n");
 }

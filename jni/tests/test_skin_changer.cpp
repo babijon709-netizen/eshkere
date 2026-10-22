@@ -190,7 +190,7 @@ struct Fixture {
         io.plain(item);
         io.put<uint64_t>(item + ITEM_DATA, item_data);
         // Oxide.Item.skin (+0x30, int32) / skinLevel (+0x34) — третья точка
-        // записи: триггер дроп/подбор (KERNEL.md §4.17).
+        // записи: дроп и сохранение несут её (KERNEL.md §4.17–4.18).
         io.put<int32_t>(item + ITEM_SKIN, original_skin);
         io.put<uint8_t>(item + ITEM_SKIN_LEVEL, original_level);
         io.object(item_data, "ItemData", "Oxide");
@@ -482,7 +482,7 @@ void test_rewrite_request() {
     std::printf("  rewrite request: 6 forced writes, Enabled untouched\n");
 }
 
-// ---- 10б'. Oxide.Item.skin — третья точка записи (триггер дроп/подбор) -----
+// ---- 10б'. Oxide.Item.skin — третья точка записи (дроп и сейв несут её) ----
 void test_item_skin_written_and_restored() {
     Fixture f;
     ViewmodelSettings s = f.settings(true, 1, 2);   // прогрессия, уровень 2

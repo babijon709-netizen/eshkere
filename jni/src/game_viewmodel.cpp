@@ -816,10 +816,12 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 13:         return "selected index is not in this item's skinData";
         case 14:         return "WeaponPiece head unreadable";
         case 15:         return "WeaponPiece head is not a WeaponPiece (offset mismatch)";
-        case 16:         return "Skin write not confirmed by readback";
-        case 17:         return "SkinLevel write not confirmed by readback";
-        case 18:         return "WeaponPiece.Enabled not restored (weapon stays holstered)";
-        case 19:         return "holster write not confirmed by readback";
+        case 16:         return "SyncVar copy: Skin write not confirmed by readback";
+        case 17:         return "SyncVar copy: SkinLevel write not confirmed by readback";
+        case 18:         return "working copy: Skin write not confirmed by readback";
+        case 19:         return "working copy: SkinLevel write not confirmed by readback";
+        case 20:         return "working copy head unreadable";
+        case 21:         return "working copy head is not a WeaponPiece (offset mismatch)";
         default:         return "waiting for bind or player";
     }
 }

@@ -1,9 +1,11 @@
 // Хост-тест скинченджера (skin_changer_memory.h).
 //
 // Проверяет то, что на устройстве не увидеть: перечисление ItemData.skinData[],
-// запись индекса ТОЛЬКО по расхождению, возврат оригинала, поведение на
-// пересинке SyncVar, смене ствола и смене сессии, и принудительную пересборку
-// через WeaponPiece.Enabled.
+// запись индекса ТОЛЬКО по расхождению в ОБЕ копии WeaponPiece (SyncVar +0x110
+// и рабочую +0xC0 — из второй игра собирает FP-вьюху на дроу), возврат
+// оригинала, поведение на пересинке SyncVar, смене ствола и смене сессии, и
+// что Enabled не пишется НИКОГДА (ноль в этом бите разбирает вьюху, а не
+// пересобирает — см. заголовок skin_changer_memory.h).
 #include "skin_changer_memory.h"
 
 #include <cassert>
@@ -85,6 +87,7 @@ constexpr uint64_t ref1      = 0x50100;     // AssetReference у skin1
 constexpr uint64_t str_base  = 0x60000;
 
 uint64_t piece() { return pw + go_active::PLAYERWEAPON_PIECE; }
+uint64_t piece_local() { return pw + go_active::PLAYERWEAPON_PIECE_LOCAL; }
 uint64_t view_piece() { return fp_view + go_active::FPWEAPONVIEW_PIECE; }
 
 // il2cpp System.String: int32 длина в +0x10, UTF-16 символы в +0x14.
@@ -156,6 +159,7 @@ struct Fixture {
         for (uint64_t off = 0; off < (uint64_t)skinchanger::kPieceHead; ++off) {
             io.put<uint8_t>(view_piece() + off, 0);
             io.put<uint8_t>(piece() + off, 0);
+            io.put<uint8_t>(piece_local() + off, 0);
         }
         io.put<uint8_t>(view_piece() + WEAPONPIECE_ENABLED, 1);
         io.put<int16_t>(view_piece() + WEAPONPIECE_NUMBER, 114);
@@ -168,6 +172,13 @@ struct Fixture {
         io.put<int16_t>(piece() + WEAPONPIECE_SKIN, original_skin);
         io.put<uint8_t>(piece() + WEAPONPIECE_SKIN_LEVEL, original_level);
         io.put<uint8_t>(piece() + WEAPONPIECE_LOADED, 1);
+        // Рабочая копия (QVN +0xC0): в игре её пишет pMd из той же piece,
+        // поэтому на старте обе копии совпадают.
+        io.put<uint8_t>(piece_local() + WEAPONPIECE_ENABLED, 1);
+        io.put<int16_t>(piece_local() + WEAPONPIECE_NUMBER, 114);
+        io.put<int16_t>(piece_local() + WEAPONPIECE_SKIN, original_skin);
+        io.put<uint8_t>(piece_local() + WEAPONPIECE_SKIN_LEVEL, original_level);
+        io.put<uint8_t>(piece_local() + WEAPONPIECE_LOADED, 1);
         // Ручка визуала скина: model != 0 = загружен.
         io.put<uint64_t>(pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL, 0xABCD0);
 
@@ -228,6 +239,24 @@ struct Fixture {
     int16_t live_skin() { return io.value<int16_t>(piece() + go_active::WEAPONPIECE_SKIN); }
     uint8_t live_level() { return io.value<uint8_t>(piece() + go_active::WEAPONPIECE_SKIN_LEVEL); }
     uint8_t live_enabled() { return io.value<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED); }
+    int16_t live_skin_local() {
+        return io.value<int16_t>(piece_local() + go_active::WEAPONPIECE_SKIN);
+    }
+    uint8_t live_level_local() {
+        return io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_SKIN_LEVEL);
+    }
+    uint8_t live_enabled_local() {
+        return io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_ENABLED);
+    }
+    // Enabled не обязан меняться никогда: ноль в нём разбирает вьюху
+    // (CreateFPWeapon при Enabled==0 зовёт Release + KxS).
+    bool enabled_untouched() const {
+        for (uint64_t a : io.write_log)
+            if (a == piece() + go_active::WEAPONPIECE_ENABLED ||
+                a == piece_local() + go_active::WEAPONPIECE_ENABLED)
+                return false;
+        return true;
+    }
 };
 
 // ---- 1. Выключено — ни одной записи ---------------------------------------
@@ -263,22 +292,25 @@ void test_enumeration() {
     assert(ui.count == 3 && ui.stage == 0);
     assert(!std::strcmp(ui.weapon, "dmr"));
     assert(ui.handle_live && !ui.fp_stale);
-    assert(!ui.auto_rebuild);   // тумблер по умолчанию выключен
+    assert(ui.local_state == 0);  // рабочая копия держит тот же индекс
     std::printf("  enumeration: 3 skins, kinds/levels/ready/ids ok, weapon=\"%s\"\n", ui.weapon);
 }
 
-// ---- 3. Запись только по расхождению --------------------------------------
+// ---- 3. Запись только по расхождению, в обе копии --------------------------
 void test_write_only_on_divergence() {
     Fixture f;
     f.tick(f.settings(true, 1));
     assert(f.live_skin() == 1);
+    assert(f.live_skin_local() == 1);   // рабочая копия — вторая цель записи
+    assert(f.enabled_untouched());
     const unsigned after_first = f.io.writes;
     assert(after_first > 0);
     // Установившийся режим: значение уже наше — ноль записей на тик.
     for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.io.writes == after_first);
-    assert(f.live_skin() == 1);
-    std::printf("  steady state: %u writes once, 0 writes over 10 more ticks\n", after_first);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    std::printf("  steady state: %u writes once (both copies), 0 over 10 more ticks\n",
+                after_first);
 }
 
 // ---- 4. Игра вернула своё — запись возвращается ---------------------------
@@ -292,7 +324,12 @@ void test_resync_is_reapplied() {
     f.tick(f.settings(true, 2));
     assert(f.io.writes > before);
     assert(f.live_skin() == 2);
-    std::printf("  resync: game value overwritten back to ours\n");
+    // То же для рабочей копии: её перезаписывает pMd (RPC/спавн).
+    f.io.put<int16_t>(piece_local() + go_active::WEAPONPIECE_SKIN, 0);
+    f.tick(f.settings(true, 2));
+    assert(f.live_skin_local() == 2);
+    assert(f.c.ui().local_state == 0);
+    std::printf("  resync: game value overwritten back to ours (both copies)\n");
 }
 
 // ---- 5. Индекса нет в массиве предмета — записи нет -----------------------
@@ -320,17 +357,20 @@ void test_level_clamped_to_progression() {
     std::printf("  level clamped: progression<=2, object skin==0\n");
 }
 
-// ---- 7. Выключение возвращает оригинал ------------------------------------
+// ---- 7. Выключение возвращает оригинал (в обе копии) -----------------------
 void test_disable_restores_original() {
     Fixture f;
     f.tick(f.settings(true, 2));
-    assert(f.live_skin() == 2);
+    assert(f.live_skin() == 2 && f.live_skin_local() == 2);
     f.tick(f.settings(false));
     assert(f.live_skin() == f.original_skin);
     assert(f.live_level() == f.original_level);
+    assert(f.live_skin_local() == f.original_skin);
+    assert(f.live_level_local() == f.original_level);
     assert(!f.c.has_state());
     assert(f.c.status == viewmodel::Status::Off);
-    std::printf("  disable: original skin %d restored\n", (int)f.original_skin);
+    std::printf("  disable: original skin %d restored in both copies\n",
+                (int)f.original_skin);
 }
 
 // ---- 8. Возврат не затирает чужое обновление ------------------------------
@@ -405,67 +445,77 @@ void test_weapon_switch() {
     std::printf("  weapon switch: list re-read, out-of-range index rejected\n");
 }
 
-// ---- 10б. Смена ствола ВО ВРЕМЯ пересборки: ствол не должен остаться убранным
-void test_switch_during_rebuild() {
+// ---- 10б. Запрос «переписать обе копии»: запись даже без расхождения -------
+void test_rewrite_request() {
     Fixture f;
     ViewmodelSettings s = f.settings(true, 1);
     f.tick(s);
-    f.c.request_rebuild();
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    // Установившийся режим: ноль записей.
     f.tick(s);
-    assert(f.live_enabled() == 0);
-    assert(f.c.rebuild_busy());
-    switch_to_spear(f);
-    f.tick(f.settings(true, 0));
-    // Enabled старого ствола возвращён, отсчёт не перенесён на новый.
-    assert(f.live_enabled() == 1);
-    assert(!f.c.rebuild_busy());
-    assert(f.live_skin() == 0);
-    std::printf("  switch during rebuild: Enabled returned, countdown dropped\n");
-}
-
-// ---- 11. Принудительная пересборка через Enabled --------------------------
-void test_forced_rebuild() {
-    Fixture f;
-    ViewmodelSettings s = f.settings(true, 1);
-    f.tick(s);
-    assert(f.live_skin() == 1);
-    assert(f.live_enabled() == 1);
-    assert(!f.c.rebuild_busy());
-    f.c.request_rebuild();
-    f.tick(s);
-    // Ствол убран, индекс уже наш — дроу соберёт вьюху из него.
-    assert(f.live_enabled() == 0);
-    assert(f.c.rebuild_busy());
-    assert(f.live_skin() == 1);
-    // Держится kRebuildHoldTicks тиков, возвращается на следующем.
-    for (int i = 0; i < skinchanger::kRebuildHoldTicks; ++i) {
-        f.tick(s);
-        assert(f.live_skin() == 1);         // индекс не теряется, пока ствол убран
-    }
-    assert(f.live_enabled() == 1);
-    assert(!f.c.rebuild_busy());
-    assert(f.c.status == viewmodel::Status::Active);
-    std::printf("  rebuild: Enabled 1->0 for %d ticks ->1, skin applied before draw\n",
-                skinchanger::kRebuildHoldTicks);
-}
-
-// ---- 12. Автопересборка при смене индекса ---------------------------------
-void test_auto_rebuild_on_change() {
-    Fixture f;
-    ViewmodelSettings s = f.settings(true, 1);
-    s.skin_rebuild = true;
-    f.tick(s);
-    assert(f.c.ui().auto_rebuild);   // тумблер виден в снимке для лога/меню
-    // Первое применение — тоже смена, поэтому ствол убирается.
-    assert(f.live_enabled() == 0);
-    for (int i = 0; i < skinchanger::kRebuildHoldTicks; ++i) f.tick(s);
-    assert(f.live_enabled() == 1);
-    // Установившийся режим: пересборок больше нет.
     const unsigned before = f.io.writes;
     f.tick(s);
-    assert(f.live_enabled() == 1);
     assert(f.io.writes == before);
-    std::printf("  auto rebuild: fires on change only, silent in steady state\n");
+    // Запрос снимает «свежесть» слотов: следующий тик пишет все четыре поля
+    // (Skin/SkinLevel в обеих копиях) и подтверждает readback'ом.
+    f.c.request_rebuild();
+    f.tick(s);
+    assert(f.io.writes == before + 4);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.enabled_untouched());
+    std::printf("  rewrite request: 4 forced writes, Enabled untouched\n");
+}
+
+// ---- 10в. Enabled не пишется никогда ---------------------------------------
+void test_enabled_never_written() {
+    Fixture f;
+    ViewmodelSettings s = f.settings(true, 2);
+    for (int i = 0; i < 6; ++i) f.tick(s);
+    f.c.request_rebuild();
+    f.tick(s);
+    assert(f.live_enabled() == 1 && f.live_enabled_local() == 1);
+    assert(f.enabled_untouched());
+    f.tick(f.settings(false));
+    assert(f.live_enabled() == 1 && f.live_enabled_local() == 1);
+    assert(f.enabled_untouched());
+    std::printf("  Enabled stays 1 in both copies through apply/rewrite/disable\n");
+}
+
+// ---- 10г. Голова рабочей копии не читается / не WeaponPiece: стадии 20/21 --
+void test_local_copy_bad_head() {
+    {
+        Fixture f;
+        f.io.fail_read = piece_local() + go_active::WEAPONPIECE_ENABLED;
+        f.tick(f.settings(true, 1));
+        assert(f.c.status == viewmodel::Status::Failed);
+        assert(f.c.stage() == 20);
+        assert(viewmodel::skin_block(20) == viewmodel::SkinBlock::Unreadable);
+        // SyncVar-копия к этому моменту уже записана — половина применения
+        // видна в логе стадией, а не молчаливым «не сработало».
+        assert(f.live_skin() == 1);
+        std::printf("  local head unreadable: stage 20, sync copy applied\n");
+    }
+    {
+        Fixture f;
+        f.io.put<uint8_t>(piece_local() + go_active::WEAPONPIECE_ENABLED, 0x5A);
+        f.tick(f.settings(true, 1));
+        assert(f.c.stage() == 21);
+        assert(viewmodel::skin_block(21) == viewmodel::SkinBlock::WrongLayout);
+        std::printf("  local head not a WeaponPiece: stage 21\n");
+    }
+}
+
+// ---- 10д. Отказ записи в рабочую копию: стадия 18/19 -----------------------
+void test_local_copy_write_failure() {
+    Fixture f;
+    f.io.fail_write = piece_local() + go_active::WEAPONPIECE_SKIN;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Failed);
+    assert(f.c.stage() == 18);
+    assert(f.live_skin() == 1);              // SyncVar-копия записана
+    assert(f.live_skin_local() == f.original_skin);
+    std::printf("  local copy write rejected: stage 18\n");
 }
 
 // ---- 13. fp_stale: FP-вьюха собрана из другого индекса --------------------
@@ -516,7 +566,9 @@ void test_write_failure_is_reported() {
     assert(f.c.status == viewmodel::Status::Failed);
     assert(f.c.stage() == 16);
     assert(f.live_skin() == f.original_skin);
-    std::printf("  rejected write: failed(16), field untouched\n");
+    // Отказ в первой копии останавливает тик: вторая не тронута.
+    assert(f.live_skin_local() == f.original_skin);
+    std::printf("  rejected write: failed(16), both fields untouched\n");
 }
 
 // ---- 17. Санитайзер не выпускает индекс/уровень за пределы ---------------
@@ -543,6 +595,8 @@ void test_beta_profile_layout() {
     assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
     assert(go_active::WEAPONPIECE_SKIN == 0x4);
     assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x6);
+    assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
     assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
@@ -551,6 +605,8 @@ void test_beta_profile_layout() {
     go_active::Select(go_active::GameVersion::Release);
     assert(go_active::WEAPONPIECE_SIZE == 0x10);
     assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0);
+    assert(go_active::PLAYERWEAPON_PIECE == 0x110);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
     assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);
@@ -631,19 +687,18 @@ void test_piece_bad_number() {
 }
 
 // Группировка стадий в причины (viewmodel.h). Её берут и меню, и автолог
-// skin.log, поэтому проверяем не «как-то работает», а что все 19 стадий куда-то
-// попадают, что у каждой из 10 причин свой непустой текст и что стадии одного
+// skin.log, поэтому проверяем не «как-то работает», а что все 21 стадия куда-то
+// попадают, что у каждой из 9 причин свой непустой текст и что стадии одного
 // смысла не разъехались по разным причинам.
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(20) != SkinBlock::None);   // вне диапазона — не «порядок»
-    assert(viewmodel::skin_block(21) != SkinBlock::None);
+    assert(viewmodel::skin_block(22) != SkinBlock::None);   // вне диапазона — не «порядок»
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 19; ++stage) {
+    for (int stage = 1; stage <= 21; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -657,25 +712,27 @@ void test_skin_block_grouping() {
                 assert(std::strcmp(texts[i], text) != 0);   // формулировки не дублируются
         }
     }
-    assert(distinct == 10);     // ровно 10 причин, ни одна стадия не потерялась
+    assert(distinct == 9);      // ровно 9 причин, ни одна стадия не потерялась
 
     // Конкретные соответствия, которые видит пользователь.
     assert(viewmodel::skin_block(5)  == SkinBlock::NoWeapon);
     // «не читается» и «прочиталось, но это не WeaponPiece» — разные причины:
-    // первая про транспорт, вторая про оффсеты не от этого билда.
+    // первая про транспорт, вторая про оффсеты не от этого билда. Пара есть
+    // у каждой копии piece: 14/15 — SyncVar, 20/21 — рабочая.
     assert(viewmodel::skin_block(14) == SkinBlock::Unreadable);
     assert(viewmodel::skin_block(15) == SkinBlock::WrongLayout);
+    assert(viewmodel::skin_block(20) == SkinBlock::Unreadable);
+    assert(viewmodel::skin_block(21) == SkinBlock::WrongLayout);
     assert(viewmodel::skin_block(14) != viewmodel::skin_block(15));
     assert(viewmodel::skin_block(13) == SkinBlock::BadIndex);
-    assert(viewmodel::skin_block(18) == SkinBlock::Stuck);
     assert(viewmodel::skin_block(10) == SkinBlock::NoItemData);
     // Чтение и запись — разные причины: «не прочиталось» и «не записалось»
-    // лечатся по-разному, смешивать их нельзя.
+    // лечатся по-разному, смешивать их нельзя. Записи обеих копий (16..19) —
+    // одна причина: лечится одинаково.
     assert(viewmodel::skin_block(16) == viewmodel::skin_block(17));
-    assert(viewmodel::skin_block(19) == viewmodel::skin_block(16));   // холстер
+    assert(viewmodel::skin_block(18) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(19) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(16) != viewmodel::skin_block(14));
-    assert(viewmodel::skin_block(18) == SkinBlock::Stuck);
-    assert(viewmodel::skin_block(18) != viewmodel::skin_block(19));
     // Пустые руки и «нет скинов у предмета» — тоже разные вещи.
     assert(viewmodel::skin_block(6) == SkinBlock::EmptyHands);
     assert(viewmodel::skin_block(11) == SkinBlock::NoSkins);
@@ -684,7 +741,7 @@ void test_skin_block_grouping() {
     for (int stage = 1; stage <= 4; ++stage)
         assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 19 stages -> 10 distinct causes, texts unique\n");
+    std::printf("  skin_block: 21 stages -> 9 distinct causes, texts unique\n");
 }
 
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
@@ -747,9 +804,10 @@ int main() {
     test_restore_does_not_clobber_game();
     test_session_change_forgets_without_write();
     test_weapon_switch();
-    test_switch_during_rebuild();
-    test_forced_rebuild();
-    test_auto_rebuild_on_change();
+    test_rewrite_request();
+    test_enabled_never_written();
+    test_local_copy_bad_head();
+    test_local_copy_write_failure();
     test_fp_stale_flag();
     test_no_skin_array();
     test_not_local_player();

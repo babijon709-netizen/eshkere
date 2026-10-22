@@ -182,6 +182,7 @@ inline std::uint64_t INV_PLAYER_INVENTORY_DATA = game_offsets::INV_PLAYER_INVENT
 inline std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_PLAYER_INVENTORY_CLIENT;
 inline std::uint64_t PLAYERWEAPON_VIEW = game_offsets::PLAYERWEAPON_VIEW;
 inline std::uint64_t PLAYERWEAPON_PIECE = game_offsets::PLAYERWEAPON_PIECE;
+inline std::uint64_t PLAYERWEAPON_PIECE_LOCAL = game_offsets::PLAYERWEAPON_PIECE_LOCAL;
 inline std::uint64_t PLAYERWEAPON_STATE = game_offsets::PLAYERWEAPON_STATE;
 inline std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = game_offsets::PLAYERWEAPON_PLAYER_BACKREF;
 inline std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;
@@ -669,6 +670,7 @@ inline void Select(GameVersion version) {
         INV_PLAYER_INVENTORY_CLIENT = game_offsets_beta::INV_PLAYER_INVENTORY_CLIENT;
         PLAYERWEAPON_VIEW = game_offsets_beta::PLAYERWEAPON_VIEW;
         PLAYERWEAPON_PIECE = game_offsets_beta::PLAYERWEAPON_PIECE;
+        PLAYERWEAPON_PIECE_LOCAL = game_offsets_beta::PLAYERWEAPON_PIECE_LOCAL;
         PLAYERWEAPON_STATE = game_offsets_beta::PLAYERWEAPON_STATE;
         PLAYERWEAPON_PLAYER_BACKREF = game_offsets_beta::PLAYERWEAPON_PLAYER_BACKREF;
         WEAPONPIECE_ENABLED = game_offsets_beta::WEAPONPIECE_ENABLED;
@@ -1157,6 +1159,7 @@ inline void Select(GameVersion version) {
         INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_PLAYER_INVENTORY_CLIENT;
         PLAYERWEAPON_VIEW = game_offsets::PLAYERWEAPON_VIEW;
         PLAYERWEAPON_PIECE = game_offsets::PLAYERWEAPON_PIECE;
+        PLAYERWEAPON_PIECE_LOCAL = game_offsets::PLAYERWEAPON_PIECE_LOCAL;
         PLAYERWEAPON_STATE = game_offsets::PLAYERWEAPON_STATE;
         PLAYERWEAPON_PLAYER_BACKREF = game_offsets::PLAYERWEAPON_PLAYER_BACKREF;
         WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;

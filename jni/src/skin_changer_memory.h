@@ -1,21 +1,47 @@
 #pragma once
-// Скинченджер: подмена скина ствола в руках записью индекса в SyncVar
-// Oxide.WeaponPiece. Только object-скины (другая модель), перекраска
-// материалом не делается — см. viewmodel::SkinKind.
+// Скинченджер: подмена скина ствола в руках записью индекса в Oxide.WeaponPiece.
+// Только object-скины (другая модель), перекраска материалом не делается —
+// см. viewmodel::SkinKind.
 //
-// ЧТО именно пишется и почему этого достаточно (проверено по dump11966 и
-// дизассемблеру, все RVA — из того дампа):
+// ЧТО именно пишется и почему (проверено по dump11966 и дизассемблеру, все
+// RVA — из того дампа):
 //
 //   Oxide.WeaponPiece (структура 0x10 байт в релизе, 0x18 в бете 11977)
 //     bool Enabled 0x0 | short Number 0x2 | short Skin 0x4 |
 //     byte SkinLevel 0x6 | bool Loaded 0x7 | WeaponModData[] Mods 0x8
-//   лежит в HyperHug...Weapons.PlayerWeapon как SyncVar `weaponPiece`
-//   (релиз +0x110, бета +0x130; рядом вторая копия +0xC0/+0xD0 — НЕ SyncVar,
-//   её не трогаем, см. game_offsets.h).
+//   лежит в HyperHug...Weapons.PlayerWeapon ДВУМЯ копиями:
+//     +0x110 (бета +0x130) — SyncVar `weaponPiece` (поток server->client);
+//     +0xC0  (бета +0xD0)  — рабочая копия QVN.
+//   Раньше чит писал только SyncVar, а вторую копию запрещал трогать
+//   («НЕ SyncVar, must not be used»). Устройство это опровергло: лог показал
+//   17 циклов записи в SyncVar без единой пересборки вьюхи. Дизассемблер
+//   объяснил почему и назвал настоящую цель:
+//
+//   * РАБОЧАЯ КОПИЯ (+0xC0) — вот что уходит в сборку визуала. Интерфейс
+//     экипировки hbr (слоты pMj(int) 18 @0x768B988, pMZ(int,bool) 19
+//     @0x7671340) делает `ldp x1,x8,[x0,#0xC0]` и через pFz(WeaponPiece,bool)
+//     @0x7671350 зовёт FPManager.Kxi(piece,slot) @0x68EE210 -> CreateFPWeapon
+//     (d__68/d__69 @0x68EF274/0x68EF65C) -> PlayerFPWeaponView.XZE/MjH
+//     (WeaponPiece,EV,Action). MjH @0x7C8DD7C кладёт ПРОШЛУЮ ПО ЗНАЧЕНИЮ piece
+//     в копию вьюхи (+0x28/+0x30) и возвращает ничего не сделав, если bit0
+//     (Enabled) переданной piece равен нулю.
+//   * SkinVisualHandle (+0xB0) собирается тоже из копии piece: pMd(WeaponPiece)
+//     @0x767CF50 пишет принятую piece в +0xC0/+0xC8 и зовёт Ov.pXc @0x76A3CC4
+//     -> EN.XLy -> skinData[Skin] -> hbE.VkR. На спавне pMd зовёт
+//     OnStartClient @0x767F35C (piece берётся из +0x110), по серверному RPC с
+//     piece — десериализатор ppU -> ppb -> pMd.
+//   * SyncVar-копия (+0x110) сама по себе визуал НЕ двигает: её хук-обработчик
+//     pFR(piece,piece) @0x7675638 — пустой `ret`, Update PlayerWeapon
+//     @0x767A520 не читает ни одну копию, у FPManager Update нет вовсе. Её
+//     читают серверные string-RPC (pIy/hdz/FvU/iL/FtG -> FPManager.KNw
+//     @0x68EB508), phW(hCY) @0x7671D0C (моды) и свойство get_TjU (pFN
+//     @0x7690E28).
+//   Вывод: писать надо ОБЕ копии — у каждой свой потребитель.
 //
 //   WeaponPiece.Skin — ИНДЕКС В СОБСТВЕННОМ массиве скинов предмета, а не
 //   глобальный id. Это буквально код игры, EN.XLy(WeaponPiece,
 //   List<AssetReference>) RVA 0x7CBC768:
+//     tbz w20,#0 / tbnz x20,#0x2f -> Enabled==0 или Skin<0: ссылок нет вовсе
 //     asr w1,w20,#0x10        -> Number
 //     bl  EG.XHb              -> PlayerWeaponPiece (реестр EG, static)
 //     ldr x1,[piece+0x18]     -> PlayerWeaponPiece.id
@@ -29,17 +55,27 @@
 //   То есть достаточно положить в +0x4 другой индекс — дальше игра сама
 //   возьмёт другой SkinData и другой префаб.
 //
-// ПОЧЕМУ НУЖНА ПЕРЕСБОРКА. Визуал собирается асинхронно (Addressables) на
-// вызовах PlayerFPWeaponView.MjH/hIq/xM/XZE/MxP(WeaponPiece, EV, Action) и
-// EO.XHm/XHx(WeaponPiece, Action); Update у PlayerFPWeaponView НЕТ, то есть
-// сам он расхождение не замечает. Записанный индекс подхватывается на
-// следующем холстер/дроу. Чтобы не ждать его, контроллер умеет сам сделать
-// дроу: гасит WeaponPiece.Enabled на несколько тиков и возвращает — игра
-// убирает ствол и достаёт его заново уже с нашим индексом. Это локальная
-// запись в SyncVar (поток server->client), наружу она не уходит.
+// ПОЧЕМУ Enabled НЕ ТРОГАЕМ. Прежняя версия «форсировала пересборку»: гасила
+// Enabled в SyncVar и возвращала через 3 тика, ожидая холстер/дроу. Устройство
+// показало ноль эффекта, а дизассемблер объяснил: сборка читает Enabled из
+// piece, ПЕРЕДАННОЙ ПО ЗНАЧЕНИЮ (из +0xC0, а не из +0x110), а CreateFPWeapon
+// при Enabled==0 вызывает PlayerFPWeaponView.Release() + FPManager.KxS — то
+// есть ноль в этом бите рисковал разобрать вьюху, а не пересобрать. Пишутся
+// только Skin/SkinLevel, в обеих копиях.
+//
+// КТО ПЕРЕСОБИРАЕТ. Чит — внешний процесс (только process_vm_readv/writev,
+// ptrace-слот занят собственным потомком, инъекции кода нет — mem_io.h,
+// stealth.h), поэтому вызвать функции игры он не может. Пересборку делает игра
+// на своих событиях: дроу/холстер и смена ствола (hbr.pMZ/pMj -> рабочая
+// копия), моды (phW -> SyncVar), серверные piece-RPC (pMd), спавн
+// (OnStartClient). Задача чита — к моменту события держать НАШ индекс в обеих
+// копиях (запись по расхождению + readback каждый тик). В одиночной игре и на
+// своём сервере дроу читает локальную рабочую копию, поэтому скин применяется.
+// На чужом сервере RPC приносят серверную piece и могут перебить визуал — это
+// граница внешнего скинченджера, а не сбой записи.
 //
 // ДИАГНОСТИКА «пересобралось ли»: PlayerWeapon.playerFPWeaponView (релиз
-// +0xF0, бета +0x108) хранит piece, ИЗ КОТОРОГО вьюха построена (+0x28). Пока
+// +0xF0, бета +0x108) хранит piece, ИЗ КОТОРОЙ вьюха построена (+0x28). Пока
 // weaponPiece.Skin != fpView.piece.Skin — визуал старый (fp_stale в меню).
 // Рядом PlayerWeapon.skinVisualHandle (+0xB0/+0xC0): _model == 0 означает, что
 // визуал скина не загружен вовсе.
@@ -50,8 +86,9 @@
 //   * запись только по расхождению со свежим чтением + readback — §4.10;
 //   * оригиналы возвращаются на выключении/смене ствола/отвале привязки, а при
 //     смене сессии адреса забываются БЕЗ записи — как у no_recoil/weapon_tuning;
-//   * DETECTION.md: weaponPiece — SyncVar server->client, в исходящих пакетах
-//     скина нет, значит это тир 3 (клиентский визуал), не тир 5.
+//   * DETECTION.md: SyncVar weaponPiece — поток server->client, рабочая копия
+//     +0xC0 — не сетевое поле вовсе; в исходящих пакетах скина нет, значит это
+//     тир 3 (клиентский визуал), не тир 5.
 #include "viewmodel.h"
 #include "viewmodel_memory.h"
 #include "game_offsets_active.h"
@@ -76,10 +113,6 @@ inline constexpr const char* kPlayerNs = "HyperHug.Games.Oxide.Features.Player";
 // не на тот объект, и список остаётся пустым.
 constexpr int kMaxSkins = viewmodel::kSkinEntryMax;
 constexpr int kIdCap    = 40;
-// Сколько тиков оружия (тик — 100 мс, см. esp_viewmodel_tick) ствол держится
-// убранным при принудительной пересборке. Меньше — игра может не успеть
-// отпустить визуал, больше — заметно игроку как залипание.
-constexpr int kRebuildHoldTicks = 3;
 
 // Поле, в которое пишем. Повторяет семантику viewmodel::Patch (снимок ->
 // запись только по расхождению -> возврат оригинала, если поле всё ещё наше),
@@ -106,6 +139,9 @@ template<class T> struct Slot {
         if (!owned || address != addr || !same(current, last)) original = current;
         address = addr; sampled = current; fresh = true;
     }
+    // Снять «свежесть»: следующий put() запишет значение, даже если оно уже
+    // совпадает с прочитанным. Так работает запрос «переписать обе копии».
+    void invalidate() { fresh = false; }
     template<class IO> bool put(IO& io, T value) {
         if (!viewmodel::valid(value) || address < 0x10000) return false;
         // Уже совпадает (в том числе потому, что это наша прошлая запись) —
@@ -192,12 +228,14 @@ PieceRead read_piece(IO& io, uint64_t addr, Piece& out) {
 struct Context {
     Identity player, weapon, fp, fp_object, item, item_data, skins;
     uint64_t fp_view = 0;      // PlayerWeapon.playerFPWeaponView (диагностика)
-    uint64_t piece = 0;        // адрес Oxide.WeaponPiece внутри PlayerWeapon
+    uint64_t piece = 0;        // адрес SyncVar-копии Oxide.WeaponPiece (+0x110)
+    uint64_t piece_local = 0;  // адрес рабочей копии (+0xC0) — цель записи №2
     bool operator==(const Context& b) const {
         return player == b.player && weapon == b.weapon && fp == b.fp &&
                fp_object == b.fp_object && item == b.item &&
                item_data == b.item_data && skins == b.skins &&
-               fp_view == b.fp_view && piece == b.piece;
+               fp_view == b.fp_view && piece == b.piece &&
+               piece_local == b.piece_local;
     }
 };
 
@@ -377,19 +415,16 @@ template<class IO> class Controller {
     Context context_{};
     uint64_t weapon_cache_ = 0;
 
+    // SyncVar-копия (+0x110): её читают серверные string-RPC, phW и свойство
+    // get_TjU. Рабочая копия (+0x110-0x50): из неё hbr.pMZ/pMj собирают
+    // FP-вьюху на дроу, и её же перезаписывает pMd. Обе — цели записи.
     Slot<int16_t> skin_;
     Slot<uint8_t> level_;
-    Slot<uint8_t> enabled_;   // только на время принудительной пересборки
+    Slot<int16_t> skin_local_;
+    Slot<uint8_t> level_local_;
 
-    int  rebuild_ = 0;        // >0 — сколько тиков ствол ещё убран
-    bool rebuild_armed_ = false;   // взведён ли запрос (edge)
-    bool rebuild_request_ = false; // одноразовый запрос из меню/CLI
-    bool auto_rebuild_ = false;    // последнее значение тумблера «Пересобирать
-                                   // при смене»: логу нужно знать, почему после
-                                   // записи нет цикла холстер/дроу
+    bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
     bool scan_request_ = false;    // одноразовый запрос перечитать список
-    int  applied_index_ = -1;      // какой индекс уже применён (для auto-rebuild)
-    int  applied_level_ = -1;
 
     int  scan_age_ = 0;            // тиков до перечитывания списка
     viewmodel::SkinEntryView entries_[kMaxSkins]{};
@@ -398,6 +433,7 @@ template<class IO> class Controller {
     int  live_skin_ = -1, live_level_ = -1;
     bool piece_read_ = false;   // live_skin_/live_level_ действительно прочитаны
     bool fp_stale_ = false, handle_live_ = false;
+    int  local_state_ = -1;     // рабочая копия: -1 не читается, 0 наша, 1 чужая
 
     int stage_ = 0;
     bool fail(int stage) { stage_ = stage; return false; }
@@ -454,6 +490,7 @@ template<class IO> class Controller {
         if (!io.read(net + NETWORK_IDENTITY_IS_LOCAL_PLAYER, local) || local != 1) return fail(4);
         if (!find_weapon(player, weapon) || !c.weapon.capture(io, weapon, true)) return fail(5);
         c.piece = weapon + PLAYERWEAPON_PIECE;
+        c.piece_local = weapon + PLAYERWEAPON_PIECE_LOCAL;
         // FP-вьюха и ручка визуала — только диагностика, их отсутствие не
         // останавливает запись индекса.
         pointer(io, weapon + PLAYERWEAPON_FP_VIEW, c.fp_view);
@@ -535,6 +572,14 @@ template<class IO> class Controller {
         live_skin_ = piece ? piece->skin : -1;
         live_level_ = piece ? piece->level : -1;
         fp_stale_ = handle_live_ = false;
+        // Рабочая копия: из неё игра соберёт вьюху на следующем дроу. «Наша» —
+        // значит пересборка возьмёт записанный индекс; «чужая» — игра её уже
+        // перезаписала (RPC/спавн), следующий тик восстановит нашу.
+        local_state_ = -1;
+        Piece work;
+        if (context_.piece_local && read_piece(io, context_.piece_local, work) == PieceRead::Ok)
+            local_state_ = (piece && work.skin == piece->skin &&
+                            work.level == piece->level) ? 0 : 1;
         uint64_t model = 0;
         if (pointer(io, context_.weapon.object + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL, model))
             handle_live_ = (model != 0);
@@ -548,9 +593,9 @@ template<class IO> class Controller {
     }
 
     bool restore_all() {
-        // Порядок существенен: сначала Enabled (иначе ствол останется убранным),
-        // затем уровень и индекс.
-        bool ok = enabled_.restore(io);
+        // Обе копии равноправны: возвращаем оригиналы и туда, и туда.
+        bool ok = level_local_.restore(io);
+        ok = skin_local_.restore(io) && ok;
         ok = level_.restore(io) && ok;
         ok = skin_.restore(io) && ok;
         return ok;
@@ -560,10 +605,15 @@ public:
     viewmodel::Status status = viewmodel::Status::Off;
     explicit Controller(IO& memory) : io(memory) {}
     int stage() const { return stage_; }
-    bool has_state() const { return skin_.owned || level_.owned || enabled_.owned; }
-    bool rebuild_busy() const { return rebuild_ > 0; }
-    // Одноразовый запрос принудительной пересборки (меню / one-shot CLI).
-    void request_rebuild() { rebuild_request_ = true; }
+    bool has_state() const {
+        return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned;
+    }
+    // Одноразовый запрос перезаписать обе копии piece, даже если значения уже
+    // совпадают (меню «Переписать обе копии» / one-shot CLI `--rebuild`). Сама
+    // пересборка вьюхи — событие игры (дроу/холстер/смена ствола), внешний
+    // процесс её запустить не может; запрос лишь гарантирует, что к событию в
+    // обеих копиях лежит наш индекс.
+    void request_rebuild() { rewrite_request_ = true; }
     // Одноразовый запрос перечитать список. Нужен и когда функция ВЫКЛЮЧЕНА:
     // меню показывает список до включения, а CLI `skins` только читает. Запрос
     // стоит одно перечитывание (строки читаются посимвольно), поэтому его
@@ -583,8 +633,7 @@ public:
         info.piece_read = piece_read_;
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
-        info.rebuild_busy = rebuild_ > 0;
-        info.auto_rebuild = auto_rebuild_;
+        info.local_state = local_state_;
         info.stage = stage_;
         info.status = status;
         std::snprintf(info.weapon, sizeof(info.weapon), "%s", weapon_name_);
@@ -592,18 +641,17 @@ public:
     }
     bool reset(bool restore_originals) {
         const bool ok = !restore_originals || restore_all();
-        skin_ = {}; level_ = {}; enabled_ = {};
+        skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
         context_ = {}; weapon_cache_ = 0;
-        rebuild_ = 0; rebuild_armed_ = false; rebuild_request_ = false;
-        auto_rebuild_ = false;
+        rewrite_request_ = false;
         scan_request_ = false;
-        applied_index_ = applied_level_ = -1;
         entry_count_ = 0; scan_age_ = 0;
         for (auto& e : entries_) e = {};
         weapon_name_[0] = '\0';
         live_skin_ = live_level_ = -1;
         piece_read_ = false;
         fp_stale_ = handle_live_ = false;
+        local_state_ = -1;
         session_ = base_ = 0;
         status = viewmodel::Status::Off;
         return ok;
@@ -619,17 +667,18 @@ public:
             reset(false);
             session_ = session; base_ = base;
         }
-        // После reset(): сброс сессии затирает и этот флаг, а он обязан
-        // отражать ТЕКУЩИЙ тумблер, а не прошлую жизнь процесса.
-        auto_rebuild_ = s.skin_rebuild;
         status = s.skin_enabled ? Status::Waiting : Status::Off;
+        // Запрос «переписать обе копии» живёт один тик и имеет смысл только
+        // при включённой функции: в выключенном состоянии писать нечего.
+        const bool force_rewrite = rewrite_request_;
+        rewrite_request_ = false;
         if (!s.skin_enabled) {
             if (!restore_all()) status = Status::Failed;
-            else { applied_index_ = applied_level_ = -1; rebuild_ = 0; }
             if (!has_state()) {
                 live_skin_ = live_level_ = -1;
                 piece_read_ = false;
                 fp_stale_ = handle_live_ = false;
+                local_state_ = -1;
             }
             // Выключенная функция не пишет НИЧЕГО, но список по явному запросу
             // перечитывает: меню рисует его до включения тумблера, а CLI
@@ -661,15 +710,12 @@ public:
             // Оригинал индекса принадлежит ПРОШЛОМУ стволу — возвращать его в
             // новый бессмысленно, поэтому при смене контекста владение
             // снимается без записи только если возврат не прошёл.
-            if (!restore_all()) { skin_ = {}; level_ = {}; enabled_ = {}; }
+            if (!restore_all()) {
+                skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
+            }
             context_ = next;
             scan_age_ = kScanEvery;   // перечитать список сразу
-            applied_index_ = applied_level_ = -1;
             entry_count_ = 0;
-            // Обратный отсчёт пересборки принадлежал ПРОШЛОМУ стволу: Enabled
-            // уже возвращён restore_all(), продолжать отсчёт по новому нельзя.
-            rebuild_ = 0;
-            rebuild_armed_ = false;
         }
 
         if (scan_request_ || scan_age_ >= kScanEvery || entry_count_ == 0) rescan();
@@ -702,13 +748,37 @@ public:
             stage_ = (piece_read == PieceRead::Unreadable) ? 14 : 15;
             return;
         }
+        const int16_t want_skin = (int16_t)s.skin_index;
+        const uint8_t want_level = (uint8_t)(s.skin_level < levels ? s.skin_level : levels - 1);
+        // Копия 1 — SyncVar (+0x110): её читают серверные string-RPC, phW и
+        // get_TjU; OnStartClient берёт из неё piece для pMd.
         skin_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN, piece.skin);
         level_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN_LEVEL, piece.level);
-        enabled_.sample_value(context_.piece + go_active::WEAPONPIECE_ENABLED, piece.enabled);
-        const int16_t want_skin = (int16_t)s.skin_index;
-        uint8_t want_level = (uint8_t)(s.skin_level < levels ? s.skin_level : levels - 1);
+        // «Переписать обе копии» снимает свежесть ПОСЛЕ выборки: put() обязан
+        // записать даже совпадающее значение и подтвердить readback'ом, а
+        // sample_value иначе вернул бы fresh и сила запроса пропала бы.
+        if (force_rewrite) { skin_.invalidate(); level_.invalidate(); }
         if (!skin_.put(io, want_skin)) { status = Status::Failed; stage_ = 16; return; }
         if (!level_.put(io, want_level)) { status = Status::Failed; stage_ = 17; return; }
+
+        // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ/pMj подают piece в
+        // FPManager.Kxi на каждом дроу, БЕЗ неё вьюха никогда не увидит наш
+        // индекс (устройство это доказало: 17 циклов записи в SyncVar, ноль
+        // пересборок). Голова читается отдельно: копия живёт своей жизнью —
+        // pMd перезаписывает её целиком из RPC-аргумента.
+        Piece local;
+        const PieceRead local_read = read_piece(io, context_.piece_local, local);
+        if (local_read != PieceRead::Ok) {
+            status = Status::Failed;
+            stage_ = (local_read == PieceRead::Unreadable) ? 20 : 21;
+            return;
+        }
+        skin_local_.sample_value(context_.piece_local + go_active::WEAPONPIECE_SKIN, local.skin);
+        level_local_.sample_value(context_.piece_local + go_active::WEAPONPIECE_SKIN_LEVEL, local.level);
+        if (force_rewrite) { skin_local_.invalidate(); level_local_.invalidate(); }
+        if (!skin_local_.put(io, want_skin)) { status = Status::Failed; stage_ = 18; return; }
+        if (!level_local_.put(io, want_level)) { status = Status::Failed; stage_ = 19; return; }
+
         // Снимок ДЛЯ МЕНЮ снимается после записи: иначе первый же тик показывал
         // бы значение до применения, и «индекс записался» было не отличить от
         // «индекс не записался» (обе строки выглядели как старый скин).
@@ -720,30 +790,11 @@ public:
         piece.level = want_level;
         read_live_state(&piece);
 
-        // ---- принудительная пересборка -----------------------------------
-        const bool changed = applied_index_ != s.skin_index || applied_level_ != want_level;
-        const bool want_rebuild = rebuild_request_ || (s.skin_rebuild && changed);
-        rebuild_request_ = false;
-        if (rebuild_ > 0) {
-            if (!--rebuild_) {
-                // Возврат Enabled — это и есть дроу: игра соберёт FP-вьюху из
-                // piece, где уже лежит наш индекс.
-                if (!enabled_.restore(io)) { status = Status::Failed; stage_ = 18; return; }
-            }
-        } else if (want_rebuild && !rebuild_armed_) {
-            // Enabled пришёл в той же голове piece — отдельного чтения нет.
-            // Уже убрано (Enabled == 0) — гасить нечего, ждём дроу игры.
-            if (piece.enabled != 0) {
-                if (!enabled_.put(io, (uint8_t)0)) { status = Status::Failed; stage_ = 19; return; }
-                rebuild_ = kRebuildHoldTicks;
-            }
-            rebuild_armed_ = true;
-        }
-        if (!changed && !want_rebuild) rebuild_armed_ = false;
-        applied_index_ = s.skin_index;
-        applied_level_ = want_level;
+        // Пересборки здесь НЕТ и быть не может: вьюху собирает игра на своих
+        // событиях (дроу/холстер, смена ствола, спавн — см. заголовок файла).
+        // Наша работа закончена, когда обе копии держат нужный индекс.
         stage_ = 0;
-        status = rebuild_ > 0 ? Status::Waiting : Status::Active;
+        status = Status::Active;
     }
 
 private:

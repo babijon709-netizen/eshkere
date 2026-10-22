@@ -239,6 +239,10 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_P
 // Между WeaponPiece и WeaponState расположен новый int attackType (0x148).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x100;            // hS playerWeaponViewReference
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x130;           // jUh (SyncVar weaponPiece)
+// Рабочая копия piece (релизный QVN 0xC0): та же роль — pMd пишет её и
+// отдаёт Ov.pXc, hbr.pMZ/pMj читают её для FP-пересборки. В бете сдвинута
+// на +0x10 вместе с skinVisualHandle (0xC0), то есть лежит сразу за ним.
+inline constexpr std::uint64_t PLAYERWEAPON_PIECE_LOCAL = 0xD0;
 inline constexpr std::uint64_t PLAYERWEAPON_STATE = 0x14C;           // jUs (SyncVar weaponState)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160;  // <player>k__BackingField
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;

@@ -106,8 +106,7 @@ skinlog::Snapshot make_snap(double now) {
     s.ui.piece_read = true;             // Skin/SkinLevel действительно прочитаны
     s.ui.fp_stale = false;              // вьюха собрана из нашего индекса
     s.ui.handle_live = true;            // ассет загружен
-    s.ui.rebuild_busy = false;
-    s.ui.auto_rebuild = true;           // тумблер «Пересобирать при смене»
+    s.ui.local_state = 0;               // рабочая копия piece держит наш индекс
     std::snprintf(s.ui.weapon, sizeof(s.ui.weapon), "dmr");
     return s;
 }
@@ -142,8 +141,9 @@ void test_enable_reports_state_once() {
     assert(count_of(text, "== skin.log: профиль release, сессия 1 ==") == 1);
     assert(count_of(text, "ствол dmr: скинов 3") == 1);
     assert(count_of(text, "в памяти игры Skin=1 SkinLevel=0") == 1);
-    assert(count_of(text, "применено") == 1);
+    assert(count_of(text, "применено (обе копии piece)") == 1);
     assert(count_of(text, "вьюха собрана из нашего индекса") == 1);
+    assert(count_of(text, "рабочая копия piece: наш индекс") == 1);
     assert(count_of(text, "визуал скина загружен") == 1);
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет запрашивался") == 1);
     assert(text.compare(0, 6, "+0.0s ") == 0);   // время — от первого открытия
@@ -262,7 +262,7 @@ void test_stale_view_and_asset_warnings() {
     stale.ui.handle_live = false;
     w.note(stale);
     std::string text = slurp(log_path());
-    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — нужен холстер/дроу") == 1);
+    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — пересоберётся на холстер/дроу или смене ствола") == 1);
     assert(count_of(text, "!! визуал скина НЕ загружен: ассета может не быть на устройстве") == 1);
 
     // Игрок убрал и достал ствол: обе строки меняются, и это видно без CLI.
@@ -301,30 +301,32 @@ void test_same_cause_is_one_line() {
     assert(count_of(text, "Нет локального игрока") == 1);
     assert(count_of(text, "стадия 1:") == 1 && count_of(text, "стадия 2:") == 0);
 
-    // Успех виден и при включённой автопересборке: индекс подтверждён чтением,
-    // а статус станет Active только после холстер/дроу.
+    // Успех виден и при статусе Waiting: индекс подтверждён чтением обеих
+    // копий, стадия 0 — строка «применено» обязана появиться.
     skinlog::Snapshot ok = make_snap(0.3);
     ok.ui.status = viewmodel::Status::Waiting;
-    ok.ui.rebuild_busy = true;
     w.note(ok);
     text = slurp(log_path());
     assert(count_of(text, "применено") == 1);
-    std::printf("  same cause: 1 line; success visible during rebuild\n");
+    std::printf("  same cause: 1 line; success visible while waiting\n");
 }
 
-void test_rebuild_cycle() {
+// Рабочая копия piece (+0xC0) — та, из которой игра соберёт вьюху на дроу.
+// Её состояние обязано быть в логе: «игра перезаписала» объясняет, почему
+// скин откатился, а молчание выглядело бы как «записали и потеряли».
+void test_local_copy_line() {
     fresh();
     skinlog::Writer w;
     w.note(make_snap(0.0));
-    skinlog::Snapshot busy = make_snap(0.1);
-    busy.ui.rebuild_busy = true;
-    w.note(busy);
-    w.note(busy);                        // удержание 3 тика — одна строка
-    w.note(make_snap(0.5));
+    skinlog::Snapshot overwritten = make_snap(0.1);
+    overwritten.ui.local_state = 1;      // игра (RPC/спавн) перезаписала копию
+    w.note(overwritten);
+    w.note(overwritten);                 // без перемен — одна строка
+    w.note(make_snap(0.5));              // тик восстановил наш индекс
     const std::string text = slurp(log_path());
-    assert(count_of(text, "пересборка: ствол убран") == 1);
-    assert(count_of(text, "пересборка: ствол возвращён") == 1);
-    std::printf("  rebuild: armed and returned, one line each\n");
+    assert(count_of(text, "рабочая копия piece: наш индекс") == 2);
+    assert(count_of(text, "рабочая копия piece: ОТЛИЧАЕТСЯ (игра перезаписала — восстанавливаем)") == 1);
+    std::printf("  local copy: ours/overwritten/restored, one line per change\n");
 }
 
 void test_weapon_switch_and_session_change() {
@@ -419,29 +421,6 @@ void test_unidentified_kind_no_asset_claim() {
     std::printf("  unidentified kind: honest 'cannot measure', re-report when identified\n");
 }
 
-void test_auto_rebuild_toggle_is_visible() {
-    fresh();
-    skinlog::Writer w;
-    skinlog::Snapshot s = make_snap(0.0);
-    w.note(s);
-    std::string text = slurp(log_path());
-    assert(count_of(text, "автопересборка: включена") == 1);
-
-    // Тумблер выключили: в логе обязана появиться причина, по которой после
-    // записи индекса нет ни одного цикла холстер/дроу, а вьюха вечно старая.
-    s.ui.auto_rebuild = false;
-    s.now = 0.5;
-    w.note(s);
-    text = slurp(log_path());
-    assert(count_of(text, "автопересборка: ВЫКЛЮЧЕНА — после записи уберите и достаньте ствол вручную") == 1);
-
-    // Дедупликация: пока тумблер не трогают, строка не повторяется.
-    for (int i = 0; i < 50; ++i) { s.now = 0.6 + 0.1 * i; w.note(s); }
-    text = slurp(log_path());
-    assert(count_of(text, "автопересборка:") == 2);
-    std::printf("  auto-rebuild toggle: announced once per change\n");
-}
-
 void test_unwritable_dir_is_survivable() {
     skinlog::Writer w;
     skinlog::Snapshot s = make_snap(0.0);
@@ -463,12 +442,11 @@ int main() {
     test_block_cause_is_reported();
     test_stale_view_and_asset_warnings();
     test_same_cause_is_one_line();
-    test_rebuild_cycle();
+    test_local_copy_line();
     test_weapon_switch_and_session_change();
     test_rotation_is_bounded();
     test_reset_forgets();
     test_unidentified_kind_no_asset_claim();
-    test_auto_rebuild_toggle_is_visible();
     test_unwritable_dir_is_survivable();
     ::unlink(log_path().c_str());
     std::printf("OK\n");

@@ -24,23 +24,19 @@ struct ViewmodelSettings {
     // DelayPromise, на которых игра ждёт между предметами при сборе лута.
     // Реализация: fast_loot_memory.h, тик из esp_viewmodel_tick.
     bool fast_loot = false;
-    // Скинченджер: подмена ИНДЕКСА скина в SyncVar Oxide.WeaponPiece ствола в
-    // руках (реализация: skin_changer_memory.h, тик из esp_viewmodel_tick).
-    // skin_index — индекс в ItemData.skinData[] ЭТОГО предмета, а не глобальный
-    // id скина: игра сама индексирует свой массив этим числом (EN.XLy,
-    // RVA 0x7CBC768: ldr x8,[ItemData,#0xD0]; [x8 + Skin*8 + 0x20]).
+    // Скинченджер: подмена ИНДЕКСА скина в Oxide.WeaponPiece ствола в руках —
+    // в ОБЕ копии поля: SyncVar (релиз +0x110) и рабочую (релиз +0xC0), из
+    // которой игра реально собирает визуал (реализация: skin_changer_memory.h,
+    // тик из esp_viewmodel_tick; раскладка доказана дизассемблером dump11966 —
+    // см. большой комментарий там). skin_index — индекс в ItemData.skinData[]
+    // ЭТОГО предмета, а не глобальный id скина: игра сама индексирует свой
+    // массив этим числом (EN.XLy, RVA 0x7CBC768: ldr x8,[ItemData,#0xD0];
+    // [x8 + Skin*8 + 0x20]).
     bool skin_enabled = false;
     int  skin_index = 0;
     // Уровень прогрессии (WeaponProgressionSkinData хранит AssetReference[]
     // по уровням). Для скинов без уровней игра его просто не читает.
     int  skin_level = 0;
-    // Принудительно пересобрать визуал. Запись индекса сама по себе картинку
-    // не меняет: FP-вьюха собирается из piece на холстер/дроу, а не каждым
-    // кадром (у PlayerFPWeaponView нет Update, только MjH/hIq/xM/XZE/MxP
-    // (WeaponPiece, EV, Action)). Опция гасит WeaponPiece.Enabled на один тик
-    // и возвращает — получается настоящий дроу уже с нашим индексом. Локально:
-    // Enabled — SyncVar server->client, наружу запись не уходит.
-    bool skin_rebuild = false;
 };
 
 namespace viewmodel {
@@ -220,7 +216,6 @@ enum class SkinBlock : int {
     Unreadable,      // WeaponPiece не читается транспортом
     WrongLayout,     // читается, но это не WeaponPiece: оффсеты не от этого билда
     WriteFailed,     // запись не подтвердилась чтением обратно
-    Stuck,           // ствол не вернулся из холстера
 };
 inline SkinBlock skin_block(int stage) {
     switch (stage) {
@@ -233,8 +228,9 @@ inline SkinBlock skin_block(int stage) {
         case 13:                                  return SkinBlock::BadIndex;
         case 14:                                  return SkinBlock::Unreadable;
         case 15:                                  return SkinBlock::WrongLayout;
-        case 16: case 17: case 19:                return SkinBlock::WriteFailed;
-        case 18:                                  return SkinBlock::Stuck;
+        case 16: case 17: case 18: case 19:       return SkinBlock::WriteFailed;
+        case 20:                                  return SkinBlock::Unreadable;
+        case 21:                                  return SkinBlock::WrongLayout;
         default:                                  return SkinBlock::NoPlayer;
     }
 }
@@ -252,7 +248,6 @@ inline const char* skin_block_text(SkinBlock block) {
         case SkinBlock::Unreadable:  return "WeaponPiece не читается";
         case SkinBlock::WrongLayout: return "Оффсеты WeaponPiece не от этого билда";
         case SkinBlock::WriteFailed: return "Запись не подтвердилась";
-        case SkinBlock::Stuck:       return "Ствол не вернулся";
         default:                     return "";
     }
 }
@@ -265,8 +260,10 @@ struct SkinUiInfo {
     int  level = -1;            // WeaponPiece.SkinLevel сейчас
     bool fp_stale = false;      // PlayerFPWeaponView собран из ДРУГОГО индекса
     bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
-    bool rebuild_busy = false;  // идёт принудительный холстер/дроу
-    bool auto_rebuild = false;  // тумблер «Пересобирать при смене» (skin_rebuild)
+    // Рабочая копия piece (+0xC0/+0xD0), из которой игра собирает визуал на
+    // холстер/дроу: -1 — не читается или не WeaponPiece, 0 — там наш индекс,
+    // 1 — индекс отличается (игра перезаписала копию, ждём следующего тика).
+    int  local_state = -1;
     bool piece_read = false;    // skin/level действительно прочитаны из памяти
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;
@@ -284,10 +281,12 @@ int  esp_skin_entries(viewmodel::SkinEntryView* out, int max);
 viewmodel::SkinUiInfo esp_skin_ui();
 // Расшифровка стадии остановки для лога/меню (стадии — в skin_changer_memory.h).
 const char* skin_change_stop_reason(viewmodel::Status status, int stage);
-// Одноразовый запрос принудительной пересборки визуала (холстер/дроу): ставится
-// меню («Пересобрать сейчас») и one-shot CLI, снимается контроллером на
-// следующем тике оружия. Сам по себе тумблер skin_rebuild означает «пересобирать
-// автоматически при смене индекса».
+// Одноразовый запрос перезаписать ОБЕ копии piece, даже если значения уже
+// совпадают (снимает «свежесть» слотов — следующий тик пишет с readback):
+// ставится меню («Переписать обе копии») и one-shot CLI `skin ... --rebuild`.
+// Внешний процесс не может САМ запустить пересборку вьюхи — её делает игра на
+// своих событиях (дроу/холстер, смена ствола, спавн); эта кнопка лишь
+// гарантирует, что к событию в обеих копиях лежит наш индекс.
 void esp_skin_request_rebuild();
 // Одноразовый запрос перечитать список скинов. Ставится меню, пока раздел
 // раскрыт, и CLI `skins`: перечитывание читает строки посимвольно, поэтому по

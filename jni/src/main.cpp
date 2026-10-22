@@ -45,8 +45,10 @@
 //   su -c /data/local/tmp/benzware skins            — скины ствола в руках:
 //                                                  индекс, тип, уровни, готов ли ассет
 //   su -c /data/local/tmp/benzware skin 2 [уровень] [--rebuild]
-//                                                  — записать индекс скина в
-//                                                  SyncVar WeaponPiece.Skin
+//                                                  — записать индекс скина в обе
+//                                                  копии WeaponPiece (SyncVar и
+//                                                  рабочую +0xC0); --rebuild —
+//                                                  перезаписать их немедленно
 // Печатает: root/не root, ядро, семейство сокета FT-драйвера и класс маячка,
 // живые пробы команд по собственной памяти (оба известных протокола FT),
 // RT-Dev (/dev/[A-GNY]{1,6}), RT-Hook (перехваченный syscall ioctl),

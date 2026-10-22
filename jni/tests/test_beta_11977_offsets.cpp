@@ -162,6 +162,7 @@ int main() {
     // --- PlayerWeapon и вьюха третьего лица ---
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
     assert(go_active::PLAYERWEAPON_STATE == 0x14C);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
@@ -256,6 +257,7 @@ int main() {
     assert(go_active::WEAPONSKIN_RECOLOR_MATERIAL == 0x48);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
     assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xB0);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
     assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
     assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);

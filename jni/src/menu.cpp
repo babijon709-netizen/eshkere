@@ -121,7 +121,6 @@ static const char* SkinBlockUi(viewmodel::SkinBlock block) {
         case viewmodel::SkinBlock::Unreadable:  return XS("WeaponPiece не читается");
         case viewmodel::SkinBlock::WrongLayout: return XS("Оффсеты WeaponPiece не от этого билда");
         case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
-        case viewmodel::SkinBlock::Stuck:       return XS("Ствол не вернулся");
         case viewmodel::SkinBlock::None:
         default:                                return XS("Скин применён");
     }
@@ -846,9 +845,10 @@ float TabContent(int tab, float dt, float cW) {
                 esp_viewmodel_tick(vm);
         }
         // ---- Скины -------------------------------------------------------
-        // Скинченджер пишет ИНДЕКС в SyncVar Oxide.WeaponPiece.Skin: игра сама
-        // берёт по нему SkinData из ItemData.skinData[] этого предмета и
-        // собирает визуал (см. skin_changer_memory.h). Список — живой, из
+        // Скинченджер пишет ИНДЕКС в обе копии Oxide.WeaponPiece (SyncVar и
+        // рабочую +0xC0): игра сама берёт по нему SkinData из
+        // ItemData.skinData[] этого предмета и собирает визуал на следующем
+        // дроу/смене ствола (см. skin_changer_memory.h). Список — живой, из
         // памяти игры: глобальной таблицы скинов не существует, индекс у
         // каждого предмета свой.
         SHdr(XS("Скины"));
@@ -884,9 +884,8 @@ float TabContent(int tab, float dt, float cW) {
                 if (vm.skin_level >= levels) vm.skin_level = levels - 1;
 
                 const int sliders = 1 + (levels > 1 ? 1 : 0);
-                CardBg(Layout::RowH * 1.f + Layout::SliderH * (float)sliders);
+                CardBg(Layout::SliderH * (float)sliders);
                 const int oldIndex = vm.skin_index, oldLevel = vm.skin_level;
-                const bool oldAuto = vm.skin_rebuild;
 
                 float indexValue = (float)vm.skin_index;
                 SliderRow("##skin_index", XS("Скин"), &indexValue, 0.f,
@@ -900,8 +899,6 @@ float TabContent(int tab, float dt, float cW) {
                               g_state.sl_skin_level, dt);
                     vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
                 }
-                ToggleRow("##skin_auto", XS("Пересобирать при смене"),
-                          &vm.skin_rebuild, g_state.a_skin_rebuild, true);
 
                 // Состояние, которое на устройстве отвечает на «применилось ли»:
                 // пока FP-вьюха собрана из другого индекса, картинка старая.
@@ -966,15 +963,17 @@ float TabContent(int tab, float dt, float cW) {
                                           : XS("Скин применён");
                 SHdr(skinVerdict, 4.f);
 
-                const char* const rebuildNow[] = {XS("Пересобрать сейчас")};
+                // «Переписать обе копии» — не пересборка вьюхи (её делает игра
+                // на дроу/смене ствола, внешний процесс функции игры не зовёт),
+                // а немедленная перезапись индекса даже когда значения совпадают.
+                const char* const rewriteNow[] = {XS("Переписать обе копии")};
                 int skinAction = -1;
-                if (ChoiceRow("##skin_rebuild_now", &skinAction, rebuildNow, 1)) {
+                if (ChoiceRow("##skin_rewrite_now", &skinAction, rewriteNow, 1)) {
                     esp_skin_request_rebuild();
-                    ShowToast(XS("Пересборка запрошена"));
+                    ShowToast(XS("Копии будут перезаписаны"));
                 }
 
-                if (oldIndex != vm.skin_index || oldLevel != vm.skin_level ||
-                    oldAuto != vm.skin_rebuild)
+                if (oldIndex != vm.skin_index || oldLevel != vm.skin_level)
                     esp_viewmodel_tick(vm);
             }
         }

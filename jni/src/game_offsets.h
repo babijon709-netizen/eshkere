@@ -452,10 +452,27 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // field from there on moved (old 0x90/0xD8/0xE8/0x100). The SyncVar trio was
 // re-identified positionally against the _Mirror_SyncVarHookDelegate__loaded /
 // _weaponPiece / _weaponState tail, not by name (names are re-obfuscated).
-// NB: the new layout also has a second WeaponPiece (YHO, was 0xA8, now
-// 0xC0) - that one is NOT the SyncVar and must not be used.
+// NB: the new layout also has a second WeaponPiece (QVN, was 0xA8, now
+// 0xC0). It is NOT the SyncVar, but "must not be used" was wrong: dump11966
+// disassembly proves it is the WORKING copy the game itself builds visuals
+// from. PlayerWeapon.pMd(piece) @0x767CF50 stores the piece it was given
+// into +0xC0/+0xC8 and then calls Ov.pXc -> EN.XLy(piece) -> skinData[Skin]
+// -> hbE.VkR to build skinVisualHandle (+0xB0); OnStartClient @0x767F35C
+// seeds pMd from the SyncVar. The equip/draw interface hbr (slots:
+// pMj(int) 18, pMZ(int,bool) 19) reads +0xC0 and tail-calls pFz ->
+// FPManager.Kxi(piece, slot) -> CreateFPWeapon -> PlayerFPWeaponView
+// XZE/MjH, i.e. the FP view is built from the +0xC0 value. The SyncVar copy
+// alone feeds nothing visual: its hook handler pFR(piece,piece) @0x7675638
+// is a bare `ret`, and no Update re-reads either field. So a skin write must
+// land in BOTH copies; neither write triggers a rebuild by itself - the game
+// rebuilds on its own events (draw/holster via hbr, mod attach via
+// phW @0x7671D0C, server piece RPCs via pIK/pMd, spawn via OnStartClient).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0xE8;  // было 0xE0; перед вьюхой вставлен YHw(bool)+паддинг; SyncVar-тройка не тронута (хуки _loaded/_weaponPiece/_weaponState на 0x150/0x158/0x160)
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x110;
+// QVN: рабочая копия WeaponPiece (см. NB выше). Пишется самой игрой только в
+// pMd; локально больше никто не перезаписывает — наша правка держится до
+// следующего серверного RPC с piece.
+inline constexpr std::uint64_t PLAYERWEAPON_PIECE_LOCAL    = 0xC0;
 inline constexpr std::uint64_t PLAYERWEAPON_STATE          = 0x120;
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x138;
 // Oxide.WeaponPiece (value type): Enabled 0x0, Number 0x2, Skin 0x4,

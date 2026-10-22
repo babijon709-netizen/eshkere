@@ -7,27 +7,29 @@
 //     su -c /data/local/tmp/benzware skins rt-dev 12345       // режим + pid
 //     su -c /data/local/tmp/benzware skin 2                   // индекс 2, уровень 0
 //     su -c /data/local/tmp/benzware skin 2 1                 // индекс 2, уровень 1
-//     su -c /data/local/tmp/benzware skin 2 0 --rebuild       // + холстер/дроу сразу
+//     su -c /data/local/tmp/benzware skin 2 0 --rebuild       // + перезапись копий сразу
 //
-// Зачем отдельная команда. Скинченджер упирается в один вопрос, который не
-// решается ни дампом, ни дизассемблером: ПЕРЕСОБИРАЕТ ли игра FP-визуал после
-// того, как индекс в weaponPiece изменился. По коду видно, что визуал
-// собирается на вызовах PlayerFPWeaponView.MjH/hIq/xM/XZE/MxP(WeaponPiece, EV,
-// Action) и EO.XHm/XHx(WeaponPiece, Action), а Update у PlayerFPWeaponView нет
-// — значит сам он расхождение не замечает и подхватывает индекс на следующем
-// холстер/дроу. Проверить это можно только на устройстве:
+// Зачем отдельная команда. Вопрос «ПЕРЕСОБИРАЕТ ли игра FP-визуал после
+// записи индекса» решён дизассемблером dump11966 и устройством (skin.log):
+// НЕ пересобирает на месте — у PlayerFPWeaponView нет Update, хук SyncVar
+// пустой (pFR @0x7675638 = ret), а сборка вьюхи (FPManager.Kxi/KNw ->
+// CreateFPWeapon -> XZE/MjH) запускается только событиями игры: дроу/холстер
+// и смена ствола читают рабочую копию piece (+0xC0), моды и серверные RPC —
+// SyncVar (+0x110). Поэтому чит пишет ОБЕ копии, а проверяется результат так:
 //
 //   1) benzware skins         — список: индекс, тип, уровни, готов ли ассет;
-//   2) benzware skin <N>      — записать индекс N;
-//   3) в игре убрать и достать ствол (или benzware skin <N> --rebuild);
+//   2) benzware skin <N>      — записать индекс N в обе копии;
+//   3) в игре убрать и достать ствол (или сменить ствол и вернуться);
 //   4) benzware skins         — строка «вьюха» скажет, собралась ли FP-вьюха
-//                               из нашего индекса (fp_stale) и жива ли ручка
-//                               визуала скина.
+//                               из нашего индекса (fp_stale), строка «копия» —
+//                               наш ли индекс в рабочей копии, и жива ли
+//                               ручка визуала скина.
 //
-// Картинка сменилась — значит достаточно записи индекса (и «Пересобрать» в меню
-// делает холстер/дроу сам). Не сменилась даже после --rebuild — значит ассет
-// скина не скачан на устройство (скины в игре докачиваются по требованию:
-// hbG/SkinDownloadSummary), и столбец «ассет» в списке это покажет.
+// Картинка сменилась — путь полный. Не сменилась после дроу — значит ассет скина
+// не скачан на устройство (скины в игре докачиваются по требованию:
+// hbG/SkinDownloadSummary), и столбец «ассет» в списке это покажет. --rebuild
+// здесь — не «сделать дроу» (внешний процесс не может звать функции игры), а
+// «перезаписать обе копии немедленно, даже если значения уже совпадают».
 //
 // Как и dump/skel, это отдельный короткоживущий процесс: без GUI и маскировки,
 // транспорт — аргумент → .mode → трейлер конфига, изучение явным шагом до bind,
@@ -71,8 +73,8 @@ namespace skinprobe {
 
 // Сколько тиков сделать и с каким интервалом. Тик оружия в esp_viewmodel_tick
 // ограничен 100 мс, а список скинов перечитывается раз в 5 тиков — поэтому
-// шаг 150 мс и 8 повторов (~1.2 с) гарантированно накрывают и запись, и
-// перечитывание списка, и полный цикл холстер/дроу (3 тика удержания).
+// шаг 150 мс и 8 повторов (~1.2 с) гарантированно накрывают и запись обеих
+// копий, и перечитывание списка.
 constexpr int kTickSleepMs = 150;
 constexpr int kTicks       = 8;
 
@@ -85,8 +87,8 @@ struct Options {
     bool have_index = false;
 };
 
-// Разбор аргументов: числа — индекс и уровень, --rebuild — флаг пересборки,
-// остальной текст — режим транспорта. Ошибку печатаем сами.
+// Разбор аргументов: числа — индекс и уровень, --rebuild — флаг немедленной
+// перезаписи обеих копий, остальной текст — режим транспорта. Ошибку печатаем сами.
 inline bool ParseArgs(int argc, char* argv[], bool want_index, Options& out, const char* usage) {
     int numbers = 0;
     for (int i = 1; i < argc; ++i) {
@@ -218,9 +220,12 @@ inline void PrintUi(metadump::Log& log, const viewmodel::SkinUiInfo& ui) {
     log.say("вьюха    : %s", ui.fp_stale
             ? "FP-вьюха собрана из ДРУГОГО индекса (пересборки ещё не было)"
             : "FP-вьюха собрана из текущего индекса");
+    log.say("копия    : рабочая копия piece %s",
+            ui.local_state < 0 ? "не читается (голова не WeaponPiece?)"
+            : ui.local_state == 0 ? "держит наш индекс"
+                                  : "ОТЛИЧАЕТСЯ (игра перезаписала; тик восстановит)");
     log.say("визуал   : ручка скина %s", ui.handle_live ? "жива (ассет загружен)"
                                                          : "ПУСТА (ассет не загружен)");
-    if (ui.rebuild_busy) log.say("пересбор : идёт холстер/дроу");
     log.say("статус   : %s, стадия %d (%s)", StatusName(status), ui.stage,
             skin_change_stop_reason(status, ui.stage));
 }
@@ -269,8 +274,8 @@ inline int List(int argc, char* argv[]) {
     const viewmodel::SkinUiInfo ui = esp_skin_ui();
     const int rc_entries = PrintEntries(log);
     PrintUi(log, ui);
-    log.say("дальше   : benzware skin <индекс> — записать, затем в игре "
-            "убрать/достать ствол");
+    log.say("дальше   : benzware skin <индекс> — записать в обе копии, затем "
+            "в игре убрать/достать ствол");
     log.say("== конец (код %d) ==, лог %s/skins_cli.log", rc_entries, CfgDir());
     return rc_entries;
 }
@@ -287,7 +292,7 @@ inline int Set(int argc, char* argv[]) {
     metadump::Log log;
     log.open((std::string(CfgDir()) + "/skin_cli.log").c_str());
     log.say("== benzware skin: запись индекса %d (уровень %d%s) ==",
-            options.index, options.level, options.rebuild ? ", с пересборкой" : "");
+            options.index, options.level, options.rebuild ? ", с немедленной перезаписью" : "");
     log.say("uid/euid : %d / %d%s", (int)getuid(), (int)geteuid(),
             geteuid() == 0 ? " (root)" : "  <-- НЕ ROOT");
     if (geteuid() != 0) log.say("!! нужен root: su -c <путь>/benzware skin ...");
@@ -295,7 +300,7 @@ inline int Set(int argc, char* argv[]) {
     if (attached != 0) return attached;
 
     // Сначала список без записи: индекс обязан существовать в массиве ЭТОГО
-    // предмета, иначе мы положили бы мусор в SyncVar.
+    // предмета, иначе мы положили бы мусор в копии WeaponPiece.
     ViewmodelSettings probe;
     probe.skin_enabled = false;
     esp_skin_request_scan();
@@ -334,7 +339,6 @@ inline int Set(int argc, char* argv[]) {
     settings.skin_enabled = true;
     settings.skin_index = options.index;
     settings.skin_level = options.level;
-    settings.skin_rebuild = false;      // пересборка — только явным запросом
     if (options.rebuild) esp_skin_request_rebuild();
     Pump(settings, kTicks);
 
@@ -345,11 +349,10 @@ inline int Set(int argc, char* argv[]) {
                 ui.skin, options.index);
         return 2;
     }
-    log.say("записано : WeaponPiece.Skin=%d SkinLevel=%d", ui.skin, ui.level);
+    log.say("записано : WeaponPiece.Skin=%d SkinLevel=%d (обе копии)", ui.skin, ui.level);
     if (ui.fp_stale) {
-        log.say("вьюха НЕ пересобрана: убери и достань ствол в игре, затем "
-                "проверь « benzware skins »");
-        log.say("или сразу:  benzware skin %d %d --rebuild", options.index, options.level);
+        log.say("вьюха НЕ пересобрана: убери и достань ствол в игре (или смени "
+                "ствол и вернись), затем проверь « benzware skins »");
     } else {
         log.say("вьюха пересобрана из нашего индекса — картинка должна была смениться");
     }

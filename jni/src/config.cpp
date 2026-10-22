@@ -336,7 +336,9 @@ static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
 struct CfgSkinTrailer {
     uint32_t magic;          // "SKN1"
     uint32_t version;        // 1
-    uint32_t flags;          // bit0 skin_enabled, bit1 skin_rebuild
+    uint32_t flags;          // bit0 skin_enabled; bit1 был skin_rebuild — тумблер
+                             // убран (Enabled-«пересборка» оказалась пустышкой,
+                             // см. skin_changer_memory.h), бит зарезервирован
     int32_t  index;          // WeaponPiece.Skin (индекс в skinData предмета)
     int32_t  level;          // WeaponPiece.SkinLevel
 };
@@ -346,8 +348,7 @@ static void WriteSkinTrailer(std::ostream& f) {
     CfgSkinTrailer t{};
     t.magic = kCfgSkinMagic;
     t.version = 1;
-    t.flags = (g_state.viewmodel.skin_enabled ? (1u << 0) : 0u) |
-              (g_state.viewmodel.skin_rebuild ? (1u << 1) : 0u);
+    t.flags = (g_state.viewmodel.skin_enabled ? (1u << 0) : 0u);
     t.index = g_state.viewmodel.skin_index;
     t.level = g_state.viewmodel.skin_level;
     uint8_t buf[sizeof(t)];
@@ -639,7 +640,8 @@ static void LoadCfgByName(const char* name, bool announce) {
     // применится до выбора существующего.
     if (hasSkin) {
         g_state.viewmodel.skin_enabled = (skin.flags & (1u << 0)) != 0;
-        g_state.viewmodel.skin_rebuild = (skin.flags & (1u << 1)) != 0;
+        // bit1 (старый skin_rebuild) намеренно игнорируется: старые конфиги
+        // грузятся, зарезервированный бит ничего не включает.
         g_state.viewmodel.skin_index = viewmodel::bounded((int)skin.index, 0,
                                                           go_active::SKIN_INDEX_MAX, 0);
         g_state.viewmodel.skin_level = viewmodel::bounded((int)skin.level, 0,

@@ -87,6 +87,7 @@ private:
     int  stale_ = -1, handle_ = -1, local_ = -2;
     int  picked_index_ = -2, picked_ready_ = -2;
     char weapon_[48] = {};
+    char head_[24] = {};   // последняя сообщённая голова рабочей копии (hex)
 
     void close() {
         if (f_) { std::fclose(f_); f_ = nullptr; }
@@ -97,6 +98,7 @@ private:
         stale_ = handle_ = -1; local_ = -2;
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
+        head_[0] = '\0';
     }
     bool ensure_open(const Snapshot& s) {
         if (f_) {
@@ -190,11 +192,30 @@ inline void Writer::note(const Snapshot& s) {
             skin_change_stop_reason(s.ui.status, s.ui.stage));
     }
 
+    // Голова рабочей копии piece сырыми байтами: строка на смену содержимого.
+    // Заполняется только когда копия НЕКаноническая (щадящая проверка приняла
+    // её по одному Enabled или отклонила на стадии 21) — это диагностика
+    // «что реально лежит в копии», в нормальном состоянии строки нет.
+    if (s.ui.local_head[0] && std::strcmp(s.ui.local_head, head_) != 0) {
+        std::snprintf(head_, sizeof(head_), "%s", s.ui.local_head);
+        say(s, "голова рабочей копии piece (сырая): %s", head_);
+    } else if (!s.ui.local_head[0]) {
+        head_[0] = '\0';
+    }
+
     const int stale = s.ui.fp_stale ? 1 : 0;
     if (stale != stale_) {
-        stale_ = stale;
-        if (stale) say(s, "вьюха СТАРАЯ: собрана из другого индекса — пересоберётся на холстер/дроу или смене ствола");
-        else if (s.ui.count > 0) say(s, "вьюха собрана из нашего индекса — картинка должна смениться");
+        if (stale) {
+            stale_ = stale;
+            say(s, "вьюха СТАРАЯ: собрана из другого индекса — пересоберётся на холстер/дроу или смене ствола");
+        } else if (s.ui.stage == 0) {
+            stale_ = stale;
+            if (s.ui.count > 0) say(s, "вьюха собрана из нашего индекса — картинка должна смениться");
+        }
+        // stage != 0 — записи не было: «собрана из нашего индекса» было бы
+        // враньём (устройство это показало: строка красовалась рядом с вечной
+        // стадией 21). Сентинель не запоминаем — строка допишется, когда
+        // применение действительно состоится.
     }
 
     // Рабочая копия piece (+0xC0) — та, из которой игра подаёт piece в сборку

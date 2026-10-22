@@ -224,6 +224,8 @@ inline void PrintUi(metadump::Log& log, const viewmodel::SkinUiInfo& ui) {
             ui.local_state < 0 ? "не читается (голова не WeaponPiece?)"
             : ui.local_state == 0 ? "держит наш индекс"
                                   : "ОТЛИЧАЕТСЯ (игра перезаписала; тик восстановит)");
+    if (ui.local_head[0])
+        log.say("голова   : рабочая копия сырая: %s (неканоническая)", ui.local_head);
     log.say("визуал   : ручка скина %s", ui.handle_live ? "жива (ассет загружен)"
                                                          : "ПУСТА (ассет не загружен)");
     log.say("статус   : %s, стадия %d (%s)", StatusName(status), ui.stage,

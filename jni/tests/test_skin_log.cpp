@@ -421,6 +421,61 @@ void test_unidentified_kind_no_asset_claim() {
     std::printf("  unidentified kind: honest 'cannot measure', re-report when identified\n");
 }
 
+// Сырая голова рабочей копии: строка на смену содержимого, только когда копия
+// неканоническая. Без неё «стадия 21» в логе — обвинение без доказательства.
+void test_local_head_line() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    std::snprintf(s.ui.local_head, sizeof(s.ui.local_head), "01 7a 52 00 ff ff 7f 00");
+    w.note(s);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "голова рабочей копии piece (сырая): 01 7a 52 00 ff ff 7f 00") == 1);
+    // То же содержимое 50 тиков — одна строка.
+    for (int i = 0; i < 50; ++i) { s.now = 0.1 + 0.1 * i; w.note(s); }
+    text = slurp(log_path());
+    assert(count_of(text, "голова рабочей копии") == 1);
+    // Содержимое сменилось (другой ствол) — строка снова одна, новая.
+    std::snprintf(s.ui.local_head, sizeof(s.ui.local_head), "01 22 33 44 55 66 77 88");
+    s.now = 6.0;
+    w.note(s);
+    text = slurp(log_path());
+    assert(count_of(text, "голова рабочей копии") == 2);
+    assert(count_of(text, "01 22 33 44 55 66 77 88") == 1);
+    // Каноническая голова (поле пусто) — строки нет вовсе.
+    w.note(make_snap(7.0));
+    text = slurp(log_path());
+    assert(count_of(text, "голова рабочей копии") == 2);
+    std::printf("  local head hex: one line per content change, silent when canonical\n");
+}
+
+// «вьюха собрана из нашего индекса» при НЕнулевой стадии — враньё: записи не
+// было, совпал старый индекс. Строка обязана дожидаться применения.
+void test_view_line_gated_by_stage() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot bad = make_snap(0.0);
+    bad.ui.stage = 21;
+    bad.ui.status = viewmodel::Status::Failed;
+    bad.ui.fp_stale = false;             // вьюха «совпадает» — но писать-то нечего
+    w.note(bad);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "вьюха собрана из нашего индекса") == 0);
+    // Применение состоялось — строка дописана, и ровно одна.
+    w.note(make_snap(1.0));
+    text = slurp(log_path());
+    assert(count_of(text, "вьюха собрана из нашего индекса") == 1);
+    // Старая вьюха сообщается на любой стадии: это факт о вьюхе, а не об успехе.
+    skinlog::Snapshot stale = make_snap(2.0);
+    stale.ui.stage = 13;
+    stale.ui.status = viewmodel::Status::Failed;
+    stale.ui.fp_stale = true;
+    w.note(stale);
+    text = slurp(log_path());
+    assert(count_of(text, "вьюха СТАРАЯ") == 1);
+    std::printf("  'view built' line waits for stage 0; 'stale' line reports anyway\n");
+}
+
 void test_unwritable_dir_is_survivable() {
     skinlog::Writer w;
     skinlog::Snapshot s = make_snap(0.0);
@@ -447,6 +502,8 @@ int main() {
     test_rotation_is_bounded();
     test_reset_forgets();
     test_unidentified_kind_no_asset_claim();
+    test_local_head_line();
+    test_view_line_gated_by_stage();
     test_unwritable_dir_is_survivable();
     ::unlink(log_path().c_str());
     std::printf("OK\n");

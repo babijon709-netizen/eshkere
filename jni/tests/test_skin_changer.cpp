@@ -502,8 +502,51 @@ void test_local_copy_bad_head() {
         f.tick(f.settings(true, 1));
         assert(f.c.stage() == 21);
         assert(viewmodel::skin_block(21) == viewmodel::SkinBlock::WrongLayout);
-        std::printf("  local head not a WeaponPiece: stage 21\n");
+        // Отклонённая голова видна в снимке сырыми байтами — «стадия 21» без
+        // них не отличает мусор от неканонических Loaded/Number.
+        assert(f.c.ui().local_head[0] != '\0');
+        assert(std::strstr(f.c.ui().local_head, "5a") != nullptr);
+        std::printf("  local head not a WeaponPiece: stage 21, raw head shown\n");
     }
+}
+
+// ---- 10е. Щадящая валидация рабочей копии ----------------------------------
+void test_local_copy_relaxed_head() {
+    {
+        Fixture f;
+        // Не-bool Loaded в рабочей копии: собственный путь дроу игры смотрит
+        // только Enabled (pMZ -> pFz -> Kxi -> CreateFPWeapon), поэтому строгая
+        // валидация здесь парковала исправный билд на стадии 21 навсегда
+        // (устройство это показало: SyncVar живой, вьюха живая).
+        f.io.put<uint8_t>(piece_local() + go_active::WEAPONPIECE_LOADED, 0x7F);
+        f.tick(f.settings(true, 1));
+        assert(f.c.stage() == 0);
+        assert(f.c.status == viewmodel::Status::Active);
+        assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+        assert(f.c.ui().local_state == 0);
+        assert(f.c.ui().local_head[0] != '\0');   // неканоничность видна в логе
+        assert(f.enabled_untouched());
+    }
+    {
+        Fixture f;
+        // Мусорный Number — тоже не повод отказывать: индекс пишется в
+        // Skin/SkinLevel, Number мы не трогаем.
+        f.io.put<int16_t>(piece_local() + go_active::WEAPONPIECE_NUMBER, -7);
+        f.tick(f.settings(true, 1));
+        assert(f.c.stage() == 0);
+        assert(f.live_skin_local() == 1);
+        assert(f.io.value<int16_t>(piece_local() + go_active::WEAPONPIECE_NUMBER) == -7);
+    }
+    {
+        Fixture f;
+        // SyncVar-копия остаётся СТРОГОЙ: не-bool Loaded там — по-прежнему
+        // «не WeaponPiece» (стадия 15), раскладка не та.
+        f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED, 0x7F);
+        f.tick(f.settings(true, 1));
+        assert(f.c.stage() == 15);
+        assert(f.io.writes == 0);
+    }
+    std::printf("  relaxed local head: accepted via Enabled, sync stays strict\n");
 }
 
 // ---- 10д. Отказ записи в рабочую копию: стадия 18/19 -----------------------
@@ -807,6 +850,7 @@ int main() {
     test_rewrite_request();
     test_enabled_never_written();
     test_local_copy_bad_head();
+    test_local_copy_relaxed_head();
     test_local_copy_write_failure();
     test_fp_stale_flag();
     test_no_skin_array();

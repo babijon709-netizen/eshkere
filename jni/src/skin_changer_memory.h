@@ -203,9 +203,19 @@ inline constexpr size_t kPieceHead = 8;
 // больше 63 у предмета с большим набором), в отличие от range-проверки самого
 // поля, из-за которой исправный билд выглядел как «поле не читается».
 template<class IO>
-PieceRead read_piece(IO& io, uint64_t addr, Piece& out) {
+// raw (если задан) получает байты головы как есть — для диагностики в логе.
+// relaxed — ослабленная валидация ДЛЯ РАБОЧЕЙ КОПИИ (+0xC0): собственный путь
+// дроу игры (pMZ читает piece из +0xC0 и несёт в pFz -> FPManager.Kxi ->
+// CreateFPWeapon) смотрит только Enabled, а Loaded/Number в этой копии бывают
+// неканоническими. Строгая валидация рабочей копии ставила исправный билд на
+// «стадия 21» навсегда (устройство это показало: SyncVar живой, вьюха живая,
+// а +0xC0 «не WeaponPiece»). SyncVar-копия остаётся строгой: её пишет игра,
+// и мусор там действительно означает чужую раскладку.
+PieceRead read_piece(IO& io, uint64_t addr, Piece& out, uint8_t* raw = nullptr,
+                     bool relaxed = false) {
     using namespace go_active;
     out = {};
+    if (raw) std::memset(raw, 0, kPieceHead);
     if (addr < 0x10000) return PieceRead::Unreadable;
     // Профиль обязан описывать голову внутри этих 8 байт: иначе раскладка чужая,
     // и это NotAPiece, а не выход за границу буфера.
@@ -213,16 +223,32 @@ PieceRead read_piece(IO& io, uint64_t addr, Piece& out) {
         WEAPONPIECE_LOADED >= kPieceHead || WEAPONPIECE_NUMBER + 1 >= kPieceHead ||
         WEAPONPIECE_SKIN + 1 >= kPieceHead)
         return PieceRead::NotAPiece;
-    uint8_t raw[kPieceHead] = {};
-    if (!io.read_range(addr, raw, kPieceHead)) return PieceRead::Unreadable;
-    out.enabled = raw[WEAPONPIECE_ENABLED];
-    out.loaded  = raw[WEAPONPIECE_LOADED];
-    out.level   = raw[WEAPONPIECE_SKIN_LEVEL];
-    std::memcpy(&out.number, raw + WEAPONPIECE_NUMBER, sizeof(out.number));
-    std::memcpy(&out.skin,   raw + WEAPONPIECE_SKIN,   sizeof(out.skin));
-    if (out.enabled > 1 || out.loaded > 1) return PieceRead::NotAPiece;
+    uint8_t head[kPieceHead] = {};
+    if (!io.read_range(addr, head, kPieceHead)) return PieceRead::Unreadable;
+    if (raw) std::memcpy(raw, head, kPieceHead);
+    out.enabled = head[WEAPONPIECE_ENABLED];
+    out.loaded  = head[WEAPONPIECE_LOADED];
+    out.level   = head[WEAPONPIECE_SKIN_LEVEL];
+    std::memcpy(&out.number, head + WEAPONPIECE_NUMBER, sizeof(out.number));
+    std::memcpy(&out.skin,   head + WEAPONPIECE_SKIN,   sizeof(out.skin));
+    // Enabled — bool в любой копии: не-bool значит это не WeaponPiece вовсе
+    // (и гейт CreateFPWeapon с таким значением ушёл бы в Release).
+    if (out.enabled > 1) return PieceRead::NotAPiece;
+    if (relaxed) return PieceRead::Ok;
+    if (out.loaded > 1) return PieceRead::NotAPiece;
     if (out.number < 0 || out.number > kPieceNumberMax) return PieceRead::NotAPiece;
     return PieceRead::Ok;
+}
+
+// 8 байт головы в "xx xx ..." для лога/CLI: 23 символа + NUL.
+inline void format_piece_head(const uint8_t (&head)[kPieceHead], char (&out)[24]) {
+    static constexpr char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < kPieceHead; ++i) {
+        out[i * 3]     = hex[head[i] >> 4];
+        out[i * 3 + 1] = hex[head[i] & 0xF];
+        out[i * 3 + 2] = ' ';
+    }
+    out[kPieceHead * 3 - 1] = '\0';
 }
 
 struct Context {
@@ -434,6 +460,7 @@ template<class IO> class Controller {
     bool piece_read_ = false;   // live_skin_/live_level_ действительно прочитаны
     bool fp_stale_ = false, handle_live_ = false;
     int  local_state_ = -1;     // рабочая копия: -1 не читается, 0 наша, 1 чужая
+    char local_head_raw_[24] = {};  // hex головы рабочей копии, если она неканоническая
 
     int stage_ = 0;
     bool fail(int stage) { stage_ = stage; return false; }
@@ -577,7 +604,10 @@ template<class IO> class Controller {
         // перезаписала (RPC/спавн), следующий тик восстановит нашу.
         local_state_ = -1;
         Piece work;
-        if (context_.piece_local && read_piece(io, context_.piece_local, work) == PieceRead::Ok)
+        // Проверка рабочей копии — щадящая, ровно как в tick(): иначе копия,
+        // которую тик только что записал, показывала бы «не читается».
+        if (context_.piece_local &&
+            read_piece(io, context_.piece_local, work, nullptr, true) == PieceRead::Ok)
             local_state_ = (piece && work.skin == piece->skin &&
                             work.level == piece->level) ? 0 : 1;
         uint64_t model = 0;
@@ -634,6 +664,7 @@ public:
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
         info.local_state = local_state_;
+        std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
         info.stage = stage_;
         info.status = status;
         std::snprintf(info.weapon, sizeof(info.weapon), "%s", weapon_name_);
@@ -652,6 +683,7 @@ public:
         piece_read_ = false;
         fp_stale_ = handle_live_ = false;
         local_state_ = -1;
+        local_head_raw_[0] = '\0';
         session_ = base_ = 0;
         status = viewmodel::Status::Off;
         return ok;
@@ -679,6 +711,7 @@ public:
                 piece_read_ = false;
                 fp_stale_ = handle_live_ = false;
                 local_state_ = -1;
+                local_head_raw_[0] = '\0';
             }
             // Выключенная функция не пишет НИЧЕГО, но список по явному запросу
             // перечитывает: меню рисует его до включения тумблера, а CLI
@@ -767,12 +800,24 @@ public:
         // пересборок). Голова читается отдельно: копия живёт своей жизнью —
         // pMd перезаписывает её целиком из RPC-аргумента.
         Piece local;
-        const PieceRead local_read = read_piece(io, context_.piece_local, local);
+        uint8_t local_head[kPieceHead] = {};
+        PieceRead local_read = read_piece(io, context_.piece_local, local, local_head);
+        const bool local_strict_ok = (local_read == PieceRead::Ok);
+        if (local_read == PieceRead::NotAPiece)
+            local_read = read_piece(io, context_.piece_local, local, local_head, true);
         if (local_read != PieceRead::Ok) {
             status = Status::Failed;
             stage_ = (local_read == PieceRead::Unreadable) ? 20 : 21;
+            // Отклонённую голову — в лог сырыми байтами: «стадия 21» без них
+            // не отличает мусор от осмысленных, но неканонических значений.
+            if (local_read == PieceRead::NotAPiece)
+                format_piece_head(local_head, local_head_raw_);
             return;
         }
+        // Щадящий вариант сработал (Loaded/Number неканонические, Enabled цел) —
+        // показать, что именно там лежит; строгая голова диагностикой не шумит.
+        if (local_strict_ok) local_head_raw_[0] = '\0';
+        else format_piece_head(local_head, local_head_raw_);
         skin_local_.sample_value(context_.piece_local + go_active::WEAPONPIECE_SKIN, local.skin);
         level_local_.sample_value(context_.piece_local + go_active::WEAPONPIECE_SKIN_LEVEL, local.level);
         if (force_rewrite) { skin_local_.invalidate(); level_local_.invalidate(); }

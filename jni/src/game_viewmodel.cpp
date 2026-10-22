@@ -821,7 +821,7 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 18:         return "working copy: Skin write not confirmed by readback";
         case 19:         return "working copy: SkinLevel write not confirmed by readback";
         case 20:         return "working copy head unreadable";
-        case 21:         return "working copy head is not a WeaponPiece (offset mismatch)";
+        case 21:         return "working copy head: Enabled is not a bool (raw head bytes are dumped in skin.log)";
         default:         return "waiting for bind or player";
     }
 }

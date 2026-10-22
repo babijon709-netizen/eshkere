@@ -25,7 +25,7 @@ static const LangPair kUiEn[] = {
     {"Автофарм", "Auto-farm"},
     {"Аим", "Aim"},
     {"Ассет", "Asset"},
-    {"Ассета скина нет на устройстве — скачай его в игре", "Skin asset is not on the device — download it in-game first"},
+    {"Ассет докачается сам — нужна сборка вьюхи (мод/насадка)", "The asset downloads itself — a view rebuild (mod/attachment) is needed"},
     {"Без баллистики", "No ballistics"},
     {"Без отдачи", "No recoil"},
     {"Без разброса", "No spread"},

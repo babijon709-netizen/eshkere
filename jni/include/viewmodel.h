@@ -193,7 +193,8 @@ struct SkinEntryView {
     int      index = -1;             // значение, которое пишется в WeaponPiece.Skin
     SkinKind kind = SkinKind::Unknown;
     int      levels = 1;             // >1 у WeaponProgressionSkinData (массивы по уровням)
-    bool     ready = false;          // AssetReference.m_Operation непуста: ассет уже запрашивался
+    bool     ready = false;          // AssetReference.m_Operation непуста: ассет уже запрашивался;
+                                     // сборка вьюхи ставит закачку САМА, false — сборки ещё не было
     char     id[48] = {};            // SkinData.Id (UTF-8)
     char     base_id[32] = {};       // SkinData.baseId — id базового предмета
 };

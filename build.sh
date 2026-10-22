@@ -3,8 +3,7 @@
 #
 # Output:
 #   libs/arm64-v8a/benzware.sh        <- main artifact (what CI uploads)
-#   libs/arm64-v8a/xvcen              <- raw ndk-build output (LOCAL_MODULE := xvcen)
-#   libs/arm64-v8a/xvcen-arm64-v8a    <- legacy alias
+#   libs/arm64-v8a/benzware           <- raw ndk-build output (LOCAL_MODULE := benzware)
 #
 # Usage:  ./build.sh          (CI)   NDK from ANDROID_NDK_HOME
 #         ANDROID_NDK_HOME=/opt/android-ndk ./build.sh   (local)
@@ -46,7 +45,7 @@ JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
     APP_BUILD_SCRIPT=jni/Android.mk
 
 ABI=arm64-v8a
-BIN="libs/$ABI/xvcen"
+BIN="libs/$ABI/benzware"
 if [ ! -f "$BIN" ]; then
     echo "build.sh: expected $BIN, got:" >&2
     ls -l "libs/$ABI" 2>/dev/null >&2 || true
@@ -54,7 +53,6 @@ if [ ! -f "$BIN" ]; then
 fi
 
 cp -f "$BIN" "libs/$ABI/benzware.sh"
-cp -f "$BIN" "libs/$ABI/xvcen-arm64-v8a"
-chmod 0755 "libs/$ABI/benzware.sh" "libs/$ABI/xvcen-arm64-v8a"
+chmod 0755 "libs/$ABI/benzware.sh"
 
 echo "build.sh: ok -> $(ls -l "libs/$ABI/benzware.sh")"

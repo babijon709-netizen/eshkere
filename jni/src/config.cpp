@@ -1,0 +1,951 @@
+#include "config.h"
+#include <cmath>
+#include "str.h"
+#include "app_state.h"
+#include "cfg.h"
+#include "theme.h"
+#include "hud.h"
+#include "audio.h"
+#include "lang.h"
+#include "game.h"
+#include "cfg_pick.h"
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <fstream>
+#include <string>
+#include <sys/inotify.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <utime.h>
+#include <unistd.h>
+#include <vector>
+
+static constexpr uint8_t kXorKey   = 0xA7;
+
+
+
+static const char* kCfgDir_() noexcept {
+    static constexpr auto _s = xp::_mk("/data/local/benzware/");
+    return _s.d();
+}
+#define kCfgDir (kCfgDir_())
+
+ConfigEntry g_configs[kMaxConfigs] = {};
+int         g_configCount    = 0;
+int         g_configToDelete = -1;
+char        g_loadedConfigName[64] = {};
+float       g_cfgLoadAnim[kMaxConfigs] = {};
+int         g_cfgLoadedIdx = -1;
+
+static std::string CfgPath(const char* name) {
+    return std::string(kCfgDir) + name + XS(".cfg");
+}
+
+static void XorBuf(uint8_t* buf, size_t sz) {
+    for (size_t i = 0; i < sz; i++) buf[i] ^= (kXorKey ^ (uint8_t)(i * 0x1D + 0x3B));
+}
+
+void CfgScanDir() {
+    mkdir(kCfgDir, 0777);
+    g_configCount = 0;
+    DIR* d = opendir(kCfgDir);
+    if (!d) return;
+    struct dirent* e;
+    std::vector<std::string> names;
+    while ((e = readdir(d)) != nullptr) {
+        std::string fn = e->d_name;
+        if (fn.size() > 4 && fn.substr(fn.size() - 4) == XS(".cfg"))
+            names.push_back(fn.substr(0, fn.size() - 4));
+    }
+    closedir(d);
+    std::sort(names.begin(), names.end());
+    for (auto& n : names) {
+        if (g_configCount >= kMaxConfigs) break;
+        snprintf(g_configs[g_configCount++].name, 64, "%s", n.c_str());
+    }
+}
+
+static int g_inotifyFd  = -1;
+static int g_inotifyWd  = -1;
+
+void CfgWatchInit() {
+    g_inotifyFd = inotify_init1(IN_NONBLOCK);
+    if (g_inotifyFd < 0) return;
+    mkdir(kCfgDir, 0777);
+    g_inotifyWd = inotify_add_watch(g_inotifyFd, kCfgDir,
+        IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_MODIFY);
+}
+
+void CfgWatchFree() {
+    if (g_inotifyFd >= 0) {
+        if (g_inotifyWd >= 0) inotify_rm_watch(g_inotifyFd, g_inotifyWd);
+        close(g_inotifyFd);
+        g_inotifyFd = -1;
+        g_inotifyWd = -1;
+    }
+}
+
+void CfgWatchTick() {
+    if (g_inotifyFd < 0) return;
+    char buf[512];
+    ssize_t n = read(g_inotifyFd, buf, sizeof(buf));
+    if (n > 0) CfgScanDir();
+}
+
+struct CfgBlob {
+    uint32_t magic;
+    uint32_t version;
+    bool  aim_touch, aim_pos, aim_special;
+    int   aim_bone;
+    bool  aim_vis_check, aim_draw_fov;
+    //   aim_mode — режим аима (0 тач / 1 память / 2 сайлент). Лежит в байте
+    //                                 выравнивания, который в раскладке и так
+    //                                 был между aim_draw_fov и float aim_fov:
+    //                                 sizeof(CfgBlob) остаётся 260, версия
+    //                                 остаётся 4. Старые конфиги держат тут 0,
+    //                                 то есть прежний тач-аим.
+    uint8_t aim_mode;
+    //   aim_smoothness -> aim_lead   (smoothing has its own gun_str slot,
+    //                                 and this one was only ever a mirror).
+    //                                 Reused: farm search range in metres
+    //                                 (0 in old configs = use the default).
+    float aim_fov, aim_lead;
+    // Every field that a feature outgrew is renamed in place rather than
+    // appended, so the byte layout — and with it version 4 and every config
+    // already saved on a device — stays valid. Current renames:
+    //   esp_hp        -> esp_ore          esp_ping        -> esp_animal
+    //   esp_weapon_icon -> esp_team
+    //   esp_health_col  -> esp_ally_col   esp_money_col   -> esp_animal_col
+    //   esp_weapon_icon_col -> esp_loot_col
+    //   esp_ping_col    -> esp_extra (packed scalars, see below)
+    //   aim_smoothness  -> aim_lead
+    //   esp_stroke      -> aim_touch_x    esp_rounding -> aim_touch_y
+    //                      (точка пальца аимбота в долях экрана: те же два
+    //                       float'а на своих местах; в старых конфигах там
+    //                       2.0 и 0.0 — вне диапазона, значит «не задана»)
+    bool  esp_box, esp_name, esp_ore, esp_wall, esp_chams;
+    bool  esp_weapon, esp_team, esp_tracer, esp_skeleton;
+    bool  aim_scope_only, esp_animal, esp_vis_check, esp_fill;
+    float esp_thick, aim_touch_x, aim_touch_y, esp_fill_pct;
+    float gun_str, gun_fov, gun_trigger_delay;
+    //   ui_fps        -> ui_lang_en       (счётчик FPS убран навсегда, а слот
+    //                                      bool в раскладке заморожен версией;
+    //                                      теперь тут язык: 0 рус / 1 англ)
+    bool  ui_lang_en, ui_dark_mode, ui_show_sep;
+    ImVec4 esp_box_col, esp_box_col_invis, esp_name_col, esp_ally_col, esp_distance_col;
+    ImVec4 esp_weapon_col, esp_loot_col, esp_tracer_col, esp_skeleton_col, esp_animal_col;
+    // Four scalars that had no slot of their own:
+    //   x = bit 0 loot ESP, bit 1 pickup ESP, bit 2 bots ESP, bit 3 vehicles ESP,
+    //       bit 4 screen freecam button HIDDEN (inverted: old configs hold 0
+    //       here, i.e. the button stays visible, as before), bit 5 scrap ESP,
+    //       bit 6 fast fire, bit 7 fast reload, bit 8 house boxes HIDDEN
+    //       (inverted like bit 4: old configs hold 0, i.e. visible, as before).
+    //       Bit 9 belongs to a retired option: it is never written and is
+    //       deliberately ignored on load so older profiles keep their other
+    //       packed settings.
+    //       bit 12 aim "только при стрельбе", bit 13 стрелки 360°,
+    //       bit 14 стрелки ВЕЗДЕ (инвертировано, как 4 и 8: старые конфиги
+    //              держат 0, то есть «только вне экрана» — как дефолт фичи),
+    //       bit 15 дистанция у стрелок, bit 17 радар 360°.
+    //       Bit 16 belongs to the removed auto-fire option: never written and
+    //       deliberately ignored on load, so it stays reserved like bit 9.
+    //       bit 18 No Grass (bit 17 remains the radar toggle).
+    //   y = marker draw distance (m),
+    //   z = aim priority + 1 (so an old config's 1.0 still means "default"),
+    //   w = pickup colour packed as r*65536 + g*256 + b (exact in a float,
+    //       since 0xFFFFFF < 2^24); <= 1 means "never written, use default".
+    ImVec4 esp_extra;
+    int   esp_box_type;
+    float esp_box_rounding;
+};
+static_assert(sizeof(CfgBlob) == 260, "stable cfg blob");
+
+// UI state that used to live in sidecar files (.lang/.accent/.layout/.mode)
+// is appended after ConfigExtension as a trailer. CfgBlob and the extension
+// keep their layouts; readers that stop at the extension ignore the trailer.
+struct CfgUiTrailer {
+    uint32_t magic;          // "CUI1"
+    uint32_t version;        // 1
+    uint32_t accent_idx;     // 0..8, see app_state.h
+    float    accent_rgb[3];
+    uint32_t mem_backend;    // EspMemBackend chosen on the mode screen
+    float    layout[20];     // -1 = not set
+};
+static constexpr uint32_t kCfgUiMagic = 0x31495543u;
+
+static void LayoutToArray(float* v) {
+    v[0]  = g_state.farm_joy_x;     v[1]  = g_state.farm_joy_y;
+    v[2]  = g_state.farm_fire_x;    v[3]  = g_state.farm_fire_y;
+    v[4]  = g_state.freecam_joy_x;  v[5]  = g_state.freecam_joy_y;
+    v[6]  = g_state.hud_cnt_x;      v[7]  = g_state.hud_cnt_y;
+    v[8]  = g_state.freecam_btn_x;  v[9]  = g_state.freecam_btn_y;
+    v[10] = g_state.aim_tx;         v[11] = g_state.aim_ty;
+    v[12] = g_state.freecam_look_x; v[13] = g_state.freecam_look_y;
+    v[14] = g_state.freecam_look_radius;
+    v[15] = g_state.freecam_joy_size;
+    v[16] = g_state.fakelag_btn_x;  v[17] = g_state.fakelag_btn_y;
+    v[18] = g_state.xray_btn_x;     v[19] = g_state.xray_btn_y;
+}
+
+static void LayoutFromArray(const float* v) {
+    auto cl = [](float x) { return (x > 0.f && x < 1.f) ? x : -1.f; };
+    g_state.farm_joy_x = cl(v[0]);   g_state.farm_joy_y = cl(v[1]);
+    g_state.farm_fire_x = cl(v[2]);  g_state.farm_fire_y = cl(v[3]);
+    g_state.freecam_joy_x = cl(v[4]); g_state.freecam_joy_y = cl(v[5]);
+    g_state.hud_cnt_x = cl(v[6]);    g_state.hud_cnt_y = cl(v[7]);
+    g_state.freecam_btn_x = cl(v[8]); g_state.freecam_btn_y = cl(v[9]);
+    g_state.aim_tx = cl(v[10]);      g_state.aim_ty = cl(v[11]);
+    g_state.freecam_look_x = cl(v[12]);
+    g_state.freecam_look_y = cl(v[13]);
+    g_state.freecam_look_radius = (v[14] >= 0.10f && v[14] <= 0.48f) ? v[14] : 0.28f;
+    g_state.freecam_joy_size = (v[15] >= 60.f && v[15] <= 200.f) ? v[15] : 100.f;
+    g_state.fakelag_btn_x = cl(v[16]); g_state.fakelag_btn_y = cl(v[17]);
+    g_state.xray_btn_x = cl(v[18]);    g_state.xray_btn_y = cl(v[19]);
+}
+
+static void WriteUiTrailer(std::ostream& f) {
+    CfgUiTrailer t{};
+    t.magic = kCfgUiMagic;
+    t.version = 1;
+    const int idx = g_state.ui_accent_idx;
+    t.accent_idx = (uint32_t)((idx >= 0 && idx <= 8) ? idx : 0);
+    t.accent_rgb[0] = g_state.ui_accent_rgb.x;
+    t.accent_rgb[1] = g_state.ui_accent_rgb.y;
+    t.accent_rgb[2] = g_state.ui_accent_rgb.z;
+    t.mem_backend = (uint32_t)esp_get_mem_backend();
+    LayoutToArray(t.layout);
+    uint8_t buf[sizeof(t)];
+    memcpy(buf, &t, sizeof(t));
+    XorBuf(buf, sizeof(buf));
+    f.write((char*)buf, sizeof(buf));
+}
+
+static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
+    memset(&t, 0, sizeof(t));
+    for (int i = 0; i < 20; ++i) t.layout[i] = -1.f;
+    uint8_t buf[sizeof(CfgUiTrailer)];
+    f.read((char*)buf, sizeof(buf));
+    size_t got = (size_t)f.gcount();
+    constexpr size_t kLegacySize = sizeof(CfgUiTrailer) - 2 * sizeof(float);
+    if (got != sizeof(buf) && got != kLegacySize) return false;
+    XorBuf(buf, got);
+    memcpy(&t, buf, got);
+    return t.magic == kCfgUiMagic && t.version == 1;
+}
+
+struct CfgExt2Trailer {
+    uint32_t magic;          // "CFX2"
+    uint32_t version;        // 1
+    uint32_t flags;
+    float    esp_arrow_ring;
+    float    esp_radar_size;
+    float    esp_radar_range;
+    float    screen_stretch_x;
+    float    fake_lag_percent;
+    float    xray_range;
+    float    freecam_speed;
+    float    aim_speed;
+    ImVec4   aim_fov_col;
+    ImVec4   esp_bot_col;
+    ImVec4   esp_vehicle_col;
+    ImVec4   esp_scrap_col;
+    ImVec4   esp_turret_col;
+    ImVec4   esp_backpack_col;
+    ImVec4   esp_sleeper_col;
+    ImVec4   esp_cupboard_col;
+    ImVec4   esp_ore_stone_col;
+    ImVec4   esp_ore_metal_col;
+    ImVec4   esp_ore_sulfur_col;
+    ImVec4   esp_arrow_col;
+    ImVec4   esp_pumpkin_col;
+};
+static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
+
+static void WriteExt2Trailer(std::ostream& f) {
+    CfgExt2Trailer t{};
+    t.magic = kCfgExt2Magic;
+    t.version = 1;
+    t.flags = (g_state.esp_ore_stone ? (1u << 0) : 0u) |
+              (g_state.esp_ore_iron  ? (1u << 1) : 0u) |
+              (g_state.esp_ore_sulfur ? (1u << 2) : 0u) |
+              (g_state.always_day    ? (1u << 3) : 0u) |
+              (g_state.farm_wood     ? (1u << 4) : 0u) |
+              (g_state.farm_stone    ? (1u << 5) : 0u) |
+              (g_state.farm_metal    ? (1u << 6) : 0u) |
+              (g_state.farm_sulfur   ? (1u << 7) : 0u) |
+              (g_state.fake_lag      ? (1u << 8) : 0u) |
+              (g_state.xray_on       ? (1u << 9) : 0u) |
+              (g_state.ui_panel_left ? (1u << 10) : 0u) |
+              (g_state.aim_pos       ? (1u << 11) : 0u) |
+              (cfg::esp::vis_check   ? (1u << 12) : 0u) |
+              (cfg::esp::fill        ? (1u << 13) : 0u) |
+              (g_state.farm_on       ? (1u << 14) : 0u) |
+              (g_state.esp_pumpkins  ? (1u << 15) : 0u);
+    t.esp_arrow_ring   = g_state.esp_arrow_ring;
+    t.esp_radar_size   = g_state.esp_radar_size;
+    t.esp_radar_range  = g_state.esp_radar_range;
+    t.screen_stretch_x = g_state.screen_stretch_x;
+    t.fake_lag_percent = g_state.fake_lag_percent;
+    t.xray_range       = g_state.xray_range;
+    t.freecam_speed    = g_state.freecam_speed;
+    t.aim_speed        = g_state.gun_str;
+    t.aim_fov_col        = cfg::aim::fov_col;
+    t.esp_bot_col        = cfg::esp::bot_col;
+    t.esp_vehicle_col    = cfg::esp::vehicle_col;
+    t.esp_scrap_col      = cfg::esp::scrap_col;
+    t.esp_turret_col     = cfg::esp::turret_col;
+    t.esp_backpack_col   = cfg::esp::backpack_col;
+    t.esp_sleeper_col    = cfg::esp::sleeper_col;
+    t.esp_cupboard_col   = cfg::esp::cupboard_col;
+    t.esp_ore_stone_col  = cfg::esp::ore_stone_col;
+    t.esp_ore_metal_col  = cfg::esp::ore_metal_col;
+    t.esp_ore_sulfur_col = cfg::esp::ore_sulfur_col;
+    t.esp_arrow_col      = cfg::esp::arrow_col;
+    t.esp_pumpkin_col    = cfg::esp::pumpkin_col;
+    uint8_t buf[sizeof(t)];
+    memcpy(buf, &t, sizeof(t));
+    XorBuf(buf, sizeof(buf));
+    f.write((char*)buf, sizeof(buf));
+}
+
+static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
+    t = CfgExt2Trailer{};
+    t.esp_pumpkin_col = cfg::esp::pumpkin_col;
+    uint8_t buf[sizeof(CfgExt2Trailer)];
+    f.read((char*)buf, sizeof(buf));
+    size_t got = (size_t)f.gcount();
+    constexpr size_t kPrePumpkinSize = sizeof(CfgExt2Trailer) - sizeof(ImVec4);
+    if (got != sizeof(buf) && got != kPrePumpkinSize) return false;
+    XorBuf(buf, got);
+    memcpy(&t, buf, got);
+    return t.magic == kCfgExt2Magic && t.version == 1;
+}
+
+// ---- Трейлер скинченджера --------------------------------------------------
+// Четвёртый прицеп после CfgBlob / VMW1 / CUI1 / CFX2. Отдельный, а не бит в
+// CFX2, потому что кроме тумблеров несёт два числа (индекс и уровень), а
+// CfgBlob и ConfigExtension заморожены версией (см. шапку). Читатели, которые
+// останавливаются на CFX2, этот трейлер просто не видят — старые конфиги
+// грузятся как раньше, со скинченджером по умолчанию.
+struct CfgSkinTrailer {
+    uint32_t magic;          // "SKN1"
+    uint32_t version;        // 1
+    uint32_t flags;          // bit0 skin_enabled; bit1 был skin_rebuild — тумблер
+                             // убран (Enabled-«пересборка» оказалась пустышкой,
+                             // см. skin_changer_memory.h), бит зарезервирован
+    int32_t  index;          // WeaponPiece.Skin (индекс в skinData предмета)
+    int32_t  level;          // WeaponPiece.SkinLevel
+};
+static constexpr uint32_t kCfgSkinMagic = 0x314E4B53u;   // "SKN1"
+
+static void WriteSkinTrailer(std::ostream& f) {
+    CfgSkinTrailer t{};
+    t.magic = kCfgSkinMagic;
+    t.version = 1;
+    t.flags = (g_state.viewmodel.skin_enabled ? (1u << 0) : 0u);
+    t.index = g_state.viewmodel.skin_index;
+    t.level = g_state.viewmodel.skin_level;
+    uint8_t buf[sizeof(t)];
+    memcpy(buf, &t, sizeof(buf));
+    XorBuf(buf, sizeof(buf));
+    f.write((char*)buf, sizeof(buf));
+}
+
+static bool ReadSkinTrailer(std::istream& f, CfgSkinTrailer& t) {
+    t = CfgSkinTrailer{};
+    uint8_t buf[sizeof(CfgSkinTrailer)];
+    f.read((char*)buf, sizeof(buf));
+    if ((size_t)f.gcount() != sizeof(buf)) return false;
+    XorBuf(buf, sizeof(buf));
+    memcpy(&t, buf, sizeof(t));
+    return t.magic == kCfgSkinMagic && t.version == 1;
+}
+
+// Единственный источник «текущего» конфига: тот же селектор, что у ConfigLoadLast().
+static std::string NewestCfgPath() {
+    std::string name;
+    if (!CfgPickNewest(kCfgDir, name)) return {};
+    return CfgPath(name.c_str());
+}
+
+static bool ReadNewestBlob(CfgBlob& s) {
+    const std::string p = NewestCfgPath();
+    if (p.empty()) return false;
+    std::ifstream f(p, std::ios::binary);
+    uint8_t buf[sizeof(s)];
+    f.read((char*)buf, sizeof(buf));
+    if ((size_t)f.gcount() != sizeof(buf)) return false;
+    XorBuf(buf, sizeof(buf));
+    memcpy(&s, buf, sizeof(s));
+    return s.magic == 0x58564345U && s.version == 4;
+}
+
+static bool ReadNewestUi(CfgUiTrailer& t) {
+    const std::string p = NewestCfgPath();
+    if (p.empty()) return false;
+    std::ifstream f(p, std::ios::binary);
+    f.seekg(sizeof(CfgBlob) + sizeof(viewmodel::ConfigExtension));
+    return f && ReadUiTrailer(f, t);
+}
+
+// Startup restore: state comes from the newest config, nothing else on disk.
+void RestoreLang() {
+    CfgBlob s;
+    if (ReadNewestBlob(s)) {
+        const bool en = (*reinterpret_cast<const unsigned char*>(&s.ui_lang_en) != 0);
+        lang::set(en ? lang::LANG_EN : lang::LANG_RU);
+    }
+}
+
+void RestoreAccent() {
+    CfgUiTrailer t;
+    if (!ReadNewestUi(t)) return;
+    int idx = (int)t.accent_idx;
+    if (idx < 0 || idx > 8) idx = 0;
+    auto cl = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+    g_state.ui_accent_idx = idx;
+    g_state.ui_accent_rgb = {cl(t.accent_rgb[0]), cl(t.accent_rgb[1]), cl(t.accent_rgb[2]), 1.0f};
+}
+
+void RestoreLayout() {
+    CfgUiTrailer t;
+    if (ReadNewestUi(t)) LayoutFromArray(t.layout);
+}
+
+// KERNEL.md §6: выбранный на экране режим сохраняется в
+// /storage/emulated/0/benzware/.mode — оттуда его берут one-shot CLI
+// (dump/skel). Значения: external/kernel/rt-dev/rt-hook.
+static const char* kModeDir() noexcept {
+    static constexpr auto _s = xp::_mk("/storage/emulated/0/benzware/");
+    return _s.d();
+}
+static std::string ModeFilePath() { return std::string(kModeDir()) + ".mode"; }
+
+void CfgWriteMemBackend(int backend) {
+    const char* v = nullptr;
+    if (backend == ESP_MEM_EXTERNAL)      v = "external";
+    else if (backend == ESP_MEM_FT)       v = "kernel";
+    else if (backend == ESP_MEM_RT_DEV)   v = "rt-dev";
+    else if (backend == ESP_MEM_RT_HOOK)  v = "rt-hook";
+    else return;
+    mkdir(kModeDir(), 0777);
+    FILE* f = fopen(ModeFilePath().c_str(), "w");
+    if (!f) return;
+    fputs(v, f);
+    fputc('\n', f);
+    fclose(f);
+}
+
+static int ParseModeFileValue(const char* s) {
+    if (!s) return -1;
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+    char v[16] = {};
+    size_t n = 0;
+    while (s[n] && n + 1 < sizeof(v) &&
+           s[n] != ' ' && s[n] != '\t' && s[n] != '\n' && s[n] != '\r') {
+        v[n] = s[n];
+        ++n;
+    }
+    if (!strcmp(v, "external") || !strcmp(v, "ext")) return ESP_MEM_EXTERNAL;
+    if (!strcmp(v, "kernel") || !strcmp(v, "ft"))    return ESP_MEM_FT;
+    if (!strcmp(v, "rt-dev") || !strcmp(v, "rt"))    return ESP_MEM_RT_DEV;
+    if (!strcmp(v, "rt-hook"))                       return ESP_MEM_RT_HOOK;
+    return -1;
+}
+
+// Transport chosen on the mode screen, read back by the one-shot CLI
+// (metadata dump, skeleton diag). .mode first, newest-config trailer as
+// legacy fallback. -1 = nothing saved yet.
+int CfgSavedMemBackend() {
+    FILE* f = fopen(ModeFilePath().c_str(), "r");
+    if (f) {
+        char buf[32] = {};
+        const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        if (n > 0) {
+            const int m = ParseModeFileValue(buf);
+            if (m >= 0) return m;
+        }
+    }
+    CfgUiTrailer t;
+    if (!ReadNewestUi(t) || t.mem_backend > 3) return -1;
+    return (int)t.mem_backend;
+}
+
+static void ConfigSaveToPath(const std::string& path) {
+    CfgBlob s;
+    s.magic   = 0x58564345U;
+    s.version = 4;
+    s.aim_touch   = g_state.aim_touch;   s.aim_pos     = g_state.aim_pos;
+    s.aim_special = g_state.aim_special;
+    s.aim_bone    = g_state.aim_bone;
+    s.aim_vis_check  = cfg::aim::vis_check;
+    s.aim_draw_fov   = cfg::aim::draw_fov;
+    s.aim_mode       = (uint8_t)((g_state.aim_mode >= 0 && g_state.aim_mode <= 2) ? g_state.aim_mode : 0);
+    s.aim_fov        = cfg::aim::fov;
+    // Слот aim_lead давно свободен (см. CfgBlob) — теперь в нём живёт
+    // дальность автофарма. Старые конфиги держат тут 0 и дадут дефолт.
+    s.aim_lead       = g_state.farm_range;
+    s.esp_box     = g_state.esp_box;     s.esp_name    = g_state.esp_name;
+    s.esp_ore     = g_state.esp_ore;     s.esp_wall    = g_state.esp_wall;
+    s.esp_chams   = g_state.esp_chams;
+    s.esp_weapon      = g_state.esp_weapon;
+    s.esp_team        = g_state.esp_team;
+    s.esp_tracer      = g_state.esp_tracer;
+    s.esp_skeleton    = g_state.esp_skeleton;
+    s.aim_scope_only  = g_state.aim_scope_only;
+    s.esp_animal      = g_state.esp_animal;
+    s.esp_vis_check   = cfg::esp::vis_check;
+    s.esp_fill        = cfg::esp::fill;
+    s.esp_thick       = g_state.esp_thick;
+    // Слоты esp_stroke/esp_rounding теперь несут точку пальца аима; сюда идёт
+    // как есть (-1 = не задана, тогда работает дефолт 72%/48%).
+    s.aim_touch_x     = g_state.aim_tx;
+    s.aim_touch_y     = g_state.aim_ty;
+    s.esp_fill_pct    = cfg::esp::fill_pct;
+    s.gun_str     = g_state.gun_str;
+    s.gun_fov     = g_state.gun_fov;
+    s.gun_trigger_delay     = g_state.gun_trigger_delay;
+    s.ui_lang_en  = lang::english();     s.ui_dark_mode= g_state.ui_dark_mode;
+    s.ui_show_sep = g_state.ui_show_sep;
+    s.esp_box_col          = cfg::esp::box_col;
+    s.esp_box_col_invis    = cfg::esp::box_col_invis;
+    s.esp_name_col         = cfg::esp::name_col;
+    s.esp_ally_col         = cfg::esp::ally_col;
+    s.esp_distance_col     = cfg::esp::distance_col;
+    s.esp_weapon_col       = cfg::esp::weapon_col;
+    s.esp_loot_col         = cfg::esp::loot_col;
+    s.esp_tracer_col       = cfg::esp::tracer_col;
+    s.esp_skeleton_col     = cfg::esp::skeleton_col;
+    s.esp_animal_col       = cfg::esp::animal_col;
+    {
+        // Цвета ботов/машин не сохраняются (в esp_extra нет места) — сессионные.
+        const int flags = (g_state.esp_loot ? 1 : 0) | (g_state.esp_pickup ? 2 : 0) |
+                          (g_state.esp_bots ? 4 : 0) | (g_state.esp_vehicles ? 8 : 0) |
+                          (g_state.freecam_btn_show ? 0 : 16) | (g_state.esp_scrap ? 32 : 0) |
+                          (g_state.fast_fire ? 64 : 0) | (g_state.fast_reload ? 128 : 0) |
+                          // Инвертировано, как бит 4: старые конфиги держат 0,
+                          // то есть ящики в домах видны — как до разделения.
+                          (g_state.esp_house_boxes ? 0 : 256) |
+                          (g_state.fakelag_btn_show ? 0 : 1024) |
+                          (g_state.xray_btn_show ? 0 : 2048) |
+                          (g_state.aim_fire_only ? 4096 : 0) |
+                          (g_state.esp_arrows ? 8192 : 0) |
+                          (g_state.esp_arrows_offscreen ? 0 : 16384) |
+                          (g_state.esp_arrows_dist ? 32768 : 0) |
+                          (g_state.esp_radar ? 131072 : 0) |
+                          (g_state.no_grass ? 262144 : 0);
+        auto ch = [](float v) { int i = (int)(v * 255.f + 0.5f); return i < 0 ? 0 : (i > 255 ? 255 : i); };
+        const float packed = (float)(ch(cfg::esp::pickup_col.x) * 65536
+                                   + ch(cfg::esp::pickup_col.y) * 256
+                                   + ch(cfg::esp::pickup_col.z));
+        s.esp_extra = {(float)flags, g_state.marker_dist,
+                       (float)(g_state.aim_priority + 1), packed};
+    }
+    s.esp_box_type         = cfg::esp::box_type;
+    s.esp_box_rounding     = cfg::esp::box_rounding;
+    uint8_t buf[sizeof(s)];
+    memcpy(buf, &s, sizeof(s));
+    XorBuf(buf, sizeof(s));
+    // Пишем во временный файл и переименовываем: прерванная запись не должна
+    // оставить обрезанный .cfg с самым свежим mtime (он бы тихо обнулил аим).
+    const std::string tmp = path + XS(".tmp");
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    if (f) {
+        f.write((char*)buf, sizeof(buf));
+        auto extension = viewmodel::encode(g_state.viewmodel);
+        extension.flags |= (g_state.esp_turrets ? 128u : 0u) |
+                           (g_state.esp_backpacks ? 256u : 0u) |
+                           (g_state.esp_sleepers ? 512u : 0u) |
+                           (g_state.esp_cupboards ? 1024u : 0u);
+        // Поле упреждения сохранено в формате расширения для совместимости;
+        // автоматический предикт больше не имеет пользовательской настройки.
+        extension.aim_lead_ms = 0.f;
+        uint8_t extra[sizeof(extension)];
+        memcpy(extra, &extension, sizeof(extra));
+        XorBuf(extra, sizeof(extra));
+        f.write((char*)extra, sizeof(extra));
+        WriteUiTrailer(f);
+        WriteExt2Trailer(f);
+        WriteSkinTrailer(f);
+        f.close();
+        if (f.fail()) remove(tmp.c_str());
+        else rename(tmp.c_str(), path.c_str());
+    }
+}
+
+void ConfigSave() {
+    mkdir(kCfgDir, 0777);
+    int idx = 1;
+    char baseName[64];
+    std::string cfgpath;
+    do {
+        snprintf(baseName, sizeof(baseName), XS("config%d"), idx++);
+        cfgpath = CfgPath(baseName);
+    } while (access(cfgpath.c_str(), F_OK) == 0);
+    ConfigSaveToPath(cfgpath);
+    CfgScanDir();
+    ShowToast(XS("Конфиг создан"));
+    PlaySound(SND_SUCCESS);
+}
+
+void ConfigUpdate(int idx) {
+    if (idx < 0 || idx >= g_configCount) return;
+    std::string path = CfgPath(g_configs[idx].name);
+    ConfigSaveToPath(path);
+    ShowToast(XS("Конфиг сохранён"));
+    PlaySound(SND_SUCCESS);
+}
+
+static void LoadCfgByName(const char* name, bool announce) {
+    std::string path = CfgPath(name);
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (announce) ShowToast(XS("Файл не найден")); return; }
+
+    CfgBlob s;
+
+    uint8_t buf[sizeof(s)];
+    f.read((char*)buf, sizeof(buf));
+    size_t got = (size_t)f.gcount();
+    uint8_t extra[sizeof(viewmodel::ConfigExtension)]{};
+    f.read((char*)extra, sizeof(extra));
+    size_t extraGot = (size_t)f.gcount();
+    CfgUiTrailer ui{};
+    const bool hasUi = ReadUiTrailer(f, ui);
+    CfgExt2Trailer ext2{};
+    const bool hasExt2 = hasUi && ReadExt2Trailer(f, ext2);
+    CfgSkinTrailer skin{};
+    const bool hasSkin = hasExt2 && ReadSkinTrailer(f, skin);
+    f.close();
+    if (got != sizeof(buf)) { if (announce) ShowToast(XS("Несовместимый конфиг")); return; }
+    XorBuf(buf, sizeof(s));
+    memcpy(&s, buf, sizeof(s));
+    if (s.magic != 0x58564345U || s.version != 4) { if (announce) ShowToast(XS("Старый конфиг — пересохрани")); return; }
+    // Загруженный конфиг становится самым свежим: startup восстанавливает по mtime.
+    utime(path.c_str(), nullptr);
+
+    XorBuf(extra, extraGot);
+    g_state.viewmodel = viewmodel::decode(extra, extraGot);
+    // Скины — после decode: он возвращает дефолты полей, которых в VMW1 нет.
+    // Индекс и уровень здесь НЕ клампятся по числу скинов: список читается из
+    // памяти игры уже в сессии, sanitize() контроллера и проверка «индекс
+    // есть в массиве предмета» (skin_changer_memory.h, стадия 13) не дадут
+    // записать мусор. Сохранённый профиль с чужим индексом просто не
+    // применится до выбора существующего.
+    if (hasSkin) {
+        g_state.viewmodel.skin_enabled = (skin.flags & (1u << 0)) != 0;
+        // bit1 (старый skin_rebuild) намеренно игнорируется: старые конфиги
+        // грузятся, зарезервированный бит ничего не включает.
+        g_state.viewmodel.skin_index = viewmodel::bounded((int)skin.index, 0,
+                                                          go_active::SKIN_INDEX_MAX, 0);
+        g_state.viewmodel.skin_level = viewmodel::bounded((int)skin.level, 0,
+                                                          go_active::SKIN_LEVEL_MAX, 0);
+    }
+    g_state.sl_skin_index = {}; g_state.sl_skin_level = {};
+    g_state.esp_turrets = g_state.esp_backpacks = g_state.esp_sleepers = false;
+    g_state.esp_cupboards = false;
+    // Поле aim_lead_ms в старых прицепах читается только как часть формата:
+    // ручная поправка отключена, предикт рассчитывается автоматически.
+    if (extraGot == 32 || extraGot == sizeof(viewmodel::ConfigExtension)) {
+        viewmodel::ConfigExtension extension;
+        memcpy(&extension, extra, extraGot);   // v3: 32 байта, хвост — дефолты
+        if (extension.magic == 0x31574d56u &&
+            (extension.version >= 3 && extension.version <= 7) &&
+            extension.size == extraGot) {
+            g_state.esp_turrets = (extension.flags & 128u) != 0;
+            g_state.esp_backpacks = (extension.flags & 256u) != 0;
+            g_state.esp_sleepers = (extension.flags & 512u) != 0;
+            g_state.esp_cupboards = (extension.flags & 1024u) != 0;
+        }
+    }
+    g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};
+    g_state.sl_hands_y = {}; g_state.sl_hands_z = {};
+    g_state.aim_touch   = s.aim_touch;
+    g_state.aim_pos     = (*reinterpret_cast<const unsigned char*>(&s.aim_pos) != 0) ||
+                          (*reinterpret_cast<const unsigned char*>(&s.aim_vis_check) != 0);
+    g_state.aim_special = s.aim_special;
+    g_state.aim_scope_only = s.aim_scope_only;
+    cfg::aim::scope_only   = s.aim_scope_only;
+    g_state.aim_bone    = s.aim_bone;
+    // Режим аима: старые конфиги (и любой левый байт) дают 0 — прежний тач.
+    g_state.aim_mode    = (s.aim_mode <= 2) ? (int)s.aim_mode : 0;
+    cfg::aim::vis_check  = g_state.aim_pos;
+    cfg::aim::draw_fov   = s.aim_draw_fov;
+    cfg::aim::fov        = s.aim_fov;
+    // Дальность автофарма переехала в бывший слот aim_lead; в старых
+    // конфигах там 0 — тогда остаётся дефолт 100 м.
+    g_state.farm_range   = (s.aim_lead >= 10.f && s.aim_lead <= 300.f) ? s.aim_lead : 100.f;
+    g_state.esp_box     = s.esp_box;     g_state.esp_name    = s.esp_name;
+    g_state.esp_wall    = s.esp_wall;
+    g_state.esp_chams   = s.esp_chams;
+    g_state.esp_weapon      = s.esp_weapon;
+    g_state.esp_tracer      = s.esp_tracer;
+    g_state.esp_skeleton    = s.esp_skeleton;
+    g_state.esp_ore         = s.esp_ore;
+    g_state.esp_animal      = s.esp_animal;
+    g_state.esp_team        = s.esp_team;
+    cfg::esp::vis_check     = (*reinterpret_cast<const unsigned char*>(&s.esp_vis_check) != 0);
+    cfg::esp::fill          = (*reinterpret_cast<const unsigned char*>(&s.esp_fill) != 0);
+    if (std::isfinite(s.esp_fill_pct) && s.esp_fill_pct >= 0.f && s.esp_fill_pct <= 1.f)
+        cfg::esp::fill_pct  = s.esp_fill_pct;
+    // Packed scalars. A config written before these existed holds the old ping
+    // colour here, so each value is range-checked and falls back to its default.
+    {
+        const int flags = (s.esp_extra.x >= 0.f && s.esp_extra.x < 524288.f) ? (int)(s.esp_extra.x + 0.5f) : 0;
+        g_state.esp_loot   = (flags & 1) != 0;
+        g_state.esp_pickup = (flags & 2) != 0;
+        g_state.esp_bots     = (flags & 4) != 0;
+        g_state.esp_vehicles = (flags & 8) != 0;
+        g_state.freecam_btn_show = (flags & 16) == 0;
+        g_state.esp_scrap = (flags & 32) != 0;
+        g_state.fast_fire = (flags & 64) != 0;
+        g_state.fast_reload = (flags & 128) != 0;
+        g_state.esp_house_boxes = (flags & 256) == 0;
+        g_state.fakelag_btn_show = (flags & 1024) == 0;
+        g_state.xray_btn_show = (flags & 2048) == 0;
+        // Биты 12..18 — тумблеры новых фич (16 вырезан, см. шапку). Конфиги,
+        // написанные до них, держат тут нули, то есть получают дефолты фич
+        // (всё выкл, стрелки — только вне экрана, потому что этот бит
+        // инвертирован).
+        g_state.aim_fire_only = (flags & 4096) != 0;
+        g_state.esp_arrows = (flags & 8192) != 0;
+        g_state.esp_arrows_offscreen = (flags & 16384) == 0;
+        g_state.esp_arrows_dist = (flags & 32768) != 0;
+        g_state.esp_radar = (flags & 131072) != 0;
+        g_state.no_grass = (flags & 262144) != 0;
+        cfg::aim::fire_only = g_state.aim_fire_only;
+        g_state.marker_dist = (s.esp_extra.y >= 25.f && s.esp_extra.y <= 300.f) ? s.esp_extra.y : 150.f;
+        int pr = (int)(s.esp_extra.z + 0.5f) - 1;
+        g_state.aim_priority = (pr >= 0 && pr <= 2) ? pr : 0;
+        // Packed pickup colour. Configs written before it existed hold the old
+        // ping alpha (exactly 1.0) here, which is why the check is "> 1".
+        if (s.esp_extra.w > 1.f && s.esp_extra.w <= 16777215.f) {
+            int rgb = (int)(s.esp_extra.w + 0.5f);
+            cfg::esp::pickup_col = ImVec4(((rgb >> 16) & 0xFF) / 255.f,
+                                          ((rgb >> 8) & 0xFF) / 255.f,
+                                          (rgb & 0xFF) / 255.f, 1.f);
+        }
+    }
+    g_state.esp_thick   = s.esp_thick;
+    g_state.gun_str     = s.gun_str;
+    g_state.gun_fov     = s.gun_fov;
+    if (!(g_state.gun_fov >= 5.f)) g_state.gun_fov = 5.f;
+    if (g_state.gun_fov > 180.f) g_state.gun_fov = 180.f;
+    g_state.gun_trigger_delay     = s.gun_trigger_delay;
+    g_state.ui_dark_mode= s.ui_dark_mode;
+    // Язык интерфейса живёт в бывшем слоте ui_fps (счётчик FPS убран навсегда).
+    // Старые конфиги держат там false — это и есть русский по умолчанию.
+    lang::set((*reinterpret_cast<const unsigned char*>(&s.ui_lang_en) != 0) ? lang::LANG_EN : lang::LANG_RU);
+    // ui_show_sep из конфига игнорируется: рамки карточек всегда включены.
+    g_state.ui_fps      = false;
+    g_state.ui_show_sep = true;
+    // Акцент и раскладка из трейлера (старые конфиги без него не трогают текущие).
+    // Идёт до точки аима: её значение из блоба побеждает.
+    if (hasUi) {
+        int idx = (int)ui.accent_idx;
+        if (idx < 0 || idx > 8) idx = 0;
+        auto cl = [](float v) { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+        g_state.ui_accent_idx = idx;
+        g_state.ui_accent_rgb = {cl(ui.accent_rgb[0]), cl(ui.accent_rgb[1]), cl(ui.accent_rgb[2]), 1.0f};
+        LayoutFromArray(ui.layout);
+    }
+    // Точка пальца аима. В конфигах, где этого поля ещё не было, лежат значения
+    // прежних настроек ESP (2.0 и 0.0) — они вне 0..1 и читаются как «не задана».
+    g_state.aim_tx = (s.aim_touch_x > 0.f && s.aim_touch_x < 1.f) ? s.aim_touch_x : -1.f;
+    g_state.aim_ty = (s.aim_touch_y > 0.f && s.aim_touch_y < 1.f) ? s.aim_touch_y : -1.f;
+    cfg::esp::box_col          = s.esp_box_col;
+    cfg::esp::box_col_invis    = s.esp_box_col_invis;
+    cfg::esp::name_col         = s.esp_name_col;
+    cfg::esp::distance_col     = s.esp_distance_col;
+    cfg::esp::weapon_col       = s.esp_weapon_col;
+    cfg::esp::tracer_col       = s.esp_tracer_col;
+    cfg::esp::skeleton_col     = s.esp_skeleton_col;
+    cfg::esp::animal_col       = s.esp_animal_col;
+    cfg::esp::loot_col         = s.esp_loot_col;
+    // The ally colour reuses a slot that older configs left pure black.
+    if (s.esp_ally_col.x + s.esp_ally_col.y + s.esp_ally_col.z > 0.05f)
+        cfg::esp::ally_col     = s.esp_ally_col;
+    cfg::esp::box_type         = s.esp_box_type;
+    cfg::esp::box_rounding     = s.esp_box_rounding;
+    // ---- Санитизация: конфиг кочует между билдами с одним version=4 ------
+    // Слоты годами переименовывались «на месте», поэтому в принятом поле
+    // может лежать байт чужого смысла: NaN, значение старого диапазона,
+    // alpha 0 у цвета. Раньше проверялась только часть полей — отсюда
+    // жалобы «у одного аим мёртв, у другого скелеты не видно». Тут всё,
+    // что дальше читают фичи, приводится к диапазону UI-слайдера;
+    // NaN/вне-диапазона → дефолт слайдера. Мёртвые слоты (box_type,
+    // box_rounding, fill_pct, stroke/rounding в cfg::esp) ни одна фича не
+    // читает — их не трогаем.
+    {
+        auto num = [](float v, float lo, float hi, float deflt) {
+            return (std::isfinite(v) && v >= lo && v <= hi) ? v : deflt;
+        };
+        g_state.esp_thick = num(g_state.esp_thick, 0.5f, 5.f, 2.f);
+        g_state.gun_str = num(g_state.gun_str, 1.f, 10.f, 5.f);
+        cfg::aim::fov = num(cfg::aim::fov, 5.f, 180.f, 80.f);
+        g_state.gun_trigger_delay = num(g_state.gun_trigger_delay, 0.f, 1.f, 0.f);
+        if (g_state.aim_bone < 0 || g_state.aim_bone > 2) g_state.aim_bone = 0;
+        cfg::aim::bone = g_state.aim_bone;
+        // Цвет: каналы 0..1; alpha 0 из старого слота делал фичу «включена,
+        // но невидима» (классика у скелетов) — поднимаем до непрозрачной.
+        auto col = [&num](ImVec4& c) {
+            c.x = num(c.x, 0.f, 1.f, 1.f);
+            c.y = num(c.y, 0.f, 1.f, 1.f);
+            c.z = num(c.z, 0.f, 1.f, 1.f);
+            if (!std::isfinite(c.w) || c.w <= 0.02f || c.w > 1.f) c.w = 1.f;
+        };
+        col(cfg::esp::box_col);       col(cfg::esp::box_col_invis);
+        col(cfg::esp::name_col);      col(cfg::esp::distance_col);
+        col(cfg::esp::weapon_col);    col(cfg::esp::tracer_col);
+        col(cfg::esp::skeleton_col);  col(cfg::esp::animal_col);
+        col(cfg::esp::loot_col);      col(cfg::esp::ally_col);
+        col(cfg::esp::pickup_col);
+        // bool-байты из блоба могут нести не 0/1 (в старых версиях там были
+        // иные поля): чтение bool с таким представлением формально UB.
+        // Приводим к 0/1 через байт, не доверяя g_state значению как bool.
+        auto b01 = [](bool& b) { b = *reinterpret_cast<const unsigned char*>(&b) != 0; };
+        b01(g_state.aim_touch); b01(g_state.aim_special); b01(g_state.aim_scope_only);
+        b01(cfg::aim::draw_fov);
+        b01(g_state.esp_box); b01(g_state.esp_name); b01(g_state.esp_wall);
+        b01(g_state.esp_chams); b01(g_state.esp_weapon); b01(g_state.esp_tracer);
+        b01(g_state.esp_skeleton); b01(g_state.esp_ore); b01(g_state.esp_animal);
+        b01(g_state.esp_team); b01(g_state.ui_dark_mode);
+        g_state.viewmodel.no_ballistics = false;
+        g_state.a_no_ballistics = 0.f;
+        if (hasExt2) {
+            g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
+            g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;
+            g_state.esp_ore_sulfur = (ext2.flags & (1u << 2)) != 0;
+            g_state.always_day     = (ext2.flags & (1u << 3)) != 0;
+            g_state.farm_wood      = (ext2.flags & (1u << 4)) != 0;
+            g_state.farm_stone     = (ext2.flags & (1u << 5)) != 0;
+            g_state.farm_metal     = (ext2.flags & (1u << 6)) != 0;
+            g_state.farm_sulfur    = (ext2.flags & (1u << 7)) != 0;
+            g_state.fake_lag       = (ext2.flags & (1u << 8)) != 0;
+            g_state.xray_on        = (ext2.flags & (1u << 9)) != 0;
+            g_state.ui_panel_left  = (ext2.flags & (1u << 10)) != 0;
+            g_state.aim_pos        = (ext2.flags & (1u << 11)) != 0;
+            cfg::esp::vis_check    = (ext2.flags & (1u << 12)) != 0;
+            cfg::esp::fill         = (ext2.flags & (1u << 13)) != 0;
+            g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
+            g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
+
+            g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
+            g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);
+            g_state.esp_radar_range  = num(ext2.esp_radar_range,  10.f,  400.f, 100.f);
+            g_state.screen_stretch_x = num(ext2.screen_stretch_x, 0.75f, 2.0f,  1.0f);
+            g_state.fake_lag_percent = num(ext2.fake_lag_percent, 1.f,   99.f,  45.f);
+            g_state.xray_range       = num(ext2.xray_range,       2.f,   50.f,  5.f);
+            g_state.freecam_speed    = num(ext2.freecam_speed,    1.f,   60.f,  12.f);
+            g_state.gun_str          = num(ext2.aim_speed,        1.f,   10.f,  g_state.gun_str);
+
+            cfg::aim::fov_col        = ext2.aim_fov_col;
+            cfg::esp::bot_col        = ext2.esp_bot_col;
+            cfg::esp::vehicle_col    = ext2.esp_vehicle_col;
+            cfg::esp::scrap_col      = ext2.esp_scrap_col;
+            cfg::esp::turret_col     = ext2.esp_turret_col;
+            cfg::esp::backpack_col   = ext2.esp_backpack_col;
+            cfg::esp::sleeper_col    = ext2.esp_sleeper_col;
+            cfg::esp::cupboard_col   = ext2.esp_cupboard_col;
+            cfg::esp::ore_stone_col  = ext2.esp_ore_stone_col;
+            cfg::esp::ore_metal_col  = ext2.esp_ore_metal_col;
+            cfg::esp::ore_sulfur_col = ext2.esp_ore_sulfur_col;
+            cfg::esp::arrow_col      = ext2.esp_arrow_col;
+            cfg::esp::pumpkin_col    = ext2.esp_pumpkin_col;
+            col(cfg::aim::fov_col);
+            col(cfg::esp::bot_col);        col(cfg::esp::vehicle_col);
+            col(cfg::esp::scrap_col);      col(cfg::esp::turret_col);
+            col(cfg::esp::backpack_col);   col(cfg::esp::sleeper_col);
+            col(cfg::esp::cupboard_col);   col(cfg::esp::ore_stone_col);
+            col(cfg::esp::ore_metal_col);  col(cfg::esp::ore_sulfur_col);
+            col(cfg::esp::arrow_col);      col(cfg::esp::pumpkin_col);
+        }
+
+        cfg::aim::enabled       = g_state.aim_touch;
+        cfg::aim::vis_check     = g_state.aim_pos;
+        cfg::aim::draw_fov      = g_state.aim_special;
+        cfg::aim::scope_only    = g_state.aim_scope_only;
+        cfg::aim::fov           = g_state.gun_fov;
+        cfg::aim::smoothness    = g_state.gun_str;
+        cfg::aim::bone          = g_state.aim_bone;
+        cfg::aim::trigger_delay = g_state.gun_trigger_delay;
+        cfg::aim::fire_only     = g_state.aim_fire_only;
+
+        cfg::esp::box           = g_state.esp_box;
+        cfg::esp::name_esp      = g_state.esp_name;
+        cfg::esp::distance      = g_state.esp_wall;
+        cfg::esp::weapon        = g_state.esp_weapon;
+        cfg::esp::tracer        = g_state.esp_tracer;
+        cfg::esp::skeleton      = g_state.esp_skeleton;
+        cfg::esp::ore           = g_state.esp_ore;
+        cfg::esp::animal        = g_state.esp_animal;
+        cfg::esp::loot          = g_state.esp_loot;
+        cfg::esp::team          = g_state.esp_team;
+        cfg::esp::pickup        = g_state.esp_pickup;
+        cfg::esp::bot           = g_state.esp_bots;
+        cfg::esp::vehicle       = g_state.esp_vehicles;
+        cfg::esp::scrap         = g_state.esp_scrap;
+        cfg::esp::pumpkin       = g_state.esp_pumpkins;
+
+        g_state.sl_esp_thick           = {};
+        g_state.sl_esp_arrow_ring      = {};
+        g_state.sl_esp_radar_size      = {};
+        g_state.sl_esp_radar_range     = {};
+        g_state.sl_gun_str             = {};
+        g_state.sl_gun_fov             = {};
+        g_state.sl_gun_trig            = {};
+        g_state.sl_marker_dist         = {};
+        g_state.sl_farm_range          = {};
+        g_state.sl_freecam             = {};
+        g_state.sl_freecam_joy_size    = {};
+        g_state.sl_freecam_look_radius = {};
+        g_state.sl_fake_lag            = {};
+        g_state.sl_xray                = {};
+        g_state.sl_screen_stretch      = {};
+    }
+    esp_viewmodel_tick(g_state.viewmodel);
+    esp_set_screen_stretch(g_state.screen_stretch_x);
+    g_darkTheme = g_state.ui_dark_mode;
+    snprintf(g_loadedConfigName, sizeof(g_loadedConfigName), "%s", name);
+    g_cfgLoadedIdx = -1;
+    for (int i = 0; i < g_configCount; i++)
+        if (strcmp(g_configs[i].name, name) == 0) { g_cfgLoadedIdx = i; break; }
+    for (int i = 0; i < kMaxConfigs; i++) g_cfgLoadAnim[i] = 0.f;
+    if (announce) {
+        ShowToast(XS("Конфиг загружен"));
+        PlaySound(SND_SUCCESS);
+    }
+}
+
+void ConfigLoad(int idx, bool announce) {
+    if (idx < 0 || idx >= g_configCount) return;
+    LoadCfgByName(g_configs[idx].name, announce);
+}
+
+void ConfigLoadLast() {
+    std::string name;
+    if (!CfgPickNewest(kCfgDir, name)) return;
+    LoadCfgByName(name.c_str(), false);
+}
+
+void ConfigDelete(int idx) {
+    if (idx < 0 || idx >= g_configCount) return;
+    std::string path = CfgPath(g_configs[idx].name);
+    if (strcmp(g_configs[idx].name, g_loadedConfigName) == 0) {
+        g_loadedConfigName[0] = '\0';
+        g_cfgLoadedIdx = -1;
+        for (int i = 0; i < kMaxConfigs; i++) g_cfgLoadAnim[i] = 0.f;
+    }
+    remove(path.c_str());
+    CfgScanDir();
+    ShowToast(XS("Конфиг удалён"));
+    PlaySound(SND_CLICK);
+}
+
+const char* CfgDir() { return kCfgDir; }

@@ -970,8 +970,8 @@ float TabContent(int tab, float dt, float cW) {
                     : (n > 0 && !viewmodel::skin_kind_is_object(skinEntries[vm.skin_index].kind))
                                           ? XS("Это перекраска — материал, а не модель")
                     : (n > 0 && !skinEntries[vm.skin_index].ready)
-                                          ? XS("Ассет докачается сам — нужна сборка вьюхи (мод/насадка)")
-                    : (skinUi.fp_stale)   ? XS("Скин записан — поменяйте насадку/мод в игре")
+                                          ? XS("Ассет докачается сам — нужна сборка вьюхи (мод/насадка или дроп-подбор)")
+                    : (skinUi.fp_stale)   ? XS("Скин записан — смените насадку/мод или дропните и поднимите ствол")
                                           : XS("Скин применён");
                 SHdr(skinVerdict, 4.f);
 

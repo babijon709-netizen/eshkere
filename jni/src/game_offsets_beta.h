@@ -200,6 +200,11 @@ inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = game_offsets::PLAYER_VOICE_
 inline constexpr std::uint64_t VOICE_PLAYER_TAG = game_offsets::VOICE_PLAYER_TAG;
 inline constexpr std::uint64_t FPOBJECT_ITEM = game_offsets::FPOBJECT_ITEM;
 inline constexpr std::uint64_t ITEM_DATA = game_offsets::ITEM_DATA;
+// Oxide.Item в бете 11977 побайтово совпадает с релизом (dumpbeta11977:
+// cOk int @0x30 skin, cOR byte @0x34 skinLevel, cOq short @0x38, mods @0x40,
+// stack @0x48) — имена обфусцированы иначе, раскладка та же.
+inline constexpr std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
+inline constexpr std::uint64_t ITEM_SKIN_LEVEL = game_offsets::ITEM_SKIN_LEVEL;
 inline constexpr std::uint64_t ITEMDATA_NAME = game_offsets::ITEMDATA_NAME;
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME = game_offsets::ITEMDATA_SHORTNAME;
 inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = game_offsets::IL2CPP_STRING_LENGTH;

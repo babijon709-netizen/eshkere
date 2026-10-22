@@ -156,6 +156,8 @@ inline std::uint64_t PLAYER_VOICE_PLAYER = game_offsets::PLAYER_VOICE_PLAYER;
 inline std::uint64_t VOICE_PLAYER_TAG = game_offsets::VOICE_PLAYER_TAG;
 inline std::uint64_t FPOBJECT_ITEM = game_offsets::FPOBJECT_ITEM;
 inline std::uint64_t ITEM_DATA = game_offsets::ITEM_DATA;
+inline std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
+inline std::uint64_t ITEM_SKIN_LEVEL = game_offsets::ITEM_SKIN_LEVEL;
 inline std::uint64_t ITEMDATA_NAME = game_offsets::ITEMDATA_NAME;
 inline std::uint64_t ITEMDATA_SHORTNAME = game_offsets::ITEMDATA_SHORTNAME;
 inline std::uint64_t IL2CPP_STRING_LENGTH = game_offsets::IL2CPP_STRING_LENGTH;
@@ -644,6 +646,8 @@ inline void Select(GameVersion version) {
         VOICE_PLAYER_TAG = game_offsets_beta::VOICE_PLAYER_TAG;
         FPOBJECT_ITEM = game_offsets_beta::FPOBJECT_ITEM;
         ITEM_DATA = game_offsets_beta::ITEM_DATA;
+        ITEM_SKIN = game_offsets_beta::ITEM_SKIN;
+        ITEM_SKIN_LEVEL = game_offsets_beta::ITEM_SKIN_LEVEL;
         ITEMDATA_NAME = game_offsets_beta::ITEMDATA_NAME;
         ITEMDATA_SHORTNAME = game_offsets_beta::ITEMDATA_SHORTNAME;
         IL2CPP_STRING_LENGTH = game_offsets_beta::IL2CPP_STRING_LENGTH;
@@ -1133,6 +1137,8 @@ inline void Select(GameVersion version) {
         VOICE_PLAYER_TAG = game_offsets::VOICE_PLAYER_TAG;
         FPOBJECT_ITEM = game_offsets::FPOBJECT_ITEM;
         ITEM_DATA = game_offsets::ITEM_DATA;
+        ITEM_SKIN = game_offsets::ITEM_SKIN;
+        ITEM_SKIN_LEVEL = game_offsets::ITEM_SKIN_LEVEL;
         ITEMDATA_NAME = game_offsets::ITEMDATA_NAME;
         ITEMDATA_SHORTNAME = game_offsets::ITEMDATA_SHORTNAME;
         IL2CPP_STRING_LENGTH = game_offsets::IL2CPP_STRING_LENGTH;

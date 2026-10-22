@@ -189,6 +189,10 @@ struct Fixture {
         io.put<uint64_t>(fp_object + FPOBJECT_ITEM, item);
         io.plain(item);
         io.put<uint64_t>(item + ITEM_DATA, item_data);
+        // Oxide.Item.skin (+0x30, int32) / skinLevel (+0x34) — третья точка
+        // записи: триггер дроп/подбор (KERNEL.md §4.17).
+        io.put<int32_t>(item + ITEM_SKIN, original_skin);
+        io.put<uint8_t>(item + ITEM_SKIN_LEVEL, original_level);
         io.object(item_data, "ItemData", "Oxide");
         io.put<uint64_t>(item_data + ITEMDATA_SHORTNAME,
                          make_string(io, next_string, widen("dmr")));
@@ -248,6 +252,10 @@ struct Fixture {
     uint8_t live_enabled_local() {
         return io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_ENABLED);
     }
+    int32_t live_item_skin() { return io.value<int32_t>(item + go_active::ITEM_SKIN); }
+    uint8_t live_item_level() {
+        return io.value<uint8_t>(item + go_active::ITEM_SKIN_LEVEL);
+    }
     // Enabled не обязан меняться никогда: ноль в нём разбирает вьюху
     // (CreateFPWeapon при Enabled==0 зовёт Release + KxS).
     bool enabled_untouched() const {
@@ -302,14 +310,15 @@ void test_write_only_on_divergence() {
     f.tick(f.settings(true, 1));
     assert(f.live_skin() == 1);
     assert(f.live_skin_local() == 1);   // рабочая копия — вторая цель записи
+    assert(f.live_item_skin() == 1);    // Oxide.Item.skin — третья цель записи
     assert(f.enabled_untouched());
     const unsigned after_first = f.io.writes;
     assert(after_first > 0);
     // Установившийся режим: значение уже наше — ноль записей на тик.
     for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.io.writes == after_first);
-    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
-    std::printf("  steady state: %u writes once (both copies), 0 over 10 more ticks\n",
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1 && f.live_item_skin() == 1);
+    std::printf("  steady state: %u writes once (all three copies), 0 over 10 more ticks\n",
                 after_first);
 }
 
@@ -329,7 +338,12 @@ void test_resync_is_reapplied() {
     f.tick(f.settings(true, 2));
     assert(f.live_skin_local() == 2);
     assert(f.c.ui().local_state == 0);
-    std::printf("  resync: game value overwritten back to ours (both copies)\n");
+    // То же для Oxide.Item: крафт/пересинк перезаписывает скин предмета.
+    f.io.put<int32_t>(item + go_active::ITEM_SKIN, 0);
+    f.tick(f.settings(true, 2));
+    assert(f.live_item_skin() == 2);
+    assert(f.c.ui().item_state == 0);
+    std::printf("  resync: game value overwritten back to ours (all copies)\n");
 }
 
 // ---- 5. Индекса нет в массиве предмета — записи нет -----------------------
@@ -456,15 +470,38 @@ void test_rewrite_request() {
     const unsigned before = f.io.writes;
     f.tick(s);
     assert(f.io.writes == before);
-    // Запрос снимает «свежесть» слотов: следующий тик пишет все четыре поля
-    // (Skin/SkinLevel в обеих копиях) и подтверждает readback'ом.
+    // Запрос снимает «свежесть» слотов: следующий тик пишет все шесть полей
+    // (Skin/SkinLevel в обеих копиях piece + Oxide.Item.skin/skinLevel) и
+    // подтверждает каждую запись readback'ом.
     f.c.request_rebuild();
     f.tick(s);
-    assert(f.io.writes == before + 4);
-    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    assert(f.io.writes == before + 6);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1 && f.live_item_skin() == 1);
     assert(f.c.status == viewmodel::Status::Active);
     assert(f.enabled_untouched());
-    std::printf("  rewrite request: 4 forced writes, Enabled untouched\n");
+    std::printf("  rewrite request: 6 forced writes, Enabled untouched\n");
+}
+
+// ---- 10б'. Oxide.Item.skin — третья точка записи (триггер дроп/подбор) -----
+void test_item_skin_written_and_restored() {
+    Fixture f;
+    ViewmodelSettings s = f.settings(true, 1, 2);   // прогрессия, уровень 2
+    f.tick(s);
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.live_item_skin() == 1);        // Item.skin (int32 @ +0x30)
+    assert(f.live_item_level() == 2);       // Item.skinLevel (byte @ +0x34)
+    assert(f.c.ui().item_state == 0);       // Item держит индекс из piece
+    // Игра перезаписала Item (крафт/пересинк) — следующий тик восстановит,
+    // а новым оригиналом станет значение игры.
+    f.io.put<int32_t>(item + go_active::ITEM_SKIN, 0);
+    f.tick(s);
+    assert(f.live_item_skin() == 1);
+    f.tick(f.settings(false));
+    assert(f.live_item_skin() == 0);        // возвращено значение игры
+    assert(f.live_item_level() == f.original_level);
+    assert(f.c.ui().item_state == -1);      // выключено — состояние сброшено
+    assert(!f.c.has_state());
+    std::printf("  item skin: written with level, resynced, restored on disable\n");
 }
 
 // ---- 10в. Enabled не пишется никогда ---------------------------------------
@@ -643,6 +680,8 @@ void test_beta_profile_layout() {
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
     assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
+    assert(go_active::ITEM_SKIN == 0x30);          // Oxide.Item идентичен релизу
+    assert(go_active::ITEM_SKIN_LEVEL == 0x34);
     assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE64B9E0);
     assert(go_active::EG_TYPEINFO_RVA == 0);   // в бете резолвится по имени
     go_active::Select(go_active::GameVersion::Release);
@@ -652,6 +691,8 @@ void test_beta_profile_layout() {
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
+    assert(go_active::ITEM_SKIN == 0x30);
+    assert(go_active::ITEM_SKIN_LEVEL == 0x34);
     assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);
     std::printf("  profiles: release 0x10 / beta 0x18, TypeInfo slots pinned\n");
 }
@@ -669,9 +710,11 @@ void test_negative_skin_is_accepted() {
     assert(f.c.status == viewmodel::Status::Active);
     assert(f.live_skin() == 1);
     assert(f.c.ui().piece_read);
-    // Оригинал возвращается тем значением, которое было, а не нулём.
+    // Оригинал возвращается тем значением, которое было, а не нулём —
+    // в обеих копиях piece и в Oxide.Item.
     f.tick(f.settings(false));
     assert(f.live_skin() == -1);
+    assert(f.live_item_skin() == f.original_skin);
     std::printf("  original skin=-1: applied, then restored as -1\n");
 }
 
@@ -736,12 +779,12 @@ void test_piece_bad_number() {
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(22) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(24) != SkinBlock::None);   // вне диапазона — не «порядок»
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 21; ++stage) {
+    for (int stage = 1; stage <= 23; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -775,6 +818,9 @@ void test_skin_block_grouping() {
     assert(viewmodel::skin_block(16) == viewmodel::skin_block(17));
     assert(viewmodel::skin_block(18) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(19) == viewmodel::skin_block(16));
+    // Запись Oxide.Item (22/23) — та же причина: «запись не подтвердилась».
+    assert(viewmodel::skin_block(22) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(23) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(16) != viewmodel::skin_block(14));
     // Пустые руки и «нет скинов у предмета» — тоже разные вещи.
     assert(viewmodel::skin_block(6) == SkinBlock::EmptyHands);
@@ -784,7 +830,7 @@ void test_skin_block_grouping() {
     for (int stage = 1; stage <= 4; ++stage)
         assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 21 stages -> 9 distinct causes, texts unique\n");
+    std::printf("  skin_block: 23 stages -> 9 distinct causes, texts unique\n");
 }
 
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
@@ -848,6 +894,7 @@ int main() {
     test_session_change_forgets_without_write();
     test_weapon_switch();
     test_rewrite_request();
+    test_item_skin_written_and_restored();
     test_enabled_never_written();
     test_local_copy_bad_head();
     test_local_copy_relaxed_head();

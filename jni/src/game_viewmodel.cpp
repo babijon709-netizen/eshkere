@@ -831,6 +831,8 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 19:         return "working copy: SkinLevel write not confirmed by readback";
         case 20:         return "working copy head unreadable";
         case 21:         return "working copy head: Enabled is not a bool (raw head bytes are dumped in skin.log)";
+        case 22:         return "Oxide.Item.skin write not confirmed by readback";
+        case 23:         return "Oxide.Item.skinLevel write not confirmed by readback";
         default:         return "waiting for bind or player";
     }
 }

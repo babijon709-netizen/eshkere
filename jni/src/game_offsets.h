@@ -319,6 +319,14 @@ inline constexpr std::uint64_t VOICE_PLAYER_TAG     = 0x78;
 // FPObject -> Oxide.Item -> Oxide.ItemData display strings.
 inline constexpr std::uint64_t FPOBJECT_ITEM        = 0x40; // <Ltl>k__BackingField
 inline constexpr std::uint64_t ITEM_DATA            = 0x20; // <LIN>k__BackingField
+// Oxide.Item.skin / .skinLevel — серверная правда о скине предмета. Доказано
+// дизассемблером dump11966: Item..ctor 0x69C8174 кладёт аргумент skin в +0x30
+// (int, -1 = «скина нет»; диапазон проверяется по ItemData.skinData), а
+// skinLevel в +0x34 (byte); ItemPickup.KZq 0x6926BDC при дропе берёт скин из
+// +0x30 в SyncVar дропа (KZv), уровень из +0x34 — в piece дропа. Поэтому
+// запись сюда делает дроп/подбор рабочим триггером пересборки вьюхи.
+inline constexpr std::uint64_t ITEM_SKIN            = 0x30; // <uyQ>k__BackingField
+inline constexpr std::uint64_t ITEM_SKIN_LEVEL      = 0x34; // <uya>k__BackingField
 inline constexpr std::uint64_t ITEMDATA_NAME        = 0x18; // m_Name
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME   = 0x20; // m_ShortName
 // Il2Cpp System.String layout: int32 length @0x10, UTF-16 chars @0x14.

@@ -200,7 +200,7 @@ struct SkinEntryView {
 };
 
 // Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
-// контроллера девятнадцать (skin_changer_memory.h), но игроку нужно не «стадия
+// контроллера двадцать три (skin_changer_memory.h), но игроку нужно не «стадия
 // 13», а что делать. Unreadable и WrongLayout разделены намеренно: первое —
 // транспорт не читает голову WeaponPiece, второе — читает, но это не
 // WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии). Детальная расшифровка для CLI и разработчика —
@@ -232,6 +232,7 @@ inline SkinBlock skin_block(int stage) {
         case 16: case 17: case 18: case 19:       return SkinBlock::WriteFailed;
         case 20:                                  return SkinBlock::Unreadable;
         case 21:                                  return SkinBlock::WrongLayout;
+        case 22: case 23:                         return SkinBlock::WriteFailed;
         default:                                  return SkinBlock::NoPlayer;
     }
 }
@@ -265,6 +266,10 @@ struct SkinUiInfo {
     // читается или не WeaponPiece, 0 — там наш индекс,
     // 1 — индекс отличается (игра перезаписала копию, ждём следующего тика).
     int  local_state = -1;
+    // Oxide.Item.skin (+0x30) — третья цель записи (триггер дроп/подбор,
+    // KERNEL.md §4.17): -1 — не читается, 0 — Item держит наш индекс
+    // (дроп/подбор перенесут его в новый ствол), 1 — отличается.
+    int  item_state = -1;
     // Голова рабочей копии сырыми байтами ("xx xx ..."), когда она прошла
     // только щадящую проверку (Loaded/Number неканонические) или отклонена на
     // стадии 21: лог и CLI показывают, что реально лежит в копии. Пусто —

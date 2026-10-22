@@ -78,6 +78,19 @@
 // серверную piece и OnStartClient может успеть до нашей записи — это граница
 // внешнего скинченджера, а не сбой записи.
 //
+// ТРЕТЬЯ ТОЧКА ЗАПИСИ — Oxide.Item.skin (+0x30, int) и skinLevel (+0x34,
+// byte): серверная правда о скине ПРЕДМЕТА. Дизассемблер dump11966: при дропе
+// ItemPickup.KZq (0x6926BDC) копирует Item.skin в SyncVar дропа (KZv ->
+// pickup.skin +0xE4), а Item.skinLevel — в piece дропа; при подборе
+// одиночного ствола PlayerInventory.Gaz (0x69E2578) переиспользует тот же
+// Item, и экипировка спавнит PlayerWeapon уже с нашим скином
+// (OnStartClient -> pMd -> сборка вьюхи -> автодокачка ассета). То есть
+// ДРОП/ПОДБОР ствола — рабочий триггер пересборки даже когда у игрока нет
+// ни одной насадки/мода (устройство: skin.log v9, 118 с переключений — ноль
+// пересборок). В одиночной игре сервер в том же процессе, поэтому запись в
+// Item локальна и достаточна; на чужом сервере Item — клиентское зеркало, и
+// третья копия остаётся косметической (граница та же, что у respawn-пути).
+//
 // АССЕТЫ КАЧАЮТСЯ САМИ — ручная докачка пользователем НЕ нужна (dump11966,
 // дизассемблер). Сборка визуала pXc -> hbB.VsH 0x6CDD3B8 -> VkM 0x6CD9418 ->
 // VkF 0x6CDAFA4: на каждую AssetReference зовётся hbG.Vqs(out
@@ -473,6 +486,11 @@ template<class IO> class Controller {
     Slot<uint8_t> level_;
     Slot<int16_t> skin_local_;
     Slot<uint8_t> level_local_;
+    // Копия 3 — Oxide.Item.skin (+0x30, int32) / skinLevel (+0x34, byte):
+    // триггер дроп/подбор (см. заголовок файла). Семантика та же: снимок ->
+    // запись по расхождению -> readback -> возврат оригинала.
+    Slot<int32_t> skin_item_;
+    Slot<uint8_t> level_item_;
 
     bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
     bool scan_request_ = false;    // одноразовый запрос перечитать список
@@ -485,6 +503,7 @@ template<class IO> class Controller {
     bool piece_read_ = false;   // live_skin_/live_level_ действительно прочитаны
     bool fp_stale_ = false, handle_live_ = false;
     int  local_state_ = -1;     // рабочая копия: -1 не читается, 0 наша, 1 чужая
+    int  item_state_ = -1;      // Oxide.Item.skin: -1 не читается, 0 наш, 1 чужой
     char local_head_raw_[24] = {};  // hex головы рабочей копии, если она неканоническая
 
     int stage_ = 0;
@@ -628,6 +647,14 @@ template<class IO> class Controller {
         // «чужая» — копия уже перезаписана игрой (RPC/спавн/холстер),
         // следующий тик восстановит наш индекс.
         local_state_ = -1;
+        // Копия 3 (Oxide.Item.skin): «наш» — значит дроп/подбор перенесут
+        // индекс в новый ствол; «чужой» — игра перезаписала Item (крафт,
+        // пересинк), следующий тик восстановит.
+        item_state_ = -1;
+        int32_t item_skin = 0;
+        if (context_.item.object >= 0x10000 &&
+            io.read(context_.item.object + go_active::ITEM_SKIN, item_skin))
+            item_state_ = (piece && item_skin == (int32_t)piece->skin) ? 0 : 1;
         Piece work;
         // Проверка рабочей копии — щадящая, ровно как в tick(): иначе копия,
         // которую тик только что записал, показывала бы «не читается».
@@ -648,8 +675,10 @@ template<class IO> class Controller {
     }
 
     bool restore_all() {
-        // Обе копии равноправны: возвращаем оригиналы и туда, и туда.
-        bool ok = level_local_.restore(io);
+        // Все три точки равноправны: возвращаем оригиналы в каждую.
+        bool ok = level_item_.restore(io);
+        ok = skin_item_.restore(io) && ok;
+        ok = level_local_.restore(io) && ok;
         ok = skin_local_.restore(io) && ok;
         ok = level_.restore(io) && ok;
         ok = skin_.restore(io) && ok;
@@ -661,7 +690,8 @@ public:
     explicit Controller(IO& memory) : io(memory) {}
     int stage() const { return stage_; }
     bool has_state() const {
-        return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned;
+        return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||
+               skin_item_.owned || level_item_.owned;
     }
     // Одноразовый запрос перезаписать обе копии piece, даже если значения уже
     // совпадают (меню «Переписать обе копии» / one-shot CLI `--rebuild`). Сама
@@ -689,6 +719,7 @@ public:
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
         info.local_state = local_state_;
+        info.item_state = item_state_;
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
         info.stage = stage_;
         info.status = status;
@@ -698,6 +729,7 @@ public:
     bool reset(bool restore_originals) {
         const bool ok = !restore_originals || restore_all();
         skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
+        skin_item_ = {}; level_item_ = {};
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
         scan_request_ = false;
@@ -708,6 +740,7 @@ public:
         piece_read_ = false;
         fp_stale_ = handle_live_ = false;
         local_state_ = -1;
+        item_state_ = -1;
         local_head_raw_[0] = '\0';
         session_ = base_ = 0;
         status = viewmodel::Status::Off;
@@ -736,6 +769,7 @@ public:
                 piece_read_ = false;
                 fp_stale_ = handle_live_ = false;
                 local_state_ = -1;
+                item_state_ = -1;
                 local_head_raw_[0] = '\0';
             }
             // Выключенная функция не пишет НИЧЕГО, но список по явному запросу
@@ -770,6 +804,7 @@ public:
             // снимается без записи только если возврат не прошёл.
             if (!restore_all()) {
                 skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
+                skin_item_ = {}; level_item_ = {};
             }
             context_ = next;
             scan_age_ = kScanEvery;   // перечитать список сразу
@@ -818,6 +853,23 @@ public:
         if (force_rewrite) { skin_.invalidate(); level_.invalidate(); }
         if (!skin_.put(io, want_skin)) { status = Status::Failed; stage_ = 16; return; }
         if (!level_.put(io, want_level)) { status = Status::Failed; stage_ = 17; return; }
+
+        // Копия 3 — Oxide.Item.skin (+0x30, int) / skinLevel (+0x34, byte):
+        // серверная правда о предмете, из которой ItemPickup.KZq (0x6926BDC)
+        // берёт скин при дропе. С ней дроп/подбор ствола становится рабочим
+        // триггером пересборки вьюхи БЕЗ насадок/модов (см. заголовок файла).
+        // Нечитаемый Item не роняет тик: SyncVar-копия уже записана, а
+        // item_state_ = -1 честно показывает «третья точка не работает».
+        int32_t item_skin = 0;
+        uint8_t item_level = 0;
+        if (io.read(context_.item.object + go_active::ITEM_SKIN, item_skin) &&
+            io.read(context_.item.object + go_active::ITEM_SKIN_LEVEL, item_level)) {
+            skin_item_.sample_value(context_.item.object + go_active::ITEM_SKIN, item_skin);
+            level_item_.sample_value(context_.item.object + go_active::ITEM_SKIN_LEVEL, item_level);
+            if (force_rewrite) { skin_item_.invalidate(); level_item_.invalidate(); }
+            if (!skin_item_.put(io, (int32_t)want_skin)) { status = Status::Failed; stage_ = 22; return; }
+            if (!level_item_.put(io, want_level)) { status = Status::Failed; stage_ = 23; return; }
+        }
 
         // Копия 2 — рабочая (+0xC0): по дампу из неё hbr.pMZ/pMj подают piece
         // в FPManager.Kxi. Устройство уточнило картину: между дроу копия

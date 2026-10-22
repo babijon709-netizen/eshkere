@@ -264,7 +264,7 @@ void test_stale_view_and_asset_warnings() {
     stale.ui.handle_live = false;
     w.note(stale);
     std::string text = slurp(log_path());
-    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — пересборка только на событие игры: смена насадки/мода или спавн (полный перезапуск игры)") == 1);
+    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — убери и достань ствол (вьюха пересобирается на дроу) либо смени насадку/мод") == 1);
     assert(count_of(text, "!! визуал скина НЕ загружен: игра докачает ассет сама при сборке вьюхи") == 1);
 
     // Игрок убрал и достал ствол: обе строки меняются, и это видно без CLI.
@@ -281,7 +281,7 @@ void test_stale_view_and_asset_warnings() {
     w.note(no_asset);
     text = slurp(log_path());
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет НЕ запрашивался") == 1);
-    assert(count_of(text, "!! ассет ещё не запрашивался: нужна одна сборка вьюхи (смена насадки/мода или спавн — полный перезапуск игры) — закачает игра сама") == 1);
+    assert(count_of(text, "!! ассет ещё не запрашивался: нужна одна сборка вьюхи — убери и достань ствол (сборка на дроу), закачает игра сама") == 1);
 
     // Перекраска подписана в самой строке выбора: на устройстве раз за разом
     // выбирают recolor и ждут смены модели.
@@ -293,6 +293,31 @@ void test_stale_view_and_asset_warnings() {
     // Перекраске строка про закачку не пишется: одна осталась от progression.
     assert(count_of(text, "ассет ещё не запрашивался") == 1);
     std::printf("  stale view, handle, missing asset: warned once each; recolor labeled, not nagged\n");
+}
+
+// Дроу состоялся, а визуал мёртв: сборка прошла, ассет докачивается сам.
+// Устройство (skin.log v13): 12 пересборок «из нашего индекса» подряд при
+// мёртвой ручке — лог обязан разделять «картинка сменится» и «собрана, но
+// визуал НЕ загружен (нужен интернет)», иначе «работало, потом перестало»
+// выглядит как сбой записи, а не как недокачанный ассет.
+void test_stale_resolved_without_visual() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot stale = make_snap(0.0);
+    stale.ui.fp_stale = true;
+    stale.ui.handle_live = false;
+    w.note(stale);
+    // Дроу пересобрал вьюху из нашего индекса, но ассет так и не прибыл.
+    skinlog::Snapshot built = make_snap(1.0);
+    built.ui.handle_live = false;
+    w.note(built);
+    const std::string text = slurp(log_path());
+    assert(count_of(text, "вьюха собрана из нашего индекса, но визуал НЕ загружен — ассет докачивается сам (нужен интернет; ретрай каждые 250 мс — жди)") == 1);
+    assert(count_of(text, "вьюха собрана из нашего индекса — картинка должна смениться") == 0);
+    // Ручка не менялась (мертва -> мертва): отдельная строка «визуал НЕ
+    // загружен» пишется один раз, на первом переходе, а не на каждый дроу.
+    assert(count_of(text, "!! визуал скина НЕ загружен: игра докачает ассет сама при сборке вьюхи") == 1);
+    std::printf("  built but no visual: honest 'asset downloads itself' line, no spam\n");
 }
 
 // Чередование стадий ВНУТРИ одной причины не должно спамить: на загрузке игры
@@ -544,6 +569,7 @@ int main() {
     test_unreadable_piece_values();
     test_block_cause_is_reported();
     test_stale_view_and_asset_warnings();
+    test_stale_resolved_without_visual();
     test_same_cause_is_one_line();
     test_local_copy_line();
     test_item_copy_line();

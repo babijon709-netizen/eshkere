@@ -199,7 +199,7 @@ static const LangPair kUiEn[] = {
     {"Система", "System"},
     {"Скелеты", "Skeletons"},
     {"Скин", "Skin"},
-    {"Скин записан — уберите и достаньте ствол", "Skin written — holster and draw the weapon"},
+    {"Скин записан — поменяйте насадку/мод в игре", "Skin written — swap an attachment or mod in game"},
     {"Скин применён", "Skin applied"},
     {"Скинов нет", "No skins"},
     {"Скинченджер", "Skin changer"},

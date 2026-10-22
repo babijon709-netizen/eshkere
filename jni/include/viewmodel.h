@@ -232,7 +232,7 @@ inline SkinBlock skin_block(int stage) {
         case 16: case 17: case 18: case 19:       return SkinBlock::WriteFailed;
         case 20:                                  return SkinBlock::Unreadable;
         case 21:                                  return SkinBlock::WrongLayout;
-        case 22: case 23:                         return SkinBlock::WriteFailed;
+        case 22: case 23: case 24: case 25:       return SkinBlock::WriteFailed;
         default:                                  return SkinBlock::NoPlayer;
     }
 }
@@ -260,12 +260,17 @@ struct SkinUiInfo {
     int  count = 0;             // сколько скинов у предмета в руках (0 = нет/не привязаны)
     int  skin = -1;             // WeaponPiece.Skin, который лежит в памяти сейчас
     int  level = -1;            // WeaponPiece.SkinLevel сейчас
-    bool fp_stale = false;      // PlayerFPWeaponView собран из ДРУГОГО индекса
+    bool fp_stale = false;      // PlayerFPWeaponView из ДРУГОГО индекса либо отсутствует
     bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
     // Рабочая копия piece (+0xC0/+0xD0) — вторая цель записи: -1 — не
     // читается или не WeaponPiece, 0 — там наш индекс,
     // 1 — индекс отличается (игра перезаписала копию, ждём следующего тика).
     int  local_state = -1;
+    // §4.21: игра гасит голову рабочей копии на холстере (Enabled=0), а
+    // CreateFPWeapon трактует её как «отложенный Release». Чит достраивает
+    // голову зеркалом из SyncVar (pMd-семантика) — true, пока зеркало держит
+    // голову (дроу снова собирает вьюху, а не выпускает её).
+    bool local_refill = false;
     // Oxide.Item.skin (+0x30) — третья цель записи: дроп и сохранение несут
     // наш скин (пересборка вьюхи — на дроу/спавне, KERNEL.md §4.17–4.20).
     // -1 — не читается, 0 — Item держит наш индекс, 1 — отличается.

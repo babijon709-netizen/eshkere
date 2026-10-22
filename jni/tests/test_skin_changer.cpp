@@ -4,8 +4,10 @@
 // запись индекса ТОЛЬКО по расхождению в ОБЕ копии WeaponPiece (SyncVar +0x110
 // и рабочую +0xC0 — из второй игра собирает FP-вьюху на дроу), возврат
 // оригинала, поведение на пересинке SyncVar, смене ствола и смене сессии, и
-// что Enabled не пишется НИКОГДА (ноль в этом бите разбирает вьюху, а не
-// пересобирает — см. заголовок skin_changer_memory.h).
+// работу с головой рабочей копии: Enabled в SyncVar не пишется НИКОГДА, а
+// погашенная игрой голова (+0xC0, Enabled=0) достраивается зеркалом из
+// SyncVar — погашенная голова превращает дроу в Release вьюхи вместо сборки
+// (KERNEL.md §4.21, заголовок skin_changer_memory.h).
 #include "skin_changer_memory.h"
 
 #include <cassert>
@@ -256,8 +258,8 @@ struct Fixture {
     uint8_t live_item_level() {
         return io.value<uint8_t>(item + go_active::ITEM_SKIN_LEVEL);
     }
-    // Enabled не обязан меняться никогда: ноль в нём разбирает вьюху
-    // (CreateFPWeapon при Enabled==0 зовёт Release + KxS).
+    // Enabled в SyncVar не меняется никогда; в рабочей копии — только
+    // зеркалом погашенной головы (§4.21): живую голову тик не трогает.
     bool enabled_untouched() const {
         for (uint64_t a : io.write_log)
             if (a == piece() + go_active::WEAPONPIECE_ENABLED ||
@@ -827,12 +829,12 @@ void test_piece_bad_number() {
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(24) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(26) != SkinBlock::None);   // вне диапазона — не «порядок»
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 23; ++stage) {
+    for (int stage = 1; stage <= 25; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -866,9 +868,12 @@ void test_skin_block_grouping() {
     assert(viewmodel::skin_block(16) == viewmodel::skin_block(17));
     assert(viewmodel::skin_block(18) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(19) == viewmodel::skin_block(16));
-    // Запись Oxide.Item (22/23) — та же причина: «запись не подтвердилась».
+    // Запись Oxide.Item (22/23) и зеркало головы рабочей копии (24/25) — та
+    // же причина: «запись не подтвердилась».
     assert(viewmodel::skin_block(22) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(23) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(24) == viewmodel::skin_block(16));
+    assert(viewmodel::skin_block(25) == viewmodel::skin_block(16));
     assert(viewmodel::skin_block(16) != viewmodel::skin_block(14));
     // Пустые руки и «нет скинов у предмета» — тоже разные вещи.
     assert(viewmodel::skin_block(6) == SkinBlock::EmptyHands);
@@ -878,7 +883,7 @@ void test_skin_block_grouping() {
     for (int stage = 1; stage <= 4; ++stage)
         assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 23 stages -> 9 distinct causes, texts unique\n");
+    std::printf("  skin_block: 25 stages -> 9 distinct causes, texts unique\n");
 }
 
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
@@ -929,6 +934,81 @@ void test_kind_other_when_slots_and_names_unreadable() {
     std::printf("  stale slots + no names: kind Other, ready not asserted, write works\n");
 }
 
+// ---- 27. §4.21: погашенная голова рабочей копии — зеркало из SyncVar -------
+void test_blanked_head_refilled_from_syncvar() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(!f.c.ui().local_refill);           // голова канонична — зеркало спит
+    // Ствол убран: игра гасит голову рабочей копии (Enabled=0, Number=-1,
+    // Skin=-1, Loaded=0). SyncVar остаётся каноничным и держит наш индекс.
+    const uint64_t blank_lo = 0x0000FFFFFFFF0000ull;   // 00 00 ff ff ff ff 00 00
+    f.io.put<uint64_t>(piece_local(), blank_lo);
+    f.io.put<uint64_t>(piece_local() + 8, 0xDEAD);     // хвост (Mods) рабочей
+    f.io.put<uint64_t>(piece() + 8, 0xBEEF);           // хвост SyncVar
+    f.tick(f.settings(true, 2));
+    const viewmodel::SkinUiInfo ui = f.c.ui();
+    assert(ui.status == viewmodel::Status::Active && ui.stage == 0);
+    assert(ui.local_refill);
+    // Голова зеркалится ЦЕЛИКОМ, как это делает pMd: Enabled=1, Number=114,
+    // наш новый индекс, и хвост совпадает с SyncVar-хвостом.
+    assert(f.live_enabled_local() == 1);
+    assert(f.io.value<int16_t>(piece_local() + go_active::WEAPONPIECE_NUMBER) == 114);
+    assert(f.live_skin_local() == 2);
+    assert(f.io.value<uint64_t>(piece_local() + 8) == 0xBEEF);
+    // Enabled в SyncVar по-прежнему не написан никем.
+    for (uint64_t a : f.io.write_log)
+        assert(a != piece() + go_active::WEAPONPIECE_ENABLED);
+    std::printf("  blanked head: mirrored from SyncVar (Enabled/Number/skin/Mods)\n");
+}
+
+// ---- 28. §4.21: зеркало возвращается при выключении -------------------------
+void test_refill_restored_on_disable() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    const uint64_t blank_lo = 0x0000FFFFFFFF0000ull;
+    f.io.put<uint64_t>(piece_local(), blank_lo);
+    f.io.put<uint64_t>(piece_local() + 8, 0);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().local_refill);
+    assert(f.live_enabled_local() == 1 && f.live_skin_local() == 1);
+    // Выключение: голова рабочей копии возвращается байт-в-байт погашенной,
+    // SyncVar/Item — к оригиналам фикстуры.
+    f.tick(f.settings(false));
+    assert(!f.c.has_state() && !f.c.ui().local_refill);
+    assert(f.io.value<uint64_t>(piece_local()) == blank_lo);
+    assert(f.live_skin_local() == (int16_t)-1);
+    assert(f.live_skin() == f.original_skin && f.live_item_skin() == f.original_skin);
+    std::printf("  refill restore: disable returns the blanked head byte-exact\n");
+}
+
+// ---- 29. §4.21: дострой головы в нерезолве (дроу без FPObject) --------------
+void test_stage9_refills_blank_head() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    // Игрок временно пропал (нерезолв, «В руках пусто»), а голова погашена:
+    // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку FPObject,
+    // поэтому дострой обязан случиться и здесь — фоном, без смены статуса.
+    const uint64_t blank_lo = 0x0000FFFFFFFF0000ull;
+    f.io.put<uint64_t>(piece_local(), blank_lo);
+    f.io.put<uint8_t>(net + go_active::NETWORK_IDENTITY_IS_LOCAL_PLAYER, 0);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Waiting);
+    assert(f.c.ui().stage != 0);
+    assert(f.live_enabled_local() == 1);      // голова достроена
+    assert(f.live_skin_local() == 1);         // и держит наш индекс
+    // Мёртвый PW зеркалить нельзя: запись в освобождённую кучу — порча памяти.
+    Fixture d;
+    d.tick(d.settings(true, 1));
+    d.io.put<uint64_t>(pw, 0xDEAD);           // klass мёртв -> life != Alive
+    d.io.put<uint64_t>(piece_local(), blank_lo);
+    const unsigned before = d.io.writes;
+    d.tick(d.settings(true, 1));
+    assert(d.io.writes == before);            // ни одной записи по мёртвому PW
+    assert(d.io.value<uint64_t>(piece_local()) == blank_lo);
+    std::printf("  stage-9 refill: background mirror, dead PW untouched\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -963,6 +1043,9 @@ int main() {
     test_skin_block_grouping();
     test_kind_by_exact_name_when_slots_stale();
     test_kind_other_when_slots_and_names_unreadable();
+    test_blanked_head_refilled_from_syncvar();
+    test_refill_restored_on_disable();
+    test_stage9_refills_blank_head();
     std::printf("OK\n");
     return 0;
 }

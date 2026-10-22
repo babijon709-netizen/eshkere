@@ -264,7 +264,7 @@ void test_stale_view_and_asset_warnings() {
     stale.ui.handle_live = false;
     w.note(stale);
     std::string text = slurp(log_path());
-    assert(count_of(text, "вьюха СТАРАЯ: собрана из другого индекса — убери и достань ствол (вьюха пересобирается на дроу) либо смени насадку/мод") == 1);
+    assert(count_of(text, "вьюха СТАРАЯ: из другого индекса либо выпущена на холстере — убери и достань ствол (вьюха пересобирается на дроу)") == 1);
     assert(count_of(text, "!! визуал скина НЕ загружен: игра докачает ассет сама при сборке вьюхи") == 1);
 
     // Игрок убрал и достал ствол: обе строки меняются, и это видно без CLI.
@@ -364,6 +364,24 @@ void test_local_copy_line() {
     assert(count_of(text, "рабочая копия piece: наш индекс") == 2);
     assert(count_of(text, "рабочая копия piece: ОТЛИЧАЕТСЯ (игра перезаписала — восстанавливаем)") == 1);
     std::printf("  local copy: ours/overwritten/restored, one line per change\n");
+}
+
+// §4.21: голова рабочей копии была погашена игрой (Enabled=0) — чит достроил
+// её зеркалом из SyncVar. Одна строка на включение: с этого момента дроу
+// собирает вьюху вместо Release; обратный переход молчаливый (штатный возврат
+// оригинала при выключении).
+void test_refill_line() {
+    fresh();
+    skinlog::Writer w;
+    w.note(make_snap(0.0));
+    skinlog::Snapshot refilled = make_snap(0.1);
+    refilled.ui.local_refill = true;     // игра погасила голову — зеркало в деле
+    w.note(refilled);
+    w.note(refilled);                    // без перемен — одна строка
+    w.note(make_snap(0.5));              // возврат оригинала — молча
+    const std::string text = slurp(log_path());
+    assert(count_of(text, "голова рабочей копии была погашена игрой (Enabled=0) — достройка из SyncVar в действии: дроу соберёт вьюху, а не выпустит её") == 1);
+    std::printf("  refill line: one line on engage, silent on release\n");
 }
 
 // Oxide.Item.skin (+0x30) — третья точка записи: дроп и сохранение несут её
@@ -572,6 +590,7 @@ int main() {
     test_stale_resolved_without_visual();
     test_same_cause_is_one_line();
     test_local_copy_line();
+    test_refill_line();
     test_item_copy_line();
     test_weapon_switch_and_session_change();
     test_rotation_is_bounded();

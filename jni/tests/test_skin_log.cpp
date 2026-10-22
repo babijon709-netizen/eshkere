@@ -279,7 +279,7 @@ void test_stale_view_and_asset_warnings() {
     w.note(no_asset);
     text = slurp(log_path());
     assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет НЕ запрашивался") == 1);
-    assert(count_of(text, "!! чего нет на устройстве, внешним процессом не загрузить") == 1);
+    assert(count_of(text, "!! ассет ещё не запрашивался: нужна одна сборка вьюхи (смена насадки/мода, подбор, респаун) — закачает игра сама") == 1);
 
     // Перекраска подписана в самой строке выбора: на устройстве раз за разом
     // выбирают recolor и ждут смены модели.
@@ -288,7 +288,9 @@ void test_stale_view_and_asset_warnings() {
     w.note(rec);
     text = slurp(log_path());
     assert(count_of(text, "выбран #2 dmr_red: recolor, уровней 1, ассет НЕ запрашивался — перекраска (материал, не модель)") == 1);
-    std::printf("  stale view, handle, missing asset: warned once each; recolor labeled\n");
+    // Перекраске строка про закачку не пишется: одна осталась от progression.
+    assert(count_of(text, "ассет ещё не запрашивался") == 1);
+    std::printf("  stale view, handle, missing asset: warned once each; recolor labeled, not nagged\n");
 }
 
 // Чередование стадий ВНУТРИ одной причины не должно спамить: на загрузке игры
@@ -415,7 +417,7 @@ void test_unidentified_kind_no_asset_claim() {
     std::string text = slurp(log_path());
     assert(count_of(text, "выбран #1 dmr_gold: other, уровней 3, ассет не проверить (тип не распознан)") == 1);
     assert(count_of(text, "!! тип скина не распознан") == 1);
-    assert(count_of(text, "чего нет на устройстве") == 0);   // отсутствие не выдумано
+    assert(count_of(text, "ассет ещё не запрашивался") == 0);   // отсутствие не выдумано
 
     // Перечитывание списка тип распознало (резерв по имени сработал), и ассет
     // измерен: состояние выбора изменилось — строка пишется заново.

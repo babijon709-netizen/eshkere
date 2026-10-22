@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+// Пределы индекса/уровня скина живут в таблице оффсетов (game_offsets.h, блок
+// «Скины»): и санитайзер, и контроллер обязаны брать их оттуда, а не держать
+// свою копию числа.
+#include "game_offsets_active.h"
 
 // Vertical world FOV; hands are one static position shared by all poses, cm.
 struct ViewmodelSettings {
@@ -20,6 +24,23 @@ struct ViewmodelSettings {
     // DelayPromise, на которых игра ждёт между предметами при сборе лута.
     // Реализация: fast_loot_memory.h, тик из esp_viewmodel_tick.
     bool fast_loot = false;
+    // Скинченджер: подмена ИНДЕКСА скина в SyncVar Oxide.WeaponPiece ствола в
+    // руках (реализация: skin_changer_memory.h, тик из esp_viewmodel_tick).
+    // skin_index — индекс в ItemData.skinData[] ЭТОГО предмета, а не глобальный
+    // id скина: игра сама индексирует свой массив этим числом (EN.XLy,
+    // RVA 0x7CBC768: ldr x8,[ItemData,#0xD0]; [x8 + Skin*8 + 0x20]).
+    bool skin_enabled = false;
+    int  skin_index = 0;
+    // Уровень прогрессии (WeaponProgressionSkinData хранит AssetReference[]
+    // по уровням). Для скинов без уровней игра его просто не читает.
+    int  skin_level = 0;
+    // Принудительно пересобрать визуал. Запись индекса сама по себе картинку
+    // не меняет: FP-вьюха собирается из piece на холстер/дроу, а не каждым
+    // кадром (у PlayerFPWeaponView нет Update, только MjH/hIq/xM/XZE/MxP
+    // (WeaponPiece, EV, Action)). Опция гасит WeaponPiece.Enabled на один тик
+    // и возвращает — получается настоящий дроу уже с нашим индексом. Локально:
+    // Enabled — SyncVar server->client, наружу запись не уходит.
+    bool skin_rebuild = false;
 };
 
 namespace viewmodel {
@@ -31,6 +52,11 @@ inline bool finite(float v) {
 inline float bounded(float v, float lo, float hi, float fallback) {
     return !finite(v) ? fallback : (v < lo ? lo : (v > hi ? hi : v));
 }
+// Целые пределы (индекс и уровень скина): границы берутся из таблицы оффсетов,
+// потому что за ними — запись мусора в SyncVar Oxide.WeaponPiece.
+inline int bounded(int v, int lo, int hi, int fallback) {
+    return (v < lo || v > hi) ? fallback : v;
+}
 inline int sanitize_fps_limit(int fps) {
     return fps == 90 || fps == 120 || fps == 144 ? fps : 0;
 }
@@ -40,6 +66,8 @@ inline ViewmodelSettings sanitize(ViewmodelSettings s) {
     s.x = bounded(s.x, -50.f, 50.f, 0.f);
     s.y = bounded(s.y, -50.f, 50.f, 0.f);
     s.z = bounded(s.z, -50.f, 50.f, 0.f);
+    s.skin_index = bounded(s.skin_index, 0, go_active::SKIN_INDEX_MAX, 0);
+    s.skin_level = bounded(s.skin_level, 0, go_active::SKIN_LEVEL_MAX, 0);
     return s;
 }
 // Optional trailer after the existing v4 config. Old readers ignore it;
@@ -115,7 +143,89 @@ struct FpsUiInfo {
     int pace_kind = 0;               // тип Android frame pacing (0 = заглушен)
     uint64_t build_id = 0;           // build ID найденной libunity (0 = mapping'а нет/не прочитан)
 };
+
+// ---- Скинченджер: что видно меню и one-shot CLI ----------------------------
+//
+// Тип скина — по классу ассета SkinData (иерархия из dump.cs, см. блок «Скины»
+// в game_offsets.h). Скинченджеру нужны OBJECT-классы: они дают ДРУГОЙ префаб
+// (WeaponObjectSkinData.FPPrefabRef / rightHandPrefabRef), то есть настоящую
+// модель. Recolor-классы только подменяют материал — это перекраска, не скин,
+// и в списке они помечаются отдельно, чтобы меню честно показывало, что
+// выбрано.
+enum class SkinKind : int {
+    Unknown = 0,
+    WeaponObject = 1,        // WeaponObjectSkinData — другой префаб ствола
+    WeaponProgression = 2,   // WeaponProgressionSkinData — префабы по уровням
+    WeaponPreview = 3,       // WeaponPreviewPrefabSkinData — только превью
+    WeaponRecolor = 4,       // WeaponRecolorSkinData — перекраска материалом
+    EquipObject = 5,         // EquipmentObjectSkinData — одежда/руки
+    EquipRecolor = 6,        // EquipmentRecolorSkinData — перекраска одежды
+    Other = 7,               // BuildingSkinData / Interactable* — не оружие
+};
+inline const char* skin_kind_name(SkinKind kind) {
+    switch (kind) {
+        case SkinKind::WeaponObject:      return "object";
+        case SkinKind::WeaponProgression: return "progression";
+        case SkinKind::WeaponPreview:     return "preview";
+        case SkinKind::WeaponRecolor:     return "recolor";
+        case SkinKind::EquipObject:       return "equip-object";
+        case SkinKind::EquipRecolor:      return "equip-recolor";
+        case SkinKind::Other:             return "other";
+        default:                          return "unknown";
+    }
 }
+// true для скинов, которые меняют модель, а не материал.
+inline bool skin_kind_is_object(SkinKind kind) {
+    return kind == SkinKind::WeaponObject || kind == SkinKind::WeaponProgression ||
+           kind == SkinKind::EquipObject;
+}
+
+// Предел списка: массив ItemData.skinData у предмета короткий, а больше меню
+// и не нужно. Совпадает с skinchanger::kMaxSkins.
+constexpr int kSkinEntryMax = 24;
+
+// Одна строка списка: скин предмета, который сейчас в руках.
+struct SkinEntryView {
+    int      index = -1;             // значение, которое пишется в WeaponPiece.Skin
+    SkinKind kind = SkinKind::Unknown;
+    int      levels = 1;             // >1 у WeaponProgressionSkinData (массивы по уровням)
+    bool     ready = false;          // AssetReference.m_Operation непуста: ассет уже запрашивался
+    char     id[48] = {};            // SkinData.Id (UTF-8)
+    char     base_id[32] = {};       // SkinData.baseId — id базового предмета
+};
+
+// Снимок состояния для меню: заполняется контроллером (skin_changer_memory.h)
+// и не делает дополнительных обращений к памяти игры на каждый кадр меню.
+struct SkinUiInfo {
+    int  count = 0;             // сколько скинов у предмета в руках (0 = нет/не привязаны)
+    int  skin = -1;             // WeaponPiece.Skin, который лежит в памяти сейчас
+    int  level = -1;            // WeaponPiece.SkinLevel сейчас
+    bool fp_stale = false;      // PlayerFPWeaponView собран из ДРУГОГО индекса
+    bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
+    bool rebuild_busy = false;  // идёт принудительный холстер/дроу
+    int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
+    Status status = Status::Off;
+    char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках
+};
+}
+
+// Список скинов предмета в руках (кэш контроллера, не чтение памяти на вызов).
+// Возвращает число заполненных строк.
+int  esp_skin_entries(viewmodel::SkinEntryView* out, int max);
+// Снимок состояния скинченджера для меню и one-shot CLI.
+viewmodel::SkinUiInfo esp_skin_ui();
+// Расшифровка стадии остановки для лога/меню (стадии — в skin_changer_memory.h).
+const char* skin_change_stop_reason(viewmodel::Status status, int stage);
+// Одноразовый запрос принудительной пересборки визуала (холстер/дроу): ставится
+// меню («Пересобрать сейчас») и one-shot CLI, снимается контроллером на
+// следующем тике оружия. Сам по себе тумблер skin_rebuild означает «пересобирать
+// автоматически при смене индекса».
+void esp_skin_request_rebuild();
+// Одноразовый запрос перечитать список скинов. Ставится меню, пока раздел
+// раскрыт, и CLI `skins`: перечитывание读 строки посимвольно, поэтому по
+// запросу, а не каждый тик. Работает и при выключенном тумблере — список
+// показывается до включения, записей при этом нет.
+void esp_skin_request_scan();
 
 // Main-thread tick, independent of ESP toggles. No background writer.
 void esp_viewmodel_tick(const ViewmodelSettings& settings);

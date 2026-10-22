@@ -823,6 +823,87 @@ float TabContent(int tab, float dt, float cW) {
             if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
                 esp_viewmodel_tick(vm);
         }
+        // ---- Скины -------------------------------------------------------
+        // Скинченджер пишет ИНДЕКС в SyncVar Oxide.WeaponPiece.Skin: игра сама
+        // берёт по нему SkinData из ItemData.skinData[] этого предмета и
+        // собирает визуал (см. skin_changer_memory.h). Список — живой, из
+        // памяти игры: глобальной таблицы скинов не существует, индекс у
+        // каждого предмета свой.
+        SHdr(XS("Скины"));
+        {
+            viewmodel::SkinEntryView skinEntries[viewmodel::kSkinEntryMax];
+            const viewmodel::SkinUiInfo skinUi = esp_skin_ui();
+            const int skinCount = esp_skin_entries(skinEntries, viewmodel::kSkinEntryMax);
+            char skinSummary[192];
+            if (!vm.skin_enabled)
+                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Выкл"));
+            else if (skinCount <= 0)
+                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Скинов нет"));
+            else {
+                const int sel = ImClamp(vm.skin_index, 0, skinCount - 1);
+                const viewmodel::SkinEntryView& e = skinEntries[sel];
+                snprintf(skinSummary, sizeof(skinSummary), "%s%s%s · %s",
+                         skinUi.weapon[0] ? skinUi.weapon : "",
+                         skinUi.weapon[0] ? ": " : "",
+                         e.id[0] ? e.id : XS("Скин"),
+                         viewmodel::skin_kind_is_object(e.kind) ? XS("модель") : XS("перекраска"));
+            }
+            if (SettingsHeader("##misc_skins", XS("Скинченджер"), skinSummary,
+                               false, &vm.skin_enabled, g_state.a_skin)) {
+                // Перечитывание списка — по запросу, а не каждый кадр: строки
+                // читаются из памяти игры посимвольно.
+                esp_skin_request_scan();
+                const int n = skinCount;
+                if (n > 0 && vm.skin_index >= n) vm.skin_index = n - 1;
+                if (vm.skin_index < 0) vm.skin_index = 0;
+                const int levels = (n > 0) ? ImMax(1, skinEntries[vm.skin_index].levels) : 1;
+                if (vm.skin_level >= levels) vm.skin_level = levels - 1;
+
+                const int sliders = 1 + (levels > 1 ? 1 : 0);
+                CardBg(Layout::RowH * 1.f + Layout::SliderH * (float)sliders);
+                const int oldIndex = vm.skin_index, oldLevel = vm.skin_level;
+                const bool oldAuto = vm.skin_rebuild;
+
+                float indexValue = (float)vm.skin_index;
+                SliderRow("##skin_index", XS("Скин"), &indexValue, 0.f,
+                          (float)(n > 1 ? n - 1 : 1), "#%.0f", false, true,
+                          g_state.sl_skin_index, dt);
+                vm.skin_index = ImClamp((int)(indexValue + 0.5f), 0, n > 0 ? n - 1 : 0);
+                if (levels > 1) {
+                    float levelValue = (float)vm.skin_level;
+                    SliderRow("##skin_level", XS("Уровень"), &levelValue, 0.f,
+                              (float)(levels - 1), "%.0f", false, false,
+                              g_state.sl_skin_level, dt);
+                    vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
+                }
+                ToggleRow("##skin_auto", XS("Пересобирать при смене"),
+                          &vm.skin_rebuild, g_state.a_skin_rebuild, true);
+
+                // Состояние, которое на устройстве отвечает на «применилось ли»:
+                // пока FP-вьюха собрана из другого индекса, картинка старая.
+                char skinLine[192];
+                if (n <= 0)
+                    snprintf(skinLine, sizeof(skinLine), "%s",
+                             XS("В руках нет предмета со скинами"));
+                else
+                    snprintf(skinLine, sizeof(skinLine), "%s: %s · %s: %s",
+                             XS("Вьюха"), skinUi.fp_stale ? XS("старая") : XS("собрана"),
+                             XS("Ассет"), skinUi.handle_live ? XS("загружен") : XS("не загружен"));
+                SHdr(skinLine, 4.f);
+
+                const char* const rebuildNow[] = {XS("Пересобрать сейчас")};
+                int skinAction = -1;
+                if (ChoiceRow("##skin_rebuild_now", &skinAction, rebuildNow, 1)) {
+                    esp_skin_request_rebuild();
+                    ShowToast(XS("Пересборка запрошена"));
+                }
+
+                if (oldIndex != vm.skin_index || oldLevel != vm.skin_level ||
+                    oldAuto != vm.skin_rebuild)
+                    esp_viewmodel_tick(vm);
+            }
+        }
+
         SHdr(XS("Автофарм"));
         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
                            false, &g_state.farm_on, g_state.a_farm_on)) {

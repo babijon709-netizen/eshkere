@@ -76,7 +76,10 @@ struct AppState {
     float a_custom_fov = 0.f, a_custom_hands = 0.f, a_no_recoil = 0.f, a_no_spread = 0.f,
           a_no_ballistics = 0.f, a_fast_loot = 0.f, a_fast_fire = 0.f,
           a_fast_reload = 0.f, a_fake_lag = 0.f;
+    // Скинченджер (viewmodel.skin_*): тумблер и «пересобирать при смене».
+    float a_skin = 0.f, a_skin_rebuild = 0.f;
     SliderAnim sl_custom_fov, sl_hands_x, sl_hands_y, sl_hands_z, sl_fake_lag;
+    SliderAnim sl_skin_index, sl_skin_level;
     bool  always_day = false;     // всегда день
     bool  no_grass = false;       // не создавать рендереры травы и кустов
     float marker_dist = 150.f;

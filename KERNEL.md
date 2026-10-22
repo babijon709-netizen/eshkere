@@ -168,6 +168,15 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
     настоящего тачскрина (`EVIOCGNAME`/`EVIOCGPHYS`/`EVIOCGID` по уже
     открытому fd), а не `rand()`: список ввода читает любое приложение без
     разрешений, и случайное имя — подпись, по которой функцию находят.
+13. **Скины: `Oxide.WeaponPiece` — SyncVar направления server→client.**
+    Писать в него можно (наружу значение не уходит), но игра вправе вернуть
+    своё в любой момент: запись только «по расхождению со свежим чтением»
+    (п. 10) и с возвратом оригинала при выключении. В `PlayerWeapon` лежат
+    ДВЕ копии `WeaponPiece` — SyncVar (релиз +0x110, бета +0x130) и рабочая
+    (релиз +0xC0, бета +0xD0); писать нужно только в SyncVar, рабочая не
+    участвует. Третья точка с тем же индексом — `PlayerFPWeaponView` (+0x28):
+    это копия, ИЗ КОТОРОЙ FP-вьюха уже построена; её не пишем, а читаем как
+    диагноз «пересобралось или нет» (`SkinUiInfo.fp_stale`).
 
 ## 5. Скрытие процесса (stealth.h) — что новый код обязан учитывать
 
@@ -214,6 +223,8 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 | `jni/src/silent_aim.cpp` | образец фонового потока с доступом через транспорт |
 | `jni/src/fast_loot_memory.h` | быстрый подбор: обход раннеров плеер-лупа UniTask, обнуление 0.35f задержек «Забрать все» (тик из `esp_viewmodel_tick`, память через `HeapMemory`/`g_mem`) |
 | `jni/src/no_recoil_memory.h` | «без отдачи»: гашение амплитуды в ассете `RecoilConfig` хитскан-ствола в руках (6 скаляр), сохранение/возврат оригиналов как у «нет разброса» (тик из `esp_viewmodel_tick`) |
+| `jni/src/skin_changer_memory.h` | скинченджер: `ItemData.skinData[WeaponPiece.Skin]`, запись индекса/уровня в SyncVar `PlayerWeapon.weaponPiece`, перечисление скинов и принудительный холстер/дроу (тик из `esp_viewmodel_tick`) |
+| `jni/src/skin_probe.h` | one-shot CLI `skins` (только чтение: список скинов ствола в руках) и `skin <индекс> [уровень] [--rebuild]` (запись); назначение транспорта + явный pre-bind шаг, как у `dump`/`skel` |
 | `jni/src/stealth.h` | маскировка процесса, unlink/restore бинарника, ptrace-слот |
 | `jni/src/metadata_dump.h` | one-shot CLI `dump`: дамп global-metadata, назначение транспорта + явный pre-bind шаг |
 | `jni/src/skeleton_diag.h` | one-shot CLI `skel`: диагностика скелетов, назначение транспорта + явный pre-bind шаг |

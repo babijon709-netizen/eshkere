@@ -6,6 +6,7 @@
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
 #include "object_data_memory.h"
+#include "skin_changer_memory.h"
 #include "app_state.h"
 #include "farm.h"
 #include "maps_lookup.h"
@@ -336,6 +337,7 @@ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
 no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
+skinchanger::Controller<HeapMemory> skin_ctl(heap_memory);
 
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
@@ -560,6 +562,8 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
+    if (!skin_ctl.reset(restore && g_mem.bound()))
+        ;
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -582,6 +586,8 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         no_recoil_ctl.status = settings.no_recoil_button ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_ballistics_ctl.reset(false);
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
+        skin_ctl.reset(false);
+        skin_ctl.status = settings.skin_enabled ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -616,6 +622,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         want_fast_fire || rapid_fire.has_state() ||
         settings.no_recoil_button || no_recoil_ctl.has_state() ||
         settings.no_ballistics || no_ballistics_ctl.has_state() ||
+        settings.skin_enabled || skin_ctl.has_state() ||
         g_farmActive) {
         auto local_player_ok = [&](uint64_t candidate) {
             uint64_t net=0; uint8_t local=0;
@@ -647,6 +654,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
+            skin_ctl.tick(epoch, g_il2cpp_base, 0, settings);
             return;
         }
         local_source_failed=false;
@@ -657,7 +665,8 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
     const unsigned weapon_flags = (want_no_spread ? 1u : 0u) |
                                   (want_fast_fire ? 2u : 0u) |
                                   (settings.no_recoil_button ? 4u : 0u) |
-                                  (settings.no_ballistics ? 8u : 0u);
+                                  (settings.no_ballistics ? 8u : 0u) |
+                                  (settings.skin_enabled ? 16u : 0u);
     const auto weapon_now = Clock::now();
     const bool weapon_due = weapon_flags != weapon_last_flags ||
                             player != weapon_last_player ||
@@ -670,6 +679,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         rapid_fire.tick(epoch, g_il2cpp_base, player, want_fast_fire);
         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
         no_ballistics_ctl.tick(epoch, g_il2cpp_base, player, settings.no_ballistics);
+        skin_ctl.tick(epoch, g_il2cpp_base, player, settings);
     }
     {
         // Log no-spread resolution changes only.
@@ -721,4 +731,53 @@ viewmodel::FpsUiInfo esp_viewmodel_fps_ui() {
     info.pace_kind = fps_controller.pace_seen();
     info.build_id = fps_unknown_build_id;
     return info;
+}
+
+// ---- Скинченджер: публичный срез контроллера ------------------------------
+// Список и снимок состояния берутся из кэша skinchanger::Controller, который
+// заполняет тик оружия (раз в 100 мс): меню и one-shot CLI не делают собственных
+// обращений к памяти игры на каждый свой кадр.
+int esp_skin_entries(viewmodel::SkinEntryView* out, int max) {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    return skin_ctl.entries(out, max);
+}
+
+viewmodel::SkinUiInfo esp_skin_ui() {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    return skin_ctl.ui();
+}
+
+void esp_skin_request_rebuild() {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    skin_ctl.request_rebuild();
+}
+
+void esp_skin_request_scan() {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    skin_ctl.request_scan();
+}
+
+const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
+    if (status == viewmodel::Status::Off) return "disabled or game unbound";
+    switch (stage) {
+        case 1: case 2:  return "no local player";
+        case 3: case 4:  return "network identity missing or not local";
+        case 5:          return "PlayerWeapon component not found";
+        case 6:          return "FPManager missing or dead";
+        case 7:          return "weapon slot in hands is empty";
+        case 8:          return "FP object backlink to player mismatch";
+        case 9:          return "held FP object has no Oxide.Item";
+        case 10:         return "ItemData not found on the held item";
+        case 11:         return "ItemData.skinData array not found";
+        case 12:         return "skinData length out of range (item has no skins)";
+        case 13:         return "selected index is not in this item's skinData";
+        case 14:         return "WeaponPiece.Skin unreadable";
+        case 15:         return "WeaponPiece.SkinLevel unreadable";
+        case 16:         return "Skin write not confirmed by readback";
+        case 17:         return "SkinLevel write not confirmed by readback";
+        case 18:         return "WeaponPiece.Enabled not restored (weapon stays holstered)";
+        case 19:         return "WeaponPiece.Enabled unreadable";
+        case 20:         return "holster write not confirmed by readback";
+        default:         return "waiting for bind or player";
+    }
 }

@@ -37,6 +37,41 @@ void ConfigSave() { ++saves; }
 void ConfigLoad(int index, bool) { ++loads; g_cfgLoadedIdx = index; }
 void ConfigUpdate(int) { ++updates; }
 void esp_viewmodel_tick(const ViewmodelSettings&) { ++applies; }
+// Скинченджер: список и снимок состояния приходят из памяти игры
+// (skin_changer_memory.h); здесь — детерминированный стенд из трёх скинов,
+// чтобы тест проходил и по ветке «есть уровни» (индекс 1), и по ветке
+// «уровней нет» (индексы 0 и 2).
+static int skinScans = 0, skinRebuilds = 0;
+int esp_skin_entries(viewmodel::SkinEntryView* out, int max) {
+    if (!out || max <= 0) return 0;
+    viewmodel::SkinEntryView entries[3];
+    entries[0].index = 0; entries[0].kind = viewmodel::SkinKind::WeaponObject;
+    entries[0].levels = 1; entries[0].ready = true;
+    snprintf(entries[0].id, sizeof(entries[0].id), "%s", "dmr_gold");
+    entries[1].index = 1; entries[1].kind = viewmodel::SkinKind::WeaponProgression;
+    entries[1].levels = 3; entries[1].ready = false;
+    snprintf(entries[1].id, sizeof(entries[1].id), "%s", "dmr_star");
+    entries[2].index = 2; entries[2].kind = viewmodel::SkinKind::WeaponRecolor;
+    entries[2].levels = 1; entries[2].ready = true;
+    snprintf(entries[2].id, sizeof(entries[2].id), "%s", "dmr_red");
+    const int n = max < 3 ? max : 3;
+    for (int i = 0; i < n; ++i) out[i] = entries[i];
+    return n;
+}
+viewmodel::SkinUiInfo esp_skin_ui() {
+    viewmodel::SkinUiInfo info;
+    info.count = 3;
+    info.skin = g_state.viewmodel.skin_index;
+    info.level = g_state.viewmodel.skin_level;
+    info.fp_stale = false;
+    info.handle_live = true;
+    info.status = g_state.viewmodel.skin_enabled ? viewmodel::Status::Active
+                                                 : viewmodel::Status::Off;
+    snprintf(info.weapon, sizeof(info.weapon), "%s", "dmr");
+    return info;
+}
+void esp_skin_request_scan() { ++skinScans; }
+void esp_skin_request_rebuild() { ++skinRebuilds; }
 float AimTouchFracX() { return g_state.aim_tx < 0.f ? 0.72f : g_state.aim_tx; }
 float AimTouchFracY() { return g_state.aim_ty < 0.f ? 0.48f : g_state.aim_ty; }
 namespace Blur { void Freeze(int, int, int, int, int, int) {} }

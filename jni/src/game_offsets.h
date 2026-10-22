@@ -1013,4 +1013,116 @@ inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xD8; // Oxide
 // Legacy snapshot field; custom hands no longer modify animation speed.
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = 0x20; // Oxide.TransformOffset.m_LerpSpeed
 
+// ---- Скины (Oxide.WeaponPiece -> ItemData.skinData[] -> SkinData) -----------
+//
+// Как игру заставляет сменить скин её собственный код (проверено по
+// dump11966 + дизассемблеру EN.XLy(WeaponPiece, List<AssetReference>),
+// RVA 0x7CBC768, и EG.Initialize/XHb):
+//
+//   WeaponPiece.Number (short, индекс предмета)
+//     -> EG.XHb(int) 0x7C9E104: Rpk[int]->string id, Rpc[id]->PlayerWeaponPiece
+//   PlayerWeaponPiece.id (string)
+//     -> ItemData.GwO(string) 0x69D6598 -> ItemData
+//   WeaponPiece.Skin (short)
+//     -> ItemData.skinData (SkinData[], +0xD0): ИНДЕКС В СОБСТВЕННОМ массиве
+//        предмета, а не глобальный id. В XLy это буквально
+//        ldr x8,[x0,#0xD0]; ldr w10,[x8,#0x18]; cmp Skin,w10;
+//        add x8,x8,Skin,lsl #3; ldr x20,[x8,#0x20]
+//     -> hbE.VkR(SkinData, SkinLevel, List<AssetReference>, bool) 0x6CDFB74
+//     -> Addressables load -> dV (список GameObject/Material/Renderer)
+//     -> применяется под FPSkinChanger (weaponParent/leftWeaponParent/
+//        defaultSkinMeshRenderer) и в PlayerFPWeaponView.
+//
+// WeaponPiece передаётся В ОДНОМ 64-битном регистре (структура 0x10 байт):
+// bit0 Enabled, bits16..31 Number, bits32..47 Skin, bits48..55 SkinLevel,
+// bit56 Loaded — видно по asr/lsr в XLy. В бете 11977 структура выросла до
+// 0x18 (добавлен EmptyHands) и передаётся уже по ссылке; на запись отдельных
+// полей это не влияет, они на тех же 0x4/0x6.
+inline constexpr std::uint64_t WEAPONPIECE_SKIN        = 0x04; // short, индекс в ItemData.skinData
+inline constexpr std::uint64_t WEAPONPIECE_SKIN_LEVEL  = 0x06; // byte, уровень WeaponProgressionSkinData
+inline constexpr std::uint64_t WEAPONPIECE_LOADED      = 0x07; // bool, «визуал скина загружен»
+inline constexpr std::uint64_t WEAPONPIECE_MODS        = 0x08; // WeaponModData[]
+inline constexpr std::uint64_t WEAPONPIECE_SIZE        = 0x10; // sizeof(Oxide.WeaponPiece)
+inline constexpr std::uint64_t WEAPONPIECE_EMPTY_HANDS = 0;    // 0 = поля нет в этом билде
+
+// Oxide.ItemData.skinData (SkinData[]) — тот самый массив, который индексирует
+// WeaponPiece.Skin. Релиз и бета: 0xD0 (сверено в dump.cs обоих сборок).
+inline constexpr std::uint64_t ITEMDATA_SKIN_DATA = 0xD0;
+
+// SkinData : ScriptableObject, IItemVisualConfig — база всех скинов.
+// Имена не обфусцированы (Id/baseId/iconRef), поля совпадают в 11966 и 11977.
+inline constexpr std::uint64_t SKINDATA_ID       = 0x18; // string,FormerlySerializedAs("id")
+inline constexpr std::uint64_t SKINDATA_BASE_ID  = 0x20; // string baseId
+inline constexpr std::uint64_t SKINDATA_ICON_REF = 0x28; // AssetReference iconRef
+
+// WeaponObjectSkinData — скин ЦЕЛИКОМ другим префабом (то, что нужно
+// скинченджеру; recolor-классы ниже только перекрашивают материал).
+inline constexpr std::uint64_t WEAPONSKIN_RIGHT_HAND_REF = 0x48; // AssetReference rightHandPrefabRef
+inline constexpr std::uint64_t WEAPONSKIN_LEFT_HAND_REF  = 0x50; // AssetReference leftHandPrefabRef
+inline constexpr std::uint64_t WEAPONSKIN_FP_REF         = 0x58; // AssetReference FPPrefabRef
+// WeaponRecolorSkinData: те же слоты, но это материалы (не используется
+// скинченджером, определяется только чтобы честно показать тип в списке).
+inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL    = 0x48; // AssetReference materialRef
+inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL_FP = 0x50; // materialRefOverrideFP
+// WeaponProgressionSkinData : WeaponObjectSkinData — массивы по SkinLevel.
+inline constexpr std::uint64_t WEAPONSKIN_PROG_RIGHT_HAND_REFS = 0x60; // AssetReference[]
+inline constexpr std::uint64_t WEAPONSKIN_PROG_LEFT_HAND_REFS  = 0x68; // AssetReference[]
+inline constexpr std::uint64_t WEAPONSKIN_PROG_FP_REFS         = 0x70; // AssetReference[]
+// WeaponPreviewPrefabSkinData (в релизе есть, в бете тоже) — только превью.
+inline constexpr std::uint64_t WEAPONSKIN_PREVIEW_REF = 0x60; // AssetReference previewPrefabRef
+// EquipmentObjectSkinData / EquipmentRecolorSkinData — одежда и руки.
+inline constexpr std::uint64_t EQUIPSKIN_PROPERTY_BLOCK = 0x48; // MaterialPropertyBlock
+inline constexpr std::uint64_t EQUIPSKIN_OBJECT_REF     = 0x50; // AssetReference gameObjectRef / materialRef
+inline constexpr std::uint64_t EQUIPSKIN_FP_OBJECT_REF  = 0x58; // AssetReference fpGameObjectRef
+inline constexpr std::uint64_t EQUIPSKIN_HIDE_BODY      = 0x60; // bool
+inline constexpr std::uint64_t EQUIPSKIN_HIDE_HEAD      = 0x61; // bool
+
+// UnityEngine.AddressableAssets.AssetReference : IKeyEvaluator.
+// m_AssetGUID — адресная строка ассета; кэша самого ассета в объекте НЕТ
+// (свойство Asset читается из m_Operation), поэтому «загружен ли скин»
+// определяется по непустой ручке операции, а не по указателю.
+inline constexpr std::uint64_t ASSETREF_GUID         = 0x10; // string m_AssetGUID
+inline constexpr std::uint64_t ASSETREF_SUBOBJ_NAME  = 0x18; // string m_SubObjectName
+inline constexpr std::uint64_t ASSETREF_SUBOBJ_TYPE  = 0x20; // string m_SubObjectType
+inline constexpr std::uint64_t ASSETREF_OPERATION    = 0x28; // AsyncOperationHandle m_Operation
+
+// PlayerWeapon.playerFPWeaponView — FP-вьюха ствола. В релизе 0xF0, в бете
+// 0x108 (см. game_offsets_beta.h).
+inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW = 0xF0;
+// PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
+//   dV/IXG visual 0x20, WeaponPiece piece 0x28, CancellationTokenSource 0x38/0x40
+// Копия piece здесь — диагностическая: пока weaponPiece.Skin != piece.Skin,
+// FP-визуал собран из СТАРОГО скина (игра ещё не пересобрала его).
+inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL         = 0x20;
+inline constexpr std::uint64_t FPWEAPONVIEW_PIECE          = 0x28;
+inline constexpr std::uint64_t FPWEAPONVIEW_CANCELLATION   = 0x38;
+
+// PlayerWeapon.skinVisualHandle (Oxide.Features.ResourceManagment.Gameplay.
+// SkinVisualHandle: hbB _model 0x0, int _slot 0x8, int _generation 0xC) —
+// живая ручка загруженного визуала скина. Пустая (model == 0) = не загружен.
+inline constexpr std::uint64_t PLAYERWEAPON_SKIN_HANDLE = 0xB0;
+inline constexpr std::uint64_t SKINHANDLE_MODEL         = 0x00;
+inline constexpr std::uint64_t SKINHANDLE_SLOT          = 0x08;
+inline constexpr std::uint64_t SKINHANDLE_GENERATION    = 0x0C;
+
+// TypeInfo-слоты (внутренние .data, одно разыменование) из script.json 11966.
+// Методика та же, что у PLAYER_MANAGER_TYPEINFO_RVA; сверка: Oxide.PlayerManager
+// этим же разбором дал 0xDEA09F8 — ровно значение выше.
+inline constexpr std::uint64_t EG_TYPEINFO_RVA                       = 0xDE9ACA0; // реестр PlayerWeaponPiece
+inline constexpr std::uint64_t EN_TYPEINFO_RVA                       = 0;         // hbv<WeaponPiece>: в списке 11966 нет
+inline constexpr std::uint64_t WEAPONSKINDATA_TYPEINFO_RVA           = 0xDEA5300; // abstract WeaponSkinData
+inline constexpr std::uint64_t WEAPONOBJECTSKIN_TYPEINFO_RVA         = 0xDEA52D8;
+inline constexpr std::uint64_t WEAPONRECOLORSKIN_TYPEINFO_RVA        = 0xDEA52F0;
+inline constexpr std::uint64_t WEAPONPROGRESSIONSKIN_TYPEINFO_RVA    = 0xDEA52E8;
+inline constexpr std::uint64_t WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA  = 0xDEA52E0;
+inline constexpr std::uint64_t EQUIPSKINDATA_TYPEINFO_RVA            = 0xDE9B080; // abstract EquipmentPieceSkinData
+inline constexpr std::uint64_t EQUIPOBJECTSKIN_TYPEINFO_RVA          = 0xDE9B078;
+inline constexpr std::uint64_t EQUIPRECOLORSKIN_TYPEINFO_RVA         = 0xDE9B088;
+
+// Пределы, за которые индекс скина не выпускается ни при записи, ни в меню:
+// массив skinData у предмета короткий (единицы-десятки), а SkinLevel — byte
+// уровней прогрессии. Значение вне предела означало бы запись мусора в SyncVar.
+inline constexpr int SKIN_INDEX_MAX = 63;
+inline constexpr int SKIN_LEVEL_MAX = 7;
+
 }

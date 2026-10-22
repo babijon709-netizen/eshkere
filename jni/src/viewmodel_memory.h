@@ -11,6 +11,15 @@ struct Position { float x, y, z; };
 struct BlendSpeed { float value; };
 inline bool valid(BlendSpeed v) { return finite(v.value) && v.value >= 0.f && v.value <= 10000.f; }
 inline bool valid(float v) { return finite(v) && v > 1.f && v < 179.f; }
+// Целые поля скинченджера (skin_changer_memory.h): Patch<T> резолвит valid()
+// в этом пространстве имён, а своих целых перегрузок здесь не было.
+//   int16_t — Oxide.WeaponPiece.Skin, индекс в ItemData.skinData[];
+//   uint8_t — WeaponPiece.SkinLevel (уровень прогрессии) И WeaponPiece.Enabled
+//             (bool 0/1, которым скинченджер заставляет игру пересобрать
+//             визуал на холстер/дроу) — оба укладываются в 0..7.
+// Пределы совпадают с game_offsets::SKIN_INDEX_MAX / SKIN_LEVEL_MAX.
+inline bool valid(std::int16_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_MAX; }
+inline bool valid(std::uint8_t v) { return v <= go_active::SKIN_LEVEL_MAX; }
 inline bool valid(Position v) {
     return finite(v.x) && finite(v.y) && finite(v.z) &&
            v.x > -10.f && v.x < 10.f && v.y > -10.f && v.y < 10.f && v.z > -10.f && v.z < 10.f;

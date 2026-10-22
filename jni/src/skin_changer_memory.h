@@ -61,26 +61,31 @@
 // piece, ПЕРЕДАННОЙ ПО ЗНАЧЕНИЮ (из +0xC0, а не из +0x110), а CreateFPWeapon
 // при Enabled==0 вызывает PlayerFPWeaponView.Release() + FPManager.KxS — то
 // есть ноль в этом бите рисковал разобрать вьюху, а не пересобрать. Пишутся
-// только Skin/SkinLevel, в обеих копиях.
+// только Skin/SkinLevel, в обеих копиях. §4.21 уточняет: Enabled=1 в рабочую
+// копию возвращается — но только зеркалом ПОГАШЕННОЙ головы из SyncVar; это не
+// «приказ пересобраться», а возврат канонического состояния, которое там
+// оставил бы pMd.
 //
 // КТО ПЕРЕСОБИРАЕТ. Чит — внешний процесс (только process_vm_readv/writev,
 // ptrace-слот занят собственным потомком, инъекции кода нет — mem_io.h,
 // stealth.h), поэтому вызвать функции игры он не может. Пересборку делает игра
-// на своих событиях, и устройство показало, какие из них ДЕЙСТВИТЕЛЬНО
-// работают. ГЛАВНЫЙ — холстер/дроу: pMZ 0x7671340 читает piece из РАБОЧЕЙ
+// на своих событиях: холстер/дроу (pMZ 0x7671340 читает piece из РАБОЧЕЙ
 // копии (+0xC0) и несёт в pFz -> FPManager.Kxi 0x68EE210 -> Kxj 0x68ED5A8 ->
-// CreateFPWeapon d__69 — полная сборка с ассет-запросом; skin.log v13 (сборка
-// 3d6a9b8): каждый дроу печатал «вьюха собрана из нашего индекса», 12
-// пересборок за 173 с. Прежнее «холстер/дроу не пересобирает» было артефактом
-// нашего же кода: старый tick откатывал рабочую копию в оригиналы каждый раз,
-// когда ресолв терял ствол («В руках пусто»), и дроу пересобирал из стёртой
-// копии — §4.19 убрал откат, и путь заработал. Также работают: RPC
-// насадок/модов (phW читает SyncVar ЖИВЬЁМ -> FPManager.Kxi) и спавн/подбор
-// ствола (OnStartClient -> pMd). Задача чита — к моменту события держать НАШ
-// индекс в SyncVar И в рабочей копии: запись по расхождению + readback каждый
-// тик. На чужом сервере респаун приносит серверную piece и OnStartClient
-// может успеть до нашей записи — это граница внешнего скинченджера, а не
-// сбой записи.
+// CreateFPWeapon d__69), RPC насадок/модов (phW читает SyncVar ЖИВЬЁМ ->
+// FPManager.Kxi) и спавн/подбор ствола (OnStartClient -> pMd). Дроп/подбор не
+// пересобирает (§4.18). ИСХОД ДРОУ решает голова рабочей копии (dump11966,
+// CreateFPWeapon MoveNext 0x68EF65C): Enabled==1 -> сборка из skinData[Skin]
+// с ассет-запросом (0x68EFBC8); Enabled==0 -> UniTask.Delay + Release()
+// (0x68EFA04) — вьюха выпускается и не запрашивается ничего. Игра гасит голову
+// на холстере (00 00 ff ff ff ff 00 00), и устройства v13/v14 провели с
+// погашенной головой ВСЮ сессию: каждый дроу выпускал вьюху, ready=0 и ручка
+// мертва у всех скинов, включая оригинальный; строки «вьюха собрана» в тех
+// логах — враньё баги fp_stale (см. read_live_state). Откат §4.19 был нужен,
+// но недостаточен. Задача чита — держать НАШ индекс в SyncVar И в рабочей
+// копии, а погашенную голову достраивать зеркалом из SyncVar (§4.21) — тогда
+// дроу снова становится настоящей сборкой. На чужом сервере респаун приносит
+// серверную piece и OnStartClient может успеть до нашей записи — это граница
+// внешнего скинченджера, а не сбой записи.
 //
 // ТРЕТЬЯ ТОЧКА ЗАПИСИ — Oxide.Item.skin (+0x30, int) и skinLevel (+0x34,
 // byte). Доказано дизассемблером dump11966: при дропе ItemPickup.KZq
@@ -497,12 +502,17 @@ template<class IO> class Controller {
     uint64_t weapon_cache_ = 0;
 
     // SyncVar-копия (+0x110): её читают серверные string-RPC, phW и свойство
-    // get_TjU. Рабочая копия (+0x110-0x50): из неё hbr.pMZ/pMj собирают
-    // FP-вьюху на дроу, и её же перезаписывает pMd. Обе — цели записи.
+    // get_TjU. Рабочая копия (+0x110-0x50): из неё hbr.pMZ подаёт piece в
+    // CreateFPWeapon на дроу, и её же перезаписывает pMd. Обе — цели записи.
+    // Голову рабочей копии игра гасит на холстере (Enabled=0), а погашенная
+    // голова — вердикт Release для сборки (KERNEL.md §4.21), поэтому у головы
+    // свои зеркальные слоты из SyncVar.
     Slot<int16_t> skin_;
     Slot<uint8_t> level_;
     Slot<int16_t> skin_local_;
     Slot<uint8_t> level_local_;
+    Slot<uint64_t> head_lo_local_;   // +0xC0: Enabled/Number/Skin/Level/Loaded
+    Slot<uint64_t> head_hi_local_;   // +0xC8: Mods — pMd несёт оба qword
     // Копия 3 — Oxide.Item.skin (+0x30, int32) / skinLevel (+0x34, byte):
     // дроп и сохранение несут наш скин (см. заголовок файла). Семантика та же: снимок ->
     // запись по расхождению -> readback -> возврат оригинала.
@@ -682,13 +692,42 @@ template<class IO> class Controller {
         uint64_t model = 0;
         if (pointer(io, context_.weapon.object + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL, model))
             handle_live_ = (model != 0);
-        // Копия piece, ИЗ КОТОРОЙ FP-вьюха действительно построена: пока её
-        // индекс не равен нашему, визуал старый (пересборки ещё не было).
-        if (piece && context_.fp_view >= 0x10000) {
+        // Копия piece, ИЗ КОТОРОЙ FP-вьюха действительно построена. Вьюха
+        // «не наша» и когда собрана из другого индекса, и когда её больше нет
+        // (холстер: CreateFPWeapon выпустил вьюху, PW.playerFPWeaponView не
+        // читается). Прежняя версия оставляла fp_stale=false на нечитаемой
+        // вьюхе — и лог врал «вьюха собрана из нашего индекса» (устройство
+        // v13/v14: 12/8 таких строк с мёртвой ручкой и ready=0).
+        if (piece) {
             Piece view_piece;
-            if (read_piece(io, context_.fp_view + FPWEAPONVIEW_PIECE, view_piece) == PieceRead::Ok)
-                fp_stale_ = (view_piece.skin != piece->skin);
+            fp_stale_ = !(context_.fp_view >= 0x10000 &&
+                          read_piece(io, context_.fp_view + FPWEAPONVIEW_PIECE,
+                                     view_piece) == PieceRead::Ok &&
+                          view_piece.skin == piece->skin);
         }
+    }
+
+    // §4.21: зеркало погашенной головы рабочей копии из SyncVar. Игра гасит
+    // голову на холстере (Enabled=0, Number=-1), и hbr.pMZ подаёт её в
+    // CreateFPWeapon, где Enabled==0 — ветка «UniTask.Delay -> Release()»
+    // (dump11966, 0x68EFA04): вьюха выпускается, ассет не запрашивается.
+    // pMd копирует piece целиком (оба qword) — делаем то же из SyncVar, в
+    // котором уже лежит наш индекс. Звать только когда PW жив и голова
+    // действительно погашена: живую голову зеркало не трогает. Сбой
+    // writeback'а виден стадиями 24 (низ) / 25 (хвост).
+    bool refill_local_head(int* stage) {
+        uint64_t sync_lo = 0, cur_lo = 0;
+        if (!io.read(context_.piece, sync_lo) || !io.read(context_.piece_local, cur_lo))
+            return true;   // не читается — пропускаем, не повод ронять тик
+        head_lo_local_.sample_value(context_.piece_local, cur_lo);
+        if (!head_lo_local_.put(io, sync_lo)) { if (stage) *stage = 24; return false; }
+        uint64_t sync_hi = 0, cur_hi = 0;
+        if (io.read(context_.piece + 8, sync_hi) &&
+            io.read(context_.piece_local + 8, cur_hi)) {
+            head_hi_local_.sample_value(context_.piece_local + 8, cur_hi);
+            if (!head_hi_local_.put(io, sync_hi)) { if (stage) *stage = 25; return false; }
+        }
+        return true;
     }
 
     bool restore_all() {
@@ -701,12 +740,19 @@ template<class IO> class Controller {
         // ровно перед спавном, которому SyncVar нужен для пересборки вьюхи.
         bool ok = true;
         if (context_.weapon.object && context_.weapon.life(io) == Life::Alive) {
+            // Зеркало головы возвращается ПЕРЕД байтовыми слотами: пока голова
+            // цела (current == last), restore кладёт обратно погашенные байты
+            // игры; байтовые слоты затем видят «чужое» значение и не пишут.
+            // Обратный порядок оставил бы Enabled=1 в «восстановленной» копии.
+            ok = head_hi_local_.restore(io) && ok;
+            ok = head_lo_local_.restore(io) && ok;
             ok = level_local_.restore(io) && ok;
             ok = skin_local_.restore(io) && ok;
             ok = level_.restore(io) && ok;
             ok = skin_.restore(io) && ok;
         } else {
             skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
+            head_lo_local_ = {}; head_hi_local_ = {};
         }
         if (context_.item.object && context_.item.life(io) == Life::Alive) {
             ok = level_item_.restore(io) && ok;
@@ -723,7 +769,8 @@ public:
     int stage() const { return stage_; }
     bool has_state() const {
         return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||
-               skin_item_.owned || level_item_.owned;
+               skin_item_.owned || level_item_.owned ||
+               head_lo_local_.owned || head_hi_local_.owned;
     }
     // Одноразовый запрос перезаписать обе копии piece, даже если значения уже
     // совпадают (меню «Переписать обе копии» / one-shot CLI `--rebuild`). Сама
@@ -751,6 +798,7 @@ public:
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
         info.local_state = local_state_;
+        info.local_refill = head_lo_local_.owned;
         info.item_state = item_state_;
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
         info.stage = stage_;
@@ -762,6 +810,7 @@ public:
         const bool ok = !restore_originals || restore_all();
         skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
         skin_item_ = {}; level_item_ = {};
+        head_lo_local_ = {}; head_hi_local_ = {};
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
         scan_request_ = false;
@@ -833,6 +882,18 @@ public:
             // Прежняя версия возвращала оригиналы здесь и на переходе мира
             // стирала наш индекс из SyncVar и Item — ровно перед спавном,
             // которому они нужны (устройство: skin.log v12, +60 с).
+            // §4.21: погашенную голову рабочей копии достраиваем и без рук —
+            // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку
+            // FPObject, и погашенная голова превращает дроу в Release.
+            if (has_state() && context_.weapon.object &&
+                context_.weapon.life(io) == Life::Alive) {
+                Piece syncvar, work;
+                if (read_piece(io, context_.piece, syncvar) == PieceRead::Ok &&
+                    syncvar.enabled == 1 &&
+                    read_piece(io, context_.piece_local, work, nullptr, true) == PieceRead::Ok &&
+                    work.enabled == 0)
+                    refill_local_head(nullptr);   // фон: статус Waiting, стадии не трогаем
+            }
             return;
         }
         if (!(next == context_)) {
@@ -843,6 +904,7 @@ public:
             if (!restore_all()) {
                 skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
                 skin_item_ = {}; level_item_ = {};
+                head_lo_local_ = {}; head_hi_local_ = {};
             }
             context_ = next;
             scan_age_ = kScanEvery;   // перечитать список сразу
@@ -910,28 +972,41 @@ public:
             if (!level_item_.put(io, want_level)) { status = Status::Failed; stage_ = 23; return; }
         }
 
-        // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ/pMj подают piece в
-        // FPManager.Kxi на дроу — устройство это подтвердило (skin.log v13:
-        // каждый холстер/дроу пересобирает вьюху из нашего индекса). На
-        // холстере копия держит «пустую» piece {Enabled=0, Number=-1} (игра
-        // гасит её), поэтому пишем мы её только когда голова проходит хотя бы
-        // щадящую проверку; SyncVar остаётся опорой для RPC-пути модов phW и
-        // OnStartClient. Голова читается отдельно:
-        // копия живёт своей жизнью — pMd перезаписывает её целиком.
+        // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ подаёт piece в
+        // FPManager.Kxi -> CreateFPWeapon на дроу. Пишем только когда голова
+        // проходит хотя бы щадящую проверку; SyncVar остаётся опорой для
+        // RPC-пути модов phW и OnStartClient. Голова читается отдельно:
+        // копия живёт своей жизнью — pMd перезаписывает её целиком, а холстер
+        // гасит (Enabled=0, Number=-1). §4.21: погашенная голова — вердикт
+        // «отложенный Release» для CreateFPWeapon (Enabled==0 -> UniTask.Delay
+        // -> Release(), dump11966 0x68EFA04; устройства v13/v14 провели с ней
+        // всю сессию: ручка мертва, ready=0 у всех скинов). Достраиваем её
+        // зеркалом из SyncVar (pMd-семантика) и перечитываем голову один раз —
+        // байтовые слоты ниже увидят уже дополненную копию.
         Piece local;
         uint8_t local_head[kPieceHead] = {};
-        PieceRead local_read = read_piece(io, context_.piece_local, local, local_head);
-        const bool local_strict_ok = (local_read == PieceRead::Ok);
-        if (local_read == PieceRead::NotAPiece)
-            local_read = read_piece(io, context_.piece_local, local, local_head, true);
-        if (local_read != PieceRead::Ok) {
-            status = Status::Failed;
-            stage_ = (local_read == PieceRead::Unreadable) ? 20 : 21;
-            // Отклонённую голову — в лог сырыми байтами: «стадия 21» без них
-            // не отличает мусор от осмысленных, но неканонических значений.
+        bool local_strict_ok = false;
+        bool refill_done = false;
+        for (;;) {
+            PieceRead local_read = read_piece(io, context_.piece_local, local, local_head);
+            local_strict_ok = (local_read == PieceRead::Ok);
             if (local_read == PieceRead::NotAPiece)
-                format_piece_head(local_head, local_head_raw_);
-            return;
+                local_read = read_piece(io, context_.piece_local, local, local_head, true);
+            if (local_read != PieceRead::Ok) {
+                status = Status::Failed;
+                stage_ = (local_read == PieceRead::Unreadable) ? 20 : 21;
+                // Отклонённую голову — в лог сырыми байтами: «стадия 21» без
+                // них не отличает мусор от осмысленных, но неканонических.
+                if (local_read == PieceRead::NotAPiece)
+                    format_piece_head(local_head, local_head_raw_);
+                return;
+            }
+            if (!refill_done && local.enabled == 0 && piece.enabled == 1) {
+                refill_done = true;
+                if (!refill_local_head(&stage_)) { status = Status::Failed; return; }
+                continue;
+            }
+            break;
         }
         // Щадящий вариант сработал (Loaded/Number неканонические, Enabled цел) —
         // показать, что именно там лежит; строгая голова диагностикой не шумит.

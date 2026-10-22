@@ -14,9 +14,10 @@ inline bool valid(float v) { return finite(v) && v > 1.f && v < 179.f; }
 // Целые поля скинченджера (skin_changer_memory.h): Patch<T> резолвит valid()
 // в этом пространстве имён, а своих целых перегрузок здесь не было.
 //   int16_t — Oxide.WeaponPiece.Skin, индекс в ItemData.skinData[];
-//   uint8_t — WeaponPiece.SkinLevel (уровень прогрессии) И WeaponPiece.Enabled
-//             (bool 0/1, которым скинченджер заставляет игру пересобрать
-//             визуал на холстер/дроу) — оба укладываются в 0..7.
+//   uint8_t — WeaponPiece.SkinLevel (уровень прогрессии) и поля головы
+//             WeaponPiece — все укладываются в 0..7. Enabled скинченджер
+//             отдельно НЕ пишет (ноль разбирает вьюху); он возвращается в
+//             рабочую копию только в составе зеркала головы (§4.21).
 // Пределы совпадают с game_offsets::SKIN_INDEX_MAX / SKIN_LEVEL_MAX.
 inline bool valid(std::int16_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_MAX; }
 //   int32_t — Oxide.Item.skin: тот же индекс скина, но поле предмета
@@ -24,6 +25,10 @@ inline bool valid(std::int16_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_
 //             сохранение, см. skin_changer_memory.h и KERNEL.md §4.17–4.18).
 inline bool valid(std::int32_t v) { return v >= 0 && v <= go_active::SKIN_INDEX_MAX; }
 inline bool valid(std::uint8_t v) { return v <= go_active::SKIN_LEVEL_MAX; }
+//   uint64_t — зеркало головы рабочей копии piece (KERNEL.md §4.21): значение
+//             произвольные байты игровой WeaponPiece, диапазонная проверка
+//             бессмысленна — годность головы уже доказал read_piece.
+inline bool valid(std::uint64_t) { return true; }
 inline bool valid(Position v) {
     return finite(v.x) && finite(v.y) && finite(v.z) &&
            v.x > -10.f && v.x < 10.f && v.y > -10.f && v.y < 10.f && v.z > -10.f && v.z < 10.f;

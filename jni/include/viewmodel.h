@@ -179,6 +179,14 @@ inline bool skin_kind_is_object(SkinKind kind) {
     return kind == SkinKind::WeaponObject || kind == SkinKind::WeaponProgression ||
            kind == SkinKind::EquipObject;
 }
+// Распознан ли тип ВООБЩЕ. Unknown/Other означают, что класс не совпал ни с
+// TypeInfo-слотом профиля, ни с точным именем: у asset_ready() для такой
+// записи нечего читать, её ready == false — это «не измерить», а не «ассет не
+// запрашивался». Меню и skin.log обязаны различать эти случаи, иначе
+// неповинный скин будет объявлен отсутствующим на устройстве.
+inline bool skin_kind_identified(SkinKind kind) {
+    return kind != SkinKind::Unknown && kind != SkinKind::Other;
+}
 
 // Предел списка: массив ItemData.skinData у предмета короткий, а больше меню
 // и не нужно. Совпадает с skinchanger::kMaxSkins.

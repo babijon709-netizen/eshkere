@@ -115,6 +115,17 @@ void put_typeinfo(FakeIO& io, uint64_t rva, uint64_t klass) {
     if (rva) io.put<uint64_t>(kBase + rva, klass);
 }
 
+// Имя Il2CppClass: klass->name (IL2CPP_CLASS_NAME) -> ascii с NUL, как в
+// метаданных игры. Нужен резервному резолву типа по имени (kind_of).
+uint64_t next_klass_name = 0x70000;
+void put_klass_name(FakeIO& io, uint64_t obj, const char* name) {
+    const uint64_t at = next_klass_name;
+    next_klass_name += 0x40;
+    for (size_t i = 0; i <= std::strlen(name); ++i)
+        io.put<uint8_t>(at + i, (uint8_t)name[i]);
+    io.put<uint64_t>(io.klass_of(obj) + go_active::IL2CPP_CLASS_NAME, at);
+}
+
 struct Fixture {
     FakeIO io;
     skinchanger::Controller<FakeIO> c{io};
@@ -674,6 +685,52 @@ void test_skin_block_grouping() {
     std::printf("  skin_block: 19 stages -> 10 distinct causes, texts unique\n");
 }
 
+// ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
+void test_kind_by_exact_name_when_slots_stale() {
+    Fixture f;
+    // Игра новее дампа: слоты указывают на чужие классы, а полевые оффсеты и
+    // цепочка целы. Именно так выглядел skin.log с устройства после обновления:
+    // все типы стали «other», запись индекса при этом продолжала подтверждаться.
+    put_typeinfo(f.io, go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA, 0xBAD00);
+    put_typeinfo(f.io, go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA, 0xBAD10);
+    put_typeinfo(f.io, go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA, 0xBAD20);
+    put_klass_name(f.io, skin0, "WeaponObjectSkinData");
+    put_klass_name(f.io, skin1, "WeaponProgressionSkinData");
+    put_klass_name(f.io, skin2, "WeaponRecolorSkinData");
+    f.tick(f.settings(true, 0));
+    viewmodel::SkinEntryView entries[skinchanger::kMaxSkins];
+    const int n = f.c.entries(entries, skinchanger::kMaxSkins);
+    assert(n == 3);
+    assert(entries[0].kind == viewmodel::SkinKind::WeaponObject && entries[0].ready);
+    assert(entries[1].kind == viewmodel::SkinKind::WeaponProgression && entries[1].levels == 3);
+    assert(entries[2].kind == viewmodel::SkinKind::WeaponRecolor && !entries[2].ready);
+    for (int i = 0; i < n; ++i)
+        assert(viewmodel::skin_kind_identified(entries[i].kind));
+    std::printf("  stale slots: kinds/levels/ready recovered by exact class name\n");
+}
+
+// ---- 27. Ни слотов, ни имён: тип не выдуман, ready не утверждается ---------
+void test_kind_other_when_slots_and_names_unreadable() {
+    Fixture f;
+    put_typeinfo(f.io, go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA, 0xBAD00);
+    put_typeinfo(f.io, go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA, 0xBAD10);
+    put_typeinfo(f.io, go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA, 0xBAD20);
+    // Имён классов в памяти нет (klass->name не отображён): резерв тоже не сработал.
+    f.tick(f.settings(true, 0));
+    viewmodel::SkinEntryView entries[skinchanger::kMaxSkins];
+    const int n = f.c.entries(entries, skinchanger::kMaxSkins);
+    assert(n == 3);
+    for (int i = 0; i < n; ++i) {
+        assert(entries[i].kind == viewmodel::SkinKind::Other);
+        assert(!viewmodel::skin_kind_identified(entries[i].kind));
+        assert(!entries[i].ready);   // «не измерено», а не «ассета нет»
+    }
+    // Запись индекса от нераспознанного типа не зависит: SyncVar тот же.
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int16_t>(piece() + go_active::WEAPONPIECE_SKIN) == 1);
+    std::printf("  stale slots + no names: kind Other, ready not asserted, write works\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -701,6 +758,8 @@ int main() {
     test_piece_wrong_layout();
     test_piece_bad_number();
     test_skin_block_grouping();
+    test_kind_by_exact_name_when_slots_stale();
+    test_kind_other_when_slots_and_names_unreadable();
     std::printf("OK\n");
     return 0;
 }

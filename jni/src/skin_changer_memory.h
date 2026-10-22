@@ -241,12 +241,38 @@ bool read_id(IO& io, uint64_t str, char* out, size_t cap) {
     return pos > 0;
 }
 
-// Тип скина — СРАВНЕНИЕМ КЛАССА С TypeInfo-СЛОТОМ профиля. Это точный
-// признак: слоты есть в обоих профилях для всех классов скинов (в бете нет
-// только EG, он здесь и не нужен). Резолв по имени не используется
-// намеренно: HeapMemory::named_klass при нечитаемых именах классов падает в
-// допуск по instance_size, а он у всех SkinData-наследников «подходит» — по
-// имени всё стало бы одним типом.
+// Точное имя класса по Il2CppClass*: klass->name (IL2CPP_CLASS_NAME), прочитан
+// побайтово и сравнен ВМЕСТЕ с завершающим нулём — имя, начинающееся с образца
+// («WeaponObjectSkinDataV2»), образцом не пройдёт. Намеренно без допуска по
+// instance_size из HeapMemory::named_klass: у всех SkinData-наследников размер
+// «подходит», и с допуском все шесть типов схлопнулись бы в один — первый
+// проверенный.
+template<class IO>
+bool klass_name_is(IO& io, uint64_t klass, const char* name) {
+    uint64_t text = 0;
+    if (!pointer(io, klass + go_active::IL2CPP_CLASS_NAME, text) || text < 0x10000)
+        return false;
+    const size_t length = std::strlen(name);
+    if (length == 0 || length >= 48) return false;
+    char buf[48] = {};
+    for (size_t i = 0; i <= length; ++i) {
+        char c = 0;
+        if (!io.read(text + i, c)) return false;
+        buf[i] = c;
+    }
+    return std::memcmp(buf, name, length + 1) == 0;
+}
+
+// Тип скина — сравнением класса с TypeInfo-слотом профиля. Слот быстрее всего
+// (одно разыменование qword) и есть в обоих профилях для всех классов скинов
+// (в бете нет только EG, он здесь и не нужен). НО слот — абсолютный RVA из
+// КОНКРЕТНОГО дампа: игра обновляется, .data уезжает, и слоты начинают
+// указывать не туда. Проверено устройством (skin.log, сессия после обновления):
+// все типы стали «other», хотя полевые оффсеты и цепочка имен продолжали
+// работать — то есть объекты остались теми же SkinData, устарел только якорь.
+// Поэтому при промахе слотов есть позиционно-независимый резерв: точное имя
+// класса (klass_name_is). Строки читаются только когда слоты уже не совпали,
+// поэтому в здоровом билде резерв не стоит ни одного лишнего чтения.
 template<class IO>
 viewmodel::SkinKind kind_of(IO& io, uint64_t base, uint64_t skin_klass) {
     using namespace go_active;
@@ -267,14 +293,27 @@ viewmodel::SkinKind kind_of(IO& io, uint64_t base, uint64_t skin_klass) {
         viewmodel::SkinKind::EquipObject,
         viewmodel::SkinKind::EquipRecolor,
     };
-    if (!base) return viewmodel::SkinKind::Unknown;
-    for (size_t i = 0; i < sizeof(slots) / sizeof(slots[0]); ++i) {
+    // Точные имена классов в порядке kinds[]. Имена в метаданных не
+    // облифусцированы (dump.cs несёт их как есть) и не зависят ни от ASLR,
+    // ни от номера сборки.
+    static const char* const names[] = {
+        "WeaponProgressionSkinData",
+        "WeaponPreviewPrefabSkinData",
+        "WeaponObjectSkinData",
+        "WeaponRecolorSkinData",
+        "EquipmentObjectSkinData",
+        "EquipmentRecolorSkinData",
+    };
+    constexpr size_t kKinds = sizeof(kinds) / sizeof(kinds[0]);
+    for (size_t i = 0; base && i < kKinds; ++i) {
         if (!slots[i]) continue;
         // Слот — ВНУТРЕННЯЯ .data-ячейка: одно разыменование даёт Il2CppClass*
         // (тот же механизм, что у PLAYER_MANAGER_TYPEINFO_RVA).
         uint64_t klass = 0;
         if (pointer(io, base + slots[i], klass) && klass == skin_klass) return kinds[i];
     }
+    for (size_t i = 0; i < kKinds; ++i)
+        if (klass_name_is(io, skin_klass, names[i])) return kinds[i];
     return viewmodel::SkinKind::Other;
 }
 

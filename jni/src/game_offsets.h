@@ -1108,6 +1108,11 @@ inline constexpr std::uint64_t SKINHANDLE_GENERATION    = 0x0C;
 // TypeInfo-слоты (внутренние .data, одно разыменование) из script.json 11966.
 // Методика та же, что у PLAYER_MANAGER_TYPEINFO_RVA; сверка: Oxide.PlayerManager
 // этим же разбором дал 0xDEA09F8 — ровно значение выше.
+// Слоты ПРИВЯЗАНЫ К БИЛДУ дампа: обновление игры сдвигает .data, и слоты
+// начинают указывать не туда, хотя полевые оффсеты ещё живы (устройство:
+// skin.log — после обновления все типы скинов стали «other»). Поэтому
+// skinchanger::kind_of при промахе слотов сверяет точное имя класса
+// (KERNEL.md §4.14) — оно позиционно независимо.
 inline constexpr std::uint64_t EG_TYPEINFO_RVA                       = 0xDE9ACA0; // реестр PlayerWeaponPiece
 inline constexpr std::uint64_t EN_TYPEINFO_RVA                       = 0;         // hbv<WeaponPiece>: в списке 11966 нет
 inline constexpr std::uint64_t WEAPONSKINDATA_TYPEINFO_RVA           = 0xDEA5300; // abstract WeaponSkinData

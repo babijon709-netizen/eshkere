@@ -237,6 +237,8 @@ static const LangPair kUiEn[] = {
     {"Тема и цвет интерфейса", "Theme and interface color"},
     {"Темп оружия", "Weapon speed"},
     {"Темп оружия: не применён, проверьте журнал", "Weapon speed: not applied; check the log"},
+    {"Тип", "Kind"},
+    {"Тип скина не распознан — игра новее дампа", "Skin kind not recognized — the game is newer than the dump"},
     {"Толщина", "Thickness"},
     {"Только в прицеле", "Only while scoped"},
     {"Только видимых", "Visible only"},
@@ -291,6 +293,7 @@ static const LangPair kUiEn[] = {
     {"модель", "model"},
     {"не загружен", "not loaded"},
     {"не запрашивался", "not requested"},
+    {"не распознан", "not recognized"},
     {"нет камеры", "no camera"},
     {"нет объекта", "no object"},
     {"нет отклика", "no response"},
@@ -311,6 +314,7 @@ static const LangPair kUiEn[] = {
     {"список игровых циклов не читается", "the player-loop list is unreadable"},
     {"старая", "stale"},
     {"таймер ожидания вне границ", "the await timer is out of range"},
+    {"тип?", "kind?"},
 };
 
 // Подписи визуалов ESP: ресурсы, предметы, животные, ящики, оружие.

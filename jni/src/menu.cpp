@@ -868,7 +868,9 @@ float TabContent(int tab, float dt, float cW) {
                          skinUi.weapon[0] ? skinUi.weapon : "",
                          skinUi.weapon[0] ? ": " : "",
                          e.id[0] ? e.id : XS("Скин"),
-                         viewmodel::skin_kind_is_object(e.kind) ? XS("модель") : XS("перекраска"));
+                         !viewmodel::skin_kind_identified(e.kind) ? XS("тип?")
+                         : viewmodel::skin_kind_is_object(e.kind) ? XS("модель")
+                                                                  : XS("перекраска"));
             }
             if (SettingsHeader("##misc_skins", XS("Скинченджер"), skinSummary,
                                false, &vm.skin_enabled, g_state.a_skin)) {
@@ -913,13 +915,18 @@ float TabContent(int tab, float dt, float cW) {
                     // появляется вовсе, там признак один: запрашивался ли
                     // материал (AssetReference.m_Operation), то есть ready.
                     // Показывать перекраске «ассет не загружен» — врать.
+                    // А если тип не распознан вовсе (слоты TypeInfo устарели,
+                    // имя класса не читается), то ready измерить нечем — и
+                    // врать нельзя уже про тип.
                     const viewmodel::SkinEntryView& sel = skinEntries[vm.skin_index];
+                    const bool identified = viewmodel::skin_kind_identified(sel.kind);
                     const bool recolor = sel.kind == viewmodel::SkinKind::WeaponRecolor ||
                                          sel.kind == viewmodel::SkinKind::EquipRecolor;
                     snprintf(skinLine, sizeof(skinLine), "%s: %s · %s: %s",
                              XS("Вьюха"), skinUi.fp_stale ? XS("старая") : XS("собрана"),
-                             recolor ? XS("Материал") : XS("Ассет"),
-                             recolor ? (sel.ready ? XS("запрашивался") : XS("не запрашивался"))
+                             !identified ? XS("Тип") : recolor ? XS("Материал") : XS("Ассет"),
+                             !identified ? XS("не распознан")
+                             : recolor ? (sel.ready ? XS("запрашивался") : XS("не запрашивался"))
                                      : (skinUi.handle_live ? XS("загружен") : XS("не загружен")));
                 }
                 SHdr(skinLine, 4.f);
@@ -939,10 +946,16 @@ float TabContent(int tab, float dt, float cW) {
                 // Ассета на устройстве нет — это не сбой записи и не старая
                 // вьюха: игре нечего собирать. Скины докачиваются по требованию,
                 // внешний процесс Addressables не поднимает, поэтому вердикт
-                // прямой: сначала скачать скин в игре.
+                // прямой: сначала скачать скин в игре. НО «нет ассета» —
+                // утверждение, а не измерение, когда тип не распознан: ready
+                // для Unknown/Other не читается вовсе, и объявлять скин
+                // отсутствующим по нечитаемому типу — тот же класс ошибки, что
+                // «поле скина не читается» на здоровом билде (KERNEL.md §4.13).
                 const char* skinVerdict =
                     (skinBlock != viewmodel::SkinBlock::None) ? SkinBlockUi(skinBlock)
                     : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
+                    : (n > 0 && !viewmodel::skin_kind_identified(skinEntries[vm.skin_index].kind))
+                                          ? XS("Тип скина не распознан — игра новее дампа")
                     : (n > 0 && !skinEntries[vm.skin_index].ready)
                                           ? XS("Ассета скина нет на устройстве — скачай его в игре")
                     : (skinUi.fp_stale)   ? XS("Скин записан — уберите и достаньте ствол")

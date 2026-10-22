@@ -217,20 +217,30 @@ inline void Writer::note(const Snapshot& s) {
     // Строка про выбранный скин: одна на смену выбора или готовности ассета.
     // «Ассет не запрашивался» — главный признак того, что скина на устройстве
     // просто нет: скины докачиваются по требованию (hbG/SkinDownloadSummary),
-    // и внешний процесс Addressables поднять не может.
+    // и внешний процесс Addressables поднять не может. Но измерить это можно
+    // только для РАСПОЗНАННОГО типа (asset_ready читает поле конкретного
+    // класса): при Unknown/Other готовности нет вовсе, и «НЕ запрашивался»
+    // был бы обвинением без доказательства — устройство к этому моменту
+    // могло уже всё скачать.
     const viewmodel::SkinEntryView* picked = nullptr;
     for (int i = 0; i < s.count; ++i)
         if (s.entries[i].index == s.want_index) { picked = &s.entries[i]; break; }
-    const int ready = picked ? (picked->ready ? 1 : 0) : -1;
+    const int ready = !picked ? -1
+                    : !viewmodel::skin_kind_identified(picked->kind) ? 2
+                    : picked->ready ? 1 : 0;
     if (s.want_index != picked_index_ || ready != picked_ready_) {
         picked_index_ = s.want_index; picked_ready_ = ready;
         if (picked) {
             say(s, "выбран #%d %s: %s, уровней %d, ассет %s", s.want_index,
                 picked->id[0] ? picked->id : "(id не прочитан)",
                 viewmodel::skin_kind_name(picked->kind), picked->levels,
-                ready == 1 ? "запрашивался" : "НЕ запрашивался");
+                ready == 1 ? "запрашивался"
+                : ready == 0 ? "НЕ запрашивался"
+                             : "не проверить (тип не распознан)");
             if (ready == 0)
                 say(s, "!! чего нет на устройстве, внешним процессом не загрузить");
+            else if (ready == 2)
+                say(s, "!! тип скина не распознан: билд игры новее дампа или метаданные не читаются; запись индекса продолжает работать");
         }
     }
 }

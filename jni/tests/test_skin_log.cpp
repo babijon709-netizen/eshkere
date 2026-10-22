@@ -391,6 +391,33 @@ void test_reset_forgets() {
     std::printf("  reset: state re-announced\n");
 }
 
+void test_unidentified_kind_no_asset_claim() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    // Игра новее дампа: ни слот TypeInfo, ни имя класса тип не дали. ready
+    // при нераспознанном типе не измеряется вовсе (asset_ready нечего
+    // читать), и лог обязан сказать «не проверить», а не обвинить устройство.
+    g_entries[1].kind = viewmodel::SkinKind::Other;
+    g_entries[1].ready = false;
+    w.note(s);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "выбран #1 dmr_gold: other, уровней 3, ассет не проверить (тип не распознан)") == 1);
+    assert(count_of(text, "!! тип скина не распознан") == 1);
+    assert(count_of(text, "чего нет на устройстве") == 0);   // отсутствие не выдумано
+
+    // Перечитывание списка тип распознало (резерв по имени сработал), и ассет
+    // измерен: состояние выбора изменилось — строка пишется заново.
+    g_entries[1].kind = viewmodel::SkinKind::WeaponProgression;
+    g_entries[1].ready = true;
+    s.now = 0.5;
+    w.note(s);
+    text = slurp(log_path());
+    assert(count_of(text, "выбран #1 dmr_gold: progression, уровней 3, ассет запрашивался") == 1);
+    assert(count_of(text, "!! тип скина не распознан") == 1);   // без повтора тревоги
+    std::printf("  unidentified kind: honest 'cannot measure', re-report when identified\n");
+}
+
 void test_unwritable_dir_is_survivable() {
     skinlog::Writer w;
     skinlog::Snapshot s = make_snap(0.0);
@@ -416,6 +443,7 @@ int main() {
     test_weapon_switch_and_session_change();
     test_rotation_is_bounded();
     test_reset_forgets();
+    test_unidentified_kind_no_asset_claim();
     test_unwritable_dir_is_survivable();
     ::unlink(log_path().c_str());
     std::printf("OK\n");

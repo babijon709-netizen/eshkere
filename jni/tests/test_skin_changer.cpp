@@ -504,6 +504,54 @@ void test_item_skin_written_and_restored() {
     std::printf("  item skin: written with level, resynced, restored on disable\n");
 }
 
+// ---- 10б''. Нерезолв не стирает записанное (мир/смерть — переходные) --------
+void test_unresolved_keeps_writes() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.live_skin() == 1);
+    // Игрок временно пропал (identity не локальная): прежняя версия звала здесь
+    // restore_all() и стирала SyncVar/Item ровно перед спавном, которому наш
+    // индекс нужен для пересборки (устройство: skin.log v12, +60 с).
+    f.io.put<uint8_t>(net + go_active::NETWORK_IDENTITY_IS_LOCAL_PLAYER, 0);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 1));
+    assert(f.io.writes == before);            // ни возврата, ни записи
+    assert(f.c.has_state());
+    assert(f.live_skin() == 1 && f.live_item_skin() == 1);
+    // Игрок вернулся — значения всё ещё наши: тик снова без записей.
+    f.io.put<uint8_t>(net + go_active::NETWORK_IDENTITY_IS_LOCAL_PLAYER, 1);
+    f.tick(f.settings(true, 1));
+    assert(f.io.writes == before);
+    // Явное выключение при живом контексте по-прежнему возвращает оригиналы.
+    f.tick(f.settings(false));
+    assert(f.io.writes > before);
+    assert(f.live_skin() == f.original_skin);
+    assert(f.live_item_skin() == f.original_skin);
+    std::printf("  unresolved: slots kept, no wipe; disable still restores\n");
+}
+
+// ---- 10б'''. Мёртвый контекст: владение снимается БЕЗ записи ----------------
+void test_dead_context_released_without_restore() {
+    Fixture f;
+    ViewmodelSettings s = f.settings(true, 1, 2);
+    f.tick(s);
+    assert(f.live_skin() == 1 && f.live_item_skin() == 1 && f.live_item_level() == 2);
+    // PlayerWeapon умер (игрок покинул мир): запись по старому адресу — порча
+    // освобождённой кучи. Piece-слоты снимают владение без записи; Item жив
+    // (лежит в инвентаре) — его оригинал возвращается игре.
+    f.io.put<uint64_t>(pw, 0xDEAD);
+    f.tick(s);                                // нерезолв: слоты не тронуты
+    assert(f.c.has_state());
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(false));                // выключение: restore_all с life()
+    assert(f.io.writes == before + 2);        // только Item.skin/skinLevel
+    assert(f.live_skin() == 1);               // мёртвый PW не тронут
+    assert(f.live_item_skin() == f.original_skin &&
+           f.live_item_level() == f.original_level);
+    assert(!f.c.has_state());
+    std::printf("  dead PW: piece released without writes, live item restored\n");
+}
+
 // ---- 10в. Enabled не пишется никогда ---------------------------------------
 void test_enabled_never_written() {
     Fixture f;
@@ -895,6 +943,8 @@ int main() {
     test_weapon_switch();
     test_rewrite_request();
     test_item_skin_written_and_restored();
+    test_unresolved_keeps_writes();
+    test_dead_context_released_without_restore();
     test_enabled_never_written();
     test_local_copy_bad_head();
     test_local_copy_relaxed_head();

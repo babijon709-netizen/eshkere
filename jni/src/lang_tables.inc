@@ -199,7 +199,7 @@ static const LangPair kUiEn[] = {
     {"Система", "System"},
     {"Скелеты", "Skeletons"},
     {"Скин", "Skin"},
-    {"Скин записан — пересборка только на спавне: перезапустите игру/войдите в мир", "Skin written — the view rebuilds on spawn only: restart the game or re-enter the world"},
+    {"Скин записан — пересборка только на спавне: перезапустите игру", "Skin written — the view rebuilds on spawn only: restart the game"},
     {"Скин применён", "Skin applied"},
     {"Скинов нет", "No skins"},
     {"Скинченджер", "Skin changer"},

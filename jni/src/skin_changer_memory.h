@@ -265,14 +265,20 @@ bool klass_name_is(IO& io, uint64_t klass, const char* name) {
 
 // Тип скина — сравнением класса с TypeInfo-слотом профиля. Слот быстрее всего
 // (одно разыменование qword) и есть в обоих профилях для всех классов скинов
-// (в бете нет только EG, он здесь и не нужен). НО слот — абсолютный RVA из
-// КОНКРЕТНОГО дампа: игра обновляется, .data уезжает, и слоты начинают
-// указывать не туда. Проверено устройством (skin.log, сессия после обновления):
-// все типы стали «other», хотя полевые оффсеты и цепочка имен продолжали
-// работать — то есть объекты остались теми же SkinData, устарел только якорь.
-// Поэтому при промахе слотов есть позиционно-независимый резерв: точное имя
-// класса (klass_name_is). Строки читаются только когда слоты уже не совпали,
-// поэтому в здоровом билде резерв не стоит ни одного лишнего чтения.
+// (в бете нет только EG, он здесь и не нужен). НО слот — абсолютный RVA,
+// привязанный и к билду дампа, и к базе libil2cpp, на которую привязался чит.
+// Оба якоря плавают: игра перезапускается через exec (pid сохраняется) и в
+// карте остаётся старый «(deleted)» образ с мёртвыми метаданными, а во время
+// загрузки TypeInfo-статики живого образа ещё NULL — привязка в этот момент
+// берёт первый читаемый кандидат (game.cpp, package_verified_release) и слоты
+// начинают давать мусор. Проверено устройством (skin.log): в одной сессии все
+// типы деградировали в «other» при той же версии игры, а цепочка, запись
+// индекса и readback продолжали работать — они позиционно независимы (классы
+// сверяются по имени от самого объекта, игрок находится мирочиталкой).
+// Поэтому при промахе слотов есть резерв, которому база не нужна вовсе:
+// точное имя класса читается через klass самого объекта (klass_name_is).
+// Строки читаются только когда слоты уже не совпали, поэтому при здоровой
+// привязке резерв не стоит ни одного лишнего чтения.
 template<class IO>
 viewmodel::SkinKind kind_of(IO& io, uint64_t base, uint64_t skin_klass) {
     using namespace go_active;
@@ -378,6 +384,9 @@ template<class IO> class Controller {
     int  rebuild_ = 0;        // >0 — сколько тиков ствол ещё убран
     bool rebuild_armed_ = false;   // взведён ли запрос (edge)
     bool rebuild_request_ = false; // одноразовый запрос из меню/CLI
+    bool auto_rebuild_ = false;    // последнее значение тумблера «Пересобирать
+                                   // при смене»: логу нужно знать, почему после
+                                   // записи нет цикла холстер/дроу
     bool scan_request_ = false;    // одноразовый запрос перечитать список
     int  applied_index_ = -1;      // какой индекс уже применён (для auto-rebuild)
     int  applied_level_ = -1;
@@ -575,6 +584,7 @@ public:
         info.fp_stale = fp_stale_;
         info.handle_live = handle_live_;
         info.rebuild_busy = rebuild_ > 0;
+        info.auto_rebuild = auto_rebuild_;
         info.stage = stage_;
         info.status = status;
         std::snprintf(info.weapon, sizeof(info.weapon), "%s", weapon_name_);
@@ -585,6 +595,7 @@ public:
         skin_ = {}; level_ = {}; enabled_ = {};
         context_ = {}; weapon_cache_ = 0;
         rebuild_ = 0; rebuild_armed_ = false; rebuild_request_ = false;
+        auto_rebuild_ = false;
         scan_request_ = false;
         applied_index_ = applied_level_ = -1;
         entry_count_ = 0; scan_age_ = 0;
@@ -608,6 +619,9 @@ public:
             reset(false);
             session_ = session; base_ = base;
         }
+        // После reset(): сброс сессии затирает и этот флаг, а он обязан
+        // отражать ТЕКУЩИЙ тумблер, а не прошлую жизнь процесса.
+        auto_rebuild_ = s.skin_rebuild;
         status = s.skin_enabled ? Status::Waiting : Status::Off;
         if (!s.skin_enabled) {
             if (!restore_all()) status = Status::Failed;

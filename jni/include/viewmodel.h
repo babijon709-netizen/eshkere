@@ -266,6 +266,7 @@ struct SkinUiInfo {
     bool fp_stale = false;      // PlayerFPWeaponView собран из ДРУГОГО индекса
     bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
     bool rebuild_busy = false;  // идёт принудительный холстер/дроу
+    bool auto_rebuild = false;  // тумблер «Пересобирать при смене» (skin_rebuild)
     bool piece_read = false;    // skin/level действительно прочитаны из памяти
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;

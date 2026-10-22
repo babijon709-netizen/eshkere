@@ -107,6 +107,7 @@ skinlog::Snapshot make_snap(double now) {
     s.ui.fp_stale = false;              // вьюха собрана из нашего индекса
     s.ui.handle_live = true;            // ассет загружен
     s.ui.rebuild_busy = false;
+    s.ui.auto_rebuild = true;           // тумблер «Пересобирать при смене»
     std::snprintf(s.ui.weapon, sizeof(s.ui.weapon), "dmr");
     return s;
 }
@@ -418,6 +419,29 @@ void test_unidentified_kind_no_asset_claim() {
     std::printf("  unidentified kind: honest 'cannot measure', re-report when identified\n");
 }
 
+void test_auto_rebuild_toggle_is_visible() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "автопересборка: включена") == 1);
+
+    // Тумблер выключили: в логе обязана появиться причина, по которой после
+    // записи индекса нет ни одного цикла холстер/дроу, а вьюха вечно старая.
+    s.ui.auto_rebuild = false;
+    s.now = 0.5;
+    w.note(s);
+    text = slurp(log_path());
+    assert(count_of(text, "автопересборка: ВЫКЛЮЧЕНА — после записи уберите и достаньте ствол вручную") == 1);
+
+    // Дедупликация: пока тумблер не трогают, строка не повторяется.
+    for (int i = 0; i < 50; ++i) { s.now = 0.6 + 0.1 * i; w.note(s); }
+    text = slurp(log_path());
+    assert(count_of(text, "автопересборка:") == 2);
+    std::printf("  auto-rebuild toggle: announced once per change\n");
+}
+
 void test_unwritable_dir_is_survivable() {
     skinlog::Writer w;
     skinlog::Snapshot s = make_snap(0.0);
@@ -444,6 +468,7 @@ int main() {
     test_rotation_is_bounded();
     test_reset_forgets();
     test_unidentified_kind_no_asset_claim();
+    test_auto_rebuild_toggle_is_visible();
     test_unwritable_dir_is_survivable();
     ::unlink(log_path().c_str());
     std::printf("OK\n");

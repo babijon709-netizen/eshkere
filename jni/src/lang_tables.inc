@@ -238,7 +238,7 @@ static const LangPair kUiEn[] = {
     {"Темп оружия", "Weapon speed"},
     {"Темп оружия: не применён, проверьте журнал", "Weapon speed: not applied; check the log"},
     {"Тип", "Kind"},
-    {"Тип скина не распознан — игра новее дампа", "Skin kind not recognized — the game is newer than the dump"},
+    {"Тип скина не распознан — перезапустите игру и чит", "Skin kind not recognized — restart the game and the cheat"},
     {"Толщина", "Thickness"},
     {"Только в прицеле", "Only while scoped"},
     {"Только видимых", "Visible only"},

@@ -915,9 +915,9 @@ float TabContent(int tab, float dt, float cW) {
                     // появляется вовсе, там признак один: запрашивался ли
                     // материал (AssetReference.m_Operation), то есть ready.
                     // Показывать перекраске «ассет не загружен» — врать.
-                    // А если тип не распознан вовсе (слоты TypeInfo устарели,
-                    // имя класса не читается), то ready измерить нечем — и
-                    // врать нельзя уже про тип.
+                    // А если тип не распознан вовсе (слот TypeInfo не совпал —
+                    // база не от живого образа, — и имя класса не прочлось),
+                    // то ready измерить нечем, и врать нельзя уже про тип.
                     const viewmodel::SkinEntryView& sel = skinEntries[vm.skin_index];
                     const bool identified = viewmodel::skin_kind_identified(sel.kind);
                     const bool recolor = sel.kind == viewmodel::SkinKind::WeaponRecolor ||
@@ -951,11 +951,15 @@ float TabContent(int tab, float dt, float cW) {
                 // для Unknown/Other не читается вовсе, и объявлять скин
                 // отсутствующим по нечитаемому типу — тот же класс ошибки, что
                 // «поле скина не читается» на здоровом билде (KERNEL.md §4.13).
+                // Тип не распознаётся, когда база libil2cpp привязана не к
+                // живому образу (перезапуск игры через exec, старый
+                // «(deleted)» образ, статика NULL во время загрузки), —
+                // лечится перезапуском игры и чита (KERNEL.md §4.14).
                 const char* skinVerdict =
                     (skinBlock != viewmodel::SkinBlock::None) ? SkinBlockUi(skinBlock)
                     : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
                     : (n > 0 && !viewmodel::skin_kind_identified(skinEntries[vm.skin_index].kind))
-                                          ? XS("Тип скина не распознан — игра новее дампа")
+                                          ? XS("Тип скина не распознан — перезапустите игру и чит")
                     : (n > 0 && !skinEntries[vm.skin_index].ready)
                                           ? XS("Ассета скина нет на устройстве — скачай его в игре")
                     : (skinUi.fp_stale)   ? XS("Скин записан — уберите и достаньте ствол")

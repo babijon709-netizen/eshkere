@@ -263,6 +263,7 @@ void test_enumeration() {
     assert(ui.count == 3 && ui.stage == 0);
     assert(!std::strcmp(ui.weapon, "dmr"));
     assert(ui.handle_live && !ui.fp_stale);
+    assert(!ui.auto_rebuild);   // тумблер по умолчанию выключен
     std::printf("  enumeration: 3 skins, kinds/levels/ready/ids ok, weapon=\"%s\"\n", ui.weapon);
 }
 
@@ -454,6 +455,7 @@ void test_auto_rebuild_on_change() {
     ViewmodelSettings s = f.settings(true, 1);
     s.skin_rebuild = true;
     f.tick(s);
+    assert(f.c.ui().auto_rebuild);   // тумблер виден в снимке для лога/меню
     // Первое применение — тоже смена, поэтому ствол убирается.
     assert(f.live_enabled() == 0);
     for (int i = 0; i < skinchanger::kRebuildHoldTicks; ++i) f.tick(s);
@@ -688,9 +690,11 @@ void test_skin_block_grouping() {
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
 void test_kind_by_exact_name_when_slots_stale() {
     Fixture f;
-    // Игра новее дампа: слоты указывают на чужие классы, а полевые оффсеты и
-    // цепочка целы. Именно так выглядел skin.log с устройства после обновления:
-    // все типы стали «other», запись индекса при этом продолжала подтверждаться.
+    // База libil2cpp не от живого образа (перезапуск игры через exec, старый
+    // «(deleted)» образ, статика NULL во время загрузки): слоты указывают на
+    // чужие классы, а полевые оффсеты и цепочка целы. Именно так выглядел
+    // skin.log с устройства: все типы стали «other» при той же версии игры,
+    // а запись индекса продолжала подтверждаться.
     put_typeinfo(f.io, go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA, 0xBAD00);
     put_typeinfo(f.io, go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA, 0xBAD10);
     put_typeinfo(f.io, go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA, 0xBAD20);

@@ -579,6 +579,69 @@ void test_unwritable_dir_is_survivable() {
 
 }  // namespace
 
+// §4.22: строки отравления сборки — сброс _currentWeapon и карантин скина.
+// Оба события редкие и критичные: пользователь обязан увидеть их в skin.log
+// без терминала, по одной строке на событие, с «!!» как у прочих бед.
+void test_build_reset_and_quarantine_lines() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);                                  // здоров: сентинели сеются молча
+    std::string text = slurp(log_path());
+    assert(count_of(text, "игра уронила сборку") == 0);
+    assert(count_of(text, "карантин") == 0);
+
+    // Игра уронила сборку, чит сбросил панцирь: строка на КАЖДЫЙ сброс.
+    skinlog::Snapshot broke = s;
+    broke.now = 46.0;
+    broke.ui.fp_build_resets = 1;
+    broke.ui.stage = 9;                         // резолв на панцире: Item==null
+    broke.ui.status = viewmodel::Status::Failed;
+    w.note(broke);
+    text = slurp(log_path());
+    assert(count_of(text, "!! игра уронила сборку FP-вьюхи") == 1);
+    assert(count_of(text, "сброс №1") == 1);
+    // Тот же счётчик — та же новость: дедупликация, как у остальных строк.
+    broke.now = 46.1;
+    w.note(broke);
+    assert(count_of(slurp(log_path()), "!! игра уронила сборку FP-вьюхи") == 1);
+    // Второй сброс — новая строка с новым номером.
+    broke.now = 92.0;
+    broke.ui.fp_build_resets = 2;
+    w.note(broke);
+    text = slurp(log_path());
+    assert(count_of(text, "сброс №2") == 1);
+
+    // Карантин установлен: скин и ствол названы в строке.
+    skinlog::Snapshot q = broke;
+    q.now = 93.0;
+    q.ui.quarantine_skin = 1;
+    q.ui.stage = 26;
+    w.note(q);
+    text = slurp(log_path());
+    assert(count_of(text, "!! ствол dmr: скин #1 уронил сборку вьюхи") == 1);
+    assert(count_of(text, "ствол на карантине") == 1);
+    assert(count_of(text, "Ствол в карантине: скин ломал сборку вьюхи (стадия 26") == 1);
+    // Тот же карантин — молчание.
+    q.now = 93.1;
+    w.note(q);
+    assert(count_of(slurp(log_path()), "уронил сборку вьюхи") == 1);
+    // Снят: игрок выбрал другой индекс, сборка пробует снова.
+    skinlog::Snapshot off = q;
+    off.now = 94.0;
+    off.ui.quarantine_skin = -1;
+    off.ui.stage = 0;
+    off.ui.status = viewmodel::Status::Active;
+    w.note(off);
+    text = slurp(log_path());
+    assert(count_of(text, "карантин скина #1 снят — сборка пробует снова") == 1);
+    // И обратно в тишину: «снят» пишется один раз, не каждый тик.
+    off.now = 94.1;
+    w.note(off);
+    assert(count_of(slurp(log_path()), "карантин скина #1 снят") == 1);
+    std::printf("  §4.22: reset/quarantine lines — once per event, dedup works\n");
+}
+
 int main() {
     test_disabled_writes_nothing();
     test_unbound_writes_nothing();
@@ -600,6 +663,7 @@ int main() {
     test_view_line_gated_by_stage();
     test_build_stamp_in_header();
     test_unwritable_dir_is_survivable();
+    test_build_reset_and_quarantine_lines();
     ::unlink(log_path().c_str());
     std::printf("OK\n");
     return 0;

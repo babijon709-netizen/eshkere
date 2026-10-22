@@ -835,6 +835,7 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 23:         return "Oxide.Item.skinLevel write not confirmed by readback";
         case 24:         return "достройка головы рабочей копии (зеркало низа из SyncVar) не подтвердилась чтением";
         case 25:         return "достройка головы рабочей копии (зеркало хвоста из SyncVar) не подтвердилась чтением";
+        case 26:         return "ствол в карантине: этот скин ломал сборку FP-вьюхи, чит сбросил её и вернул родной скин — выберите другой индекс";
         default:         return "waiting for bind or player";
     }
 }

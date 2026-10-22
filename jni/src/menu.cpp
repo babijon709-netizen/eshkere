@@ -121,6 +121,7 @@ static const char* SkinBlockUi(viewmodel::SkinBlock block) {
         case viewmodel::SkinBlock::Unreadable:  return XS("WeaponPiece не читается");
         case viewmodel::SkinBlock::WrongLayout: return XS("Оффсеты WeaponPiece не от этого билда");
         case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
+        case viewmodel::SkinBlock::Quarantined: return XS("Ствол в карантине: скин ломал сборку вьюхи");
         case viewmodel::SkinBlock::None:
         default:                                return XS("Скин применён");
     }
@@ -975,6 +976,16 @@ float TabContent(int tab, float dt, float cW) {
                                           ? XS("Вьюха собрана — ассет докачивается сам (нужен интернет)")
                                           : XS("Скин применён");
                 SHdr(skinVerdict, 4.f);
+
+                // §4.22: чит починил сломанную сборку вьюхи — пользователь
+                // обязан узнать об этом из меню, без команд в терминале. Сам
+                // сброс _currentWeapon вьюху не пересобирает: пересборка —
+                // событие игры (холстер/дроу), поэтому строка говорит, что
+                // делать. Карантин отдельной строки не просит: пока он
+                // действует на этом стволе, вердикт выше и есть «в карантине»,
+                // а на чужом стволе чужой карантин не мешает.
+                if (skinUi.fp_build_resets > 0)
+                    SHdr(XS("Игра уронила сборку вьюхи — чит сбросил: убери и достань ствол"), 4.f);
 
                 // «Переписать обе копии» — не пересборка вьюхи (её делает игра
                 // на своих событиях: холстер/дроу, RPC насадок/модов,

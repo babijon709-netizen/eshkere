@@ -87,6 +87,7 @@ constexpr uint64_t fp_view   = 0x41000;     // PlayerFPWeaponView
 constexpr uint64_t ref0      = 0x50000;     // AssetReference у skin0
 constexpr uint64_t ref1      = 0x50100;     // AssetReference у skin1
 constexpr uint64_t str_base  = 0x60000;
+constexpr int32_t  kItemDataId = 4242;      // ItemData.m_Id ствола из фикстуры
 
 uint64_t piece() { return pw + go_active::PLAYERWEAPON_PIECE; }
 uint64_t piece_local() { return pw + go_active::PLAYERWEAPON_PIECE_LOCAL; }
@@ -189,6 +190,9 @@ struct Fixture {
         io.put<uint64_t>(fp + FPMANAGER_CURRENT_OBJECT, fp_object);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
         io.put<uint64_t>(fp_object + FPOBJECT_ITEM, item);
+        // Здоровый инвариант FPObject (§4.22): uhq==1 <=> Item!=null. Детектор
+        // панциря ищет обратное — uhq==0 при Item==null десятки секунд.
+        io.put<uint8_t>(fp_object + FPOBJECT_SHOWN, 1);
         io.plain(item);
         io.put<uint64_t>(item + ITEM_DATA, item_data);
         // Oxide.Item.skin (+0x30, int32) / skinLevel (+0x34) — третья точка
@@ -198,6 +202,9 @@ struct Fixture {
         io.object(item_data, "ItemData", "Oxide");
         io.put<uint64_t>(item_data + ITEMDATA_SHORTNAME,
                          make_string(io, next_string, widen("dmr")));
+        // ItemData.m_Id: карантин «сломал сборку» запоминает ствол по нему —
+        // класс общий у нескольких предметов, id свой (§4.22).
+        io.put<int32_t>(item_data + ITEMDATA_ID, kItemDataId);
         if (!full) return;
         io.plain(skins);
         io.put<int32_t>(skins + IL2CPP_ARRAY_LENGTH, skin_count);
@@ -829,12 +836,12 @@ void test_piece_bad_number() {
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(26) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(27) != SkinBlock::None);   // вне диапазона — не «порядок»
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 25; ++stage) {
+    for (int stage = 1; stage <= 26; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -848,7 +855,7 @@ void test_skin_block_grouping() {
                 assert(std::strcmp(texts[i], text) != 0);   // формулировки не дублируются
         }
     }
-    assert(distinct == 9);      // ровно 9 причин, ни одна стадия не потерялась
+    assert(distinct == 10);     // ровно 10 причин, ни одна стадия не потерялась
 
     // Конкретные соответствия, которые видит пользователь.
     assert(viewmodel::skin_block(5)  == SkinBlock::NoWeapon);
@@ -882,8 +889,15 @@ void test_skin_block_grouping() {
     // Нет игрока — одна причина на все стадии поиска игрока.
     for (int stage = 1; stage <= 4; ++stage)
         assert(viewmodel::skin_block(stage) == SkinBlock::NoPlayer);
+    // §4.22: карантин — своя причина. «Не применится, потому что этот скин
+    // ломал сборку» лечится иначе, чем «запись не подтвердилась»: там жди
+    // пересборки, здесь выбирай другой индекс.
+    assert(viewmodel::skin_block(26) == SkinBlock::Quarantined);
+    assert(viewmodel::skin_block(26) != SkinBlock::WriteFailed);
+    assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::Quarantined),
+                       "Ствол в карантине: скин ломал сборку вьюхи") == 0);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 25 stages -> 9 distinct causes, texts unique\n");
+    std::printf("  skin_block: 26 stages -> 10 distinct causes, texts unique\n");
 }
 
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
@@ -1009,6 +1023,136 @@ void test_stage9_refills_blank_head() {
     std::printf("  stage-9 refill: background mirror, dead PW untouched\n");
 }
 
+// ---- 30. §4.22: панцирь сбрасывается, скин уходит в карантин ----------------
+void test_shell_reset_and_quarantine() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().fp_build_resets == 0 && f.c.ui().quarantine_skin == -1);
+    // Исключение в сборке: ASSEMBLY уже сделала _currentWeapon = новый FPWeapon,
+    // но On_Draw (uhq=1, Item=аргумент) не отработал — панцирь. Резолв честно
+    // падает на стадии 9 (Item==null), меню показало бы «в руках пусто».
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    // Здоровая ПЕРВАЯ закачка ассета выглядит так же (On_Draw приходит только
+    // в async-колбэке) — детектор обязан выждать порог, а не лечить сразу.
+    for (int i = 0; i < 449; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == fp_object);
+    f.tick(f.settings(true, 1));   // 450-й тик: вердикт «отравление»
+    assert(f.c.ui().fp_build_resets == 1);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    // Сброс шёл ровно в _currentWeapon, а не куда-то ещё.
+    bool reset_written = false;
+    for (uint64_t a : f.io.write_log)
+        if (a == fp + go_active::FPMANAGER_CURRENT_OBJECT) reset_written = true;
+    assert(reset_written);
+    // Карантин: ствол вернулся к родному скину во всех трёх точках записи.
+    assert(f.c.ui().quarantine_skin == 1);
+    assert(f.live_skin() == f.original_skin);
+    assert(f.live_skin_local() == f.original_skin);
+    assert(f.live_item_skin() == f.original_skin);
+    // Сброс одноразовый на эпизод: игрок ещё не убирал ствол, _currentWeapon
+    // пуст, резолв падает на стадии 7 — второго сброса быть не должно.
+    for (int i = 0; i < 600; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 1);
+    // Игрок убрал и достал ствол: игра собрала свежий FPObject (Item и uhq на
+    // месте). Тот же индекс на том же стволе — карантин держит, стадия 26.
+    f.io.put<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT, fp_object);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, item);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Failed && f.c.ui().stage == 26);
+    assert(viewmodel::skin_block(26) == viewmodel::SkinBlock::Quarantined);
+    assert(f.live_skin() == f.original_skin);   // ничего не пишем
+    // Другой индекс — карантин снят, ствол применяется заново.
+    f.tick(f.settings(true, 2));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().quarantine_skin == -1);
+    assert(f.live_skin() == 2);
+    // Успешный резолв взводит сброс снова: второй эпизод отравления лечится.
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 450; ++i) f.tick(f.settings(true, 2));
+    assert(f.c.ui().fp_build_resets == 2);
+    assert(f.c.ui().quarantine_skin == 2);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    assert(f.live_skin() == f.original_skin);
+    std::printf("  shell: 450-tick threshold, one-shot reset, quarantine by index\n");
+}
+
+// ---- 31. §4.22: здоровая вьюха и мимолётный панцирь не сбрасываются ---------
+void test_healthy_build_never_resets() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    // Вьюха здорова всю сессию (uhq==1, Item!=null): сигнатуры панциря нет,
+    // детектор молчит хоть тысячу тиков.
+    for (int i = 0; i < 1200; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0 && f.c.ui().quarantine_skin == -1);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == fp_object);
+    assert(f.c.status == viewmodel::Status::Active);
+    // Мимолётный панцирь: первая закачка ассета держит ту же сигнатуру, пока
+    // async-колбэк не позовёт On_Draw. Прошла до порога — сброса нет.
+    Fixture t;
+    t.tick(t.settings(true, 1));
+    t.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    t.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 100; ++i) t.tick(t.settings(true, 1));
+    t.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, item);
+    t.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 1);
+    for (int i = 0; i < 400; ++i) t.tick(t.settings(true, 1));
+    assert(t.c.ui().fp_build_resets == 0);
+    assert(t.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == fp_object);
+    assert(t.c.status == viewmodel::Status::Active);
+    std::printf("  healthy/transient shell: threshold never reached, no reset\n");
+}
+
+// ---- 32. §4.22: карантин per-ствол (ItemData.m_Id), не per-класс ------------
+void test_quarantine_is_per_weapon_id() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 450; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().quarantine_skin == 1);
+    // Дроу: свежий FPObject, тот же ствол (m_Id тот же) — стадия 26.
+    f.io.put<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT, fp_object);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, item);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().stage == 26);
+    // Другой ствол того же класса (в игре — второй Томпсон с другим m_Id):
+    // тот же индекс обязан примениться — «сломал сборку» свойство ствола,
+    // а класс ItemData общий у нескольких предметов.
+    f.io.put<int32_t>(item_data + go_active::ITEMDATA_ID, kItemDataId + 1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().quarantine_skin == -1);
+    assert(f.live_skin() == 1);
+    std::printf("  quarantine: keyed by ItemData.m_Id, other weapon retries\n");
+}
+
+// ---- 33. §4.22: сброс не через слот — освобождённый панцирь не возвращается -
+void test_reset_is_not_slot_restore() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 450; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    // Ни выключение, ни повторное включение не возвращают указатель панциря
+    // обратно: сброс сделан сырой записью, владения слота у него нет, и
+    // restore_all() возвращает только индексы скинов, не _currentWeapon.
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    // Счётчик сбросов остаётся в снимке для меню/лога, пока жив контроллер:
+    // пользователь должен видеть, что чит починил сборку, и после лечения.
+    assert(f.c.ui().fp_build_resets == 1);
+    std::printf("  reset: raw write, never restored back by slots\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1046,6 +1190,10 @@ int main() {
     test_blanked_head_refilled_from_syncvar();
     test_refill_restored_on_disable();
     test_stage9_refills_blank_head();
+    test_shell_reset_and_quarantine();
+    test_healthy_build_never_resets();
+    test_quarantine_is_per_weapon_id();
+    test_reset_is_not_slot_restore();
     std::printf("OK\n");
     return 0;
 }

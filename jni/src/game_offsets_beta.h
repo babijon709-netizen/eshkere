@@ -199,6 +199,10 @@ inline constexpr std::uint64_t VOICE_STATE_NAME = game_offsets::VOICE_STATE_NAME
 inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = game_offsets::PLAYER_VOICE_PLAYER;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG = game_offsets::VOICE_PLAYER_TAG;
 inline constexpr std::uint64_t FPOBJECT_ITEM = game_offsets::FPOBJECT_ITEM;
+// FPObject в бете 11977 совпадает с релизом: bool <cqS>k__BackingField @0x38
+// (обфусцированное uhq — «вюха показана»), Item <cqZ>k__BackingField @0x40,
+// Player @0xC0 (dumpbeta11977, класс FPObject TypeDefIndex 9897).
+inline constexpr std::uint64_t FPOBJECT_SHOWN = game_offsets::FPOBJECT_SHOWN;
 inline constexpr std::uint64_t ITEM_DATA = game_offsets::ITEM_DATA;
 // Oxide.Item в бете 11977 побайтово совпадает с релизом (dumpbeta11977:
 // cOk int @0x30 skin, cOR byte @0x34 skinLevel, cOq short @0x38, mods @0x40,
@@ -207,6 +211,9 @@ inline constexpr std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
 inline constexpr std::uint64_t ITEM_SKIN_LEVEL = game_offsets::ITEM_SKIN_LEVEL;
 inline constexpr std::uint64_t ITEMDATA_NAME = game_offsets::ITEMDATA_NAME;
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME = game_offsets::ITEMDATA_SHORTNAME;
+// ItemData.m_Id @0x58 в бете 11977 на том же месте (dumpbeta11977, класс
+// ItemData TypeDefIndex 10161) — карантин по id ствола переносим как есть.
+inline constexpr std::uint64_t ITEMDATA_ID = game_offsets::ITEMDATA_ID;
 inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = game_offsets::IL2CPP_STRING_LENGTH;
 inline constexpr std::uint64_t IL2CPP_STRING_CHARS = game_offsets::IL2CPP_STRING_CHARS;
 inline constexpr std::uint64_t PLAYER_EVENT_HANDLER = game_offsets::PLAYER_EVENT_HANDLER;

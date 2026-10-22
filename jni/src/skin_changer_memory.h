@@ -142,6 +142,28 @@
 // Рядом PlayerWeapon.skinVisualHandle (+0xB0/+0xC0): _model == 0 означает, что
 // визуал скина не загружен вовсе.
 //
+// СБОРКА МОЖЕТ УПАСТЬ (§4.22, «отравление Томпсоном»). CreateFPWeapon не
+// обёрнут в try/catch, а бросить внутри есть чему: XZN 0x7C8DFDC проверяет
+// Skin по длине ItemData.skinData (IndexOutOfRange 0x7C8E274) и record по
+// Number (NRE 0x7C8E270), хвост сборки дважды проверяет Number по
+// prefabTable (IndexOR 0x68F0420/0x68F046C), LoadAssetAsync и instantiate
+// тоже могут бросить. ASSEMBLY 0x68EFE84 уже сделала _currentWeapon = новый
+// FPWeapon (0x68F00B0) и SetActive(false), но On_Draw (uhq=1, Item=аргумент)
+// живёт ПОСЛЕ точки броска — исключение оставляет полусобранный панцирь:
+// uhq==0, Item==null при живом _currentWeapon (здоровый инвариант — uhq==1
+// тогда и только тогда, когда Item!=null). Дальше каждый дроу обречён: блок
+// сборки уничтожает и обнуляет _currentWeapon только на здоровом пути
+// (0x68EFC9C), а на панцире гейты снова идут в сборку, которая снова падает
+// на том же скине. Устройство показало именно это: первый сломанный ствол
+// (Томпсон) утянул за собой все — дроу любого оружия гоняет ту же пересборку
+// через один FPManager. Резолв нашего контроллера на панцире честно падает на
+// стадии 9 (Item==null) — отсюда «нет скинов» в меню после поломки. Выход
+// один: обнулить _currentWeapon извне (перезаход на сервер делает то же
+// пересозданием FPManager) и не давать упавшему скину немедленно отравить
+// сборку снова — отсюда детектор панциря (45 с наблюдения: здоровая ПЕРВАЯ
+// закачка ассета выглядит так же, On_Draw приходит только в async-колбэке),
+// одноразовый сброс и карантин скина по ItemData.m_Id ствола.
+//
 // СООТВЕТСТВИЕ ПРАВИЛАМ РЕПО:
 //   * память — только через IO (в GUI это HeapMemory: read мимо кэша, запись
 //     через ворота heap_gate_allows), своего fd нет — KERNEL.md §4.1/§4.2;
@@ -268,11 +290,17 @@ template<class IO>
 // raw (если задан) получает байты головы как есть — для диагностики в логе.
 // relaxed — ослабленная валидация ДЛЯ РАБОЧЕЙ КОПИИ (+0xC0): собственный путь
 // дроу игры (pMZ читает piece из +0xC0 и несёт в pFz -> FPManager.Kxi ->
-// CreateFPWeapon) смотрит только Enabled, а Loaded/Number в этой копии бывают
-// неканоническими. Строгая валидация рабочей копии ставила исправный билд на
-// «стадия 21» навсегда (устройство это показало: SyncVar живой, вьюха живая,
-// а +0xC0 «не WeaponPiece»). SyncVar-копия остаётся строгой: её пишет игра,
-// и мусор там действительно означает чужую раскладку.
+// CreateFPWeapon) решает исход по Enabled, а Loaded/Number в этой копии бывают
+// неканоническими. Ранее здесь утверждалось «CreateFPWeapon смотрит только
+// Enabled» — дизассемблер dump11966 это опроверг: Number bounds-check'ится
+// дважды (0x68EFD9C -> IndexOR 0x68F0420 и 0x68EFCF4 -> IndexOR 0x68F046C),
+// хвост сборки индексирует prefabTable по Number (+0x3a), НЕ по Skin.
+// Ослабление всё равно верное: мусорный Number игра обработает сама (броском,
+// за которым присматривает детектор панциря §4.22), а строгая валидация
+// рабочей копии ставила исправный билд на «стадия 21» навсегда (устройство
+// это показало: SyncVar живой, вьюха живая, а +0xC0 «не WeaponPiece»).
+// SyncVar-копия остаётся строгой: её пишет игра, и мусор там действительно
+// означает чужую раскладку.
 PieceRead read_piece(IO& io, uint64_t addr, Piece& out, uint8_t* raw = nullptr,
                      bool relaxed = false) {
     using namespace go_active;
@@ -536,6 +564,18 @@ template<class IO> class Controller {
     int  item_state_ = -1;      // Oxide.Item.skin: -1 не читается, 0 наш, 1 чужой
     char local_head_raw_[24] = {};  // hex головы рабочей копии, если она неканоническая
 
+    // §4.22: наблюдение за полусобранным панцирем FP-вьюхи и его последствия.
+    // Детектор живёт в нерезолв-ветке tick(): на панцире Item==null и наш
+    // собственный резолв честно падает на стадии 9, поэтому смотреть надо
+    // именно туда. shell_ticks_ считает ПОДРЯД идущие тики с сигнатурой
+    // панциря (сбрасывается, как только сигнатура пропала); порог отделяет
+    // отравление от здоровой первой закачки ассета, у которой сигнатура та же.
+    int  shell_ticks_ = 0;
+    bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
+    int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
+    int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
+    int  quarantine_skin_ = -1;    // индекс скина, который её уронил
+
     int stage_ = 0;
     bool fail(int stage) { stage_ = stage; return false; }
 
@@ -766,6 +806,63 @@ template<class IO> class Controller {
         return ok;
     }
 
+    // §4.22: сигнатура полусобранного панциря — _currentWeapon жив, обратная
+    // ссылка указывает на нашего игрока, Item==null и uhq==0. Доказывается
+    // структурой (обратная ссылка), а не классом: панцирь — недоинициализи-
+    // рованный FPWeapon, строгая проверка имени здесь только мешала бы.
+    // Здоровый инвариант (dump11966): uhq==1 <=> Item!=null; FDN (слот 10)
+    // гасит оба вместе, On_Draw (слот 17) — ставит оба вместе. Нечитаемое
+    // поле — не панцирь: не угадываем.
+    bool fp_build_shell(uint64_t player, uint64_t& fp) {
+        using namespace go_active;
+        if (!player || !pointer(io, player + PLAYER_FP_MANAGER, fp) || fp < 0x10000 ||
+            !io.named(fp, "FPManager", "Oxide")) return false;
+        uint64_t cur = 0;
+        if (!pointer(io, fp + FPMANAGER_CURRENT_OBJECT, cur) || cur < 0x10000) return false;
+        uint64_t back = 0;
+        if (!pointer(io, cur + FPOBJECT_PLAYER_BACKREF, back) || back != player) return false;
+        uint64_t item = 0;
+        if (!io.read(cur + FPOBJECT_ITEM, item) || item != 0) return false;
+        uint8_t shown = 0xFF;
+        if (!io.read(cur + FPOBJECT_SHOWN, shown) || shown != 0) return false;
+        return true;
+    }
+
+    // §4.22: обеззараживание — обнулить FPManager._currentWeapon (+0x50),
+    // чтобы следующий дроу не нашёл панцирь и собрал вьюху заново (гейт
+    // 0x68EF940 проверяет _currentWeapon на смерть первым). Это то же, что
+    // делает перезайти на сервер, только без перезайти. НЕ через Slot<T>:
+    // слот при следующем restore вернул бы освобождённый указатель панциря
+    // обратно в поле. Запись сырая, одноразовая, подтверждённая readback.
+    bool reset_fp_build(uint64_t fp) {
+        using namespace go_active;
+        if (!io.write_heap(fp + FPMANAGER_CURRENT_OBJECT, (uint64_t)0)) return false;
+        uint64_t cur = 0xdeadbeef;
+        if (!io.read(fp + FPMANAGER_CURRENT_OBJECT, cur) || cur != 0) return false;
+        ++reset_count_;
+        reset_armed_ = false;
+        return true;
+    }
+
+    // §4.22: карантин — ствол возвращается к родному скину (restore_all), а
+    // связка «ItemData.m_Id + индекс» запоминается: тот же скин на том же
+    // стволе больше не применяется (стадия 26), пока игрок не выберет другой
+    // индекс или другой ствол. Id читается с проверкой живости: мёртвый
+    // контекст — не повод читать освобождённую кучу. Если id не прочитался,
+    // quarantine_id_ остаётся -1, а настоящие m_Id положительны — такой
+    // карантин снимется при первом же резолве: честная деградация до
+    // «панцирь сбросили, пробуем снова».
+    void quarantine_current(int selected) {
+        quarantine_skin_ = selected;
+        quarantine_id_ = -1;
+        int32_t id = -1;
+        if (context_.item_data.object &&
+            context_.item_data.life(io) == Life::Alive &&
+            io.read(context_.item_data.object + go_active::ITEMDATA_ID, id))
+            quarantine_id_ = id;
+        restore_all();
+    }
+
 public:
     viewmodel::Status status = viewmodel::Status::Off;
     explicit Controller(IO& memory) : io(memory) {}
@@ -803,6 +900,8 @@ public:
         info.local_state = local_state_;
         info.local_refill = head_lo_local_.owned;
         info.item_state = item_state_;
+        info.fp_build_resets = reset_count_;
+        info.quarantine_skin = quarantine_skin_;
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
         info.stage = stage_;
         info.status = status;
@@ -826,6 +925,11 @@ public:
         local_state_ = -1;
         item_state_ = -1;
         local_head_raw_[0] = '\0';
+        shell_ticks_ = 0;
+        reset_armed_ = true;
+        reset_count_ = 0;
+        quarantine_id_ = -1;
+        quarantine_skin_ = -1;
         session_ = base_ = 0;
         status = viewmodel::Status::Off;
         return ok;
@@ -885,6 +989,26 @@ public:
             // Прежняя версия возвращала оригиналы здесь и на переходе мира
             // стирала наш индекс из SyncVar и Item — ровно перед спавном,
             // которому они нужны (устройство: skin.log v12, +60 с).
+            // §4.22: детектор панциря. Смотрим только когда что-то уже
+            // применено (has_state): в свежей сессии _currentWeapon тоже
+            // бывает пуст, но это нормальный холстер, а не отравление.
+            // Порог kShellWatchTicks отделяет отравление от здоровой первой
+            // закачки ассета — у неё сигнатура панциря та же (On_Draw зовётся
+            // только в async-колбэке загрузки). Сброс одноразовый на эпизод:
+            // взводит его обратно только успешный резолв (вьюха собралась).
+            if (has_state()) {
+                uint64_t fp = 0;
+                if (fp_build_shell(player, fp)) {
+                    ++shell_ticks_;
+                    if (reset_armed_ && shell_ticks_ >= kShellWatchTicks &&
+                        reset_fp_build(fp))
+                        quarantine_current(s.skin_index);
+                } else {
+                    shell_ticks_ = 0;
+                }
+            } else {
+                shell_ticks_ = 0;
+            }
             // §4.21: погашенную голову рабочей копии достраиваем и без рук —
             // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку
             // FPObject, и погашенная голова превращает дроу в Release.
@@ -917,6 +1041,29 @@ public:
         if (scan_request_ || scan_age_ >= kScanEvery || entry_count_ == 0) rescan();
         else ++scan_age_;
         scan_request_ = false;
+
+        // §4.22: карантин проверяется ПОСЛЕ перечитывания списка — меню обязано
+        // показывать скины и у ствола на карантине, иначе непонятно, почему
+        // выбор не действует. Ствол опознаётся по ItemData.m_Id, а не по
+        // адресу или классу: класс общий у нескольких предметов, а «сломал
+        // сборку» — свойство конкретного ствола (другой предмет того же класса
+        // обязан пробовать свой скин заново). Тот же ствол с тем же индексом —
+        // стадия 26, ничего не пишем; другой индекс или другой ствол —
+        // карантин снят и сброс снова взведён (игрок сам выбрал повтор).
+        if (quarantine_skin_ >= 0) {
+            int32_t qid = -1;
+            if (context_.item_data.object &&
+                context_.item_data.life(io) == Life::Alive &&
+                io.read(context_.item_data.object + go_active::ITEMDATA_ID, qid) &&
+                qid == quarantine_id_ && s.skin_index == quarantine_skin_) {
+                status = Status::Failed;
+                stage_ = 26;
+                return;
+            }
+            quarantine_skin_ = -1;
+            quarantine_id_ = -1;
+            reset_armed_ = true;
+        }
 
         // Индекс обязан существовать в массиве предмета: запись числа, которого
         // у этого ствола нет, — это мусор в SyncVar, а не скин.
@@ -1036,6 +1183,11 @@ public:
         // событиях (холстер/дроу, RPC насадок/модов, спавн/подбор ствола —
         // см. заголовок файла). Наша работа закончена, когда обе копии держат
         // нужный индекс: ближайший дроу пересоберёт вьюху из рабочей копии.
+        // §4.22: резолв прошёл всю цепочку (Item и uhq на месте) — вьюха
+        // здорова, счётчик наблюдения обнуляется, а сброс снова взводится
+        // для следующего эпизода отравления.
+        shell_ticks_ = 0;
+        reset_armed_ = true;
         stage_ = 0;
         status = Status::Active;
     }
@@ -1045,5 +1197,12 @@ private:
     // оружия идёт раз в 100 мс. 5 тиков — это ~0.5 с, достаточно для меню и
     // незаметно по числу обращений к памяти игры.
     static constexpr int kScanEvery = 5;
+    // §4.22: порог наблюдения за панцирем. Здоровая ПЕРВАЯ закачка ассета
+    // скина держит ту же сигнатуру (uhq==0, Item==null), пока async-колбэк
+    // не позовёт On_Draw, поэтому решение принимается только после долгого
+    // наблюдения: 450 тиков × 100 мс = 45 с. Ложное срабатывание на очень
+    // медленной закачке не опасно: лишний сброс — просто ещё одна пересборка,
+    // а карантин снимается сменой индекса.
+    static constexpr int kShellWatchTicks = 450;
 };
 }  // namespace skinchanger

@@ -205,6 +205,12 @@ int main() {
     assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
     // WeaponPiece 0x18 байт — CancellationTokenSource сдвинулся с 0x38.
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
+    // §4.22: детектор панциря и карантин. FPObject в 11977 совпал с релизом
+    // (dump.cs 11977: bool <cqS>k__BackingField @0x38 — обфусцированное uhq,
+    // Item @0x40, Player @0xC0), ItemData.m_Id @0x58 тоже на месте.
+    assert(go_active::FPOBJECT_SHOWN == 0x38);
+    assert(go_active::FPOBJECT_ITEM == 0x40);
+    assert(go_active::ITEMDATA_ID == 0x58);
     // TypeInfo-слоты классов скинов (script.json 11977). EG в списке беты нет:
     // 0 означает «резолвить по имени в рантайме», а не «слот нулевой».
     assert(go_active::EG_TYPEINFO_RVA == 0);
@@ -258,6 +264,9 @@ int main() {
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
     assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xB0);
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
+    // §4.22 в релизе (dump11966): FPObject.uhq @0x38, ItemData.m_Id @0x58.
+    assert(go_active::FPOBJECT_SHOWN == 0x38);
+    assert(go_active::ITEMDATA_ID == 0x58);
     assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
     assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);

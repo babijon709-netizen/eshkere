@@ -318,6 +318,14 @@ inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = 0x140;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG     = 0x78;
 // FPObject -> Oxide.Item -> Oxide.ItemData display strings.
 inline constexpr std::uint64_t FPOBJECT_ITEM        = 0x40; // <Ltl>k__BackingField
+// FPObject.uhq (+0x38): «вюха показана». Ставится в 1 On_Draw (слот vtable 17,
+// 0x68FD250), сбрасывается в 0 Holster-цепочкой FDN (слот 10, 0x68FCD10).
+// Здоровый инвариант, доказанный дизассемблером dump11966: uhq==1 тогда и
+// только тогда, когда Item(+0x40) != null. Нарушение (uhq==0 при Item==null
+// десятки секунд) — signature полусобранной вьюхи после исключения в сборке
+// (KERNEL.md §4.22): воротa CreateFPWeapon (0x68EF940) видят uhq==0 и
+// каждый дроу гонят пересборку, которая снова падает на том же скине.
+inline constexpr std::uint64_t FPOBJECT_SHOWN       = 0x38; // <uhq>k__BackingField
 inline constexpr std::uint64_t ITEM_DATA            = 0x20; // <LIN>k__BackingField
 // Oxide.Item.skin / .skinLevel — серверная правда о скине предмета. Доказано
 // дизассемблером dump11966: Item..ctor 0x69C8174 кладёт аргумент skin в +0x30
@@ -331,6 +339,11 @@ inline constexpr std::uint64_t ITEM_SKIN            = 0x30; // <uyQ>k__BackingFi
 inline constexpr std::uint64_t ITEM_SKIN_LEVEL      = 0x34; // <uya>k__BackingField
 inline constexpr std::uint64_t ITEMDATA_NAME        = 0x18; // m_Name
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME   = 0x20; // m_ShortName
+// ItemData.m_Id (+0x58): уникальный id предмета. Скины ищутся по классу, но
+// класс живёт между предметами (несколько пушек одного family), а карантин
+// «сломал сборку» — свойство именно СТВОЛА (KERNEL.md §4.22): другой предмет
+// того же класса после карантина обязан пробовать свой скин заново.
+inline constexpr std::uint64_t ITEMDATA_ID          = 0x58; // m_Id
 // Il2Cpp System.String layout: int32 length @0x10, UTF-16 chars @0x14.
 inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = 0x10;
 inline constexpr std::uint64_t IL2CPP_STRING_CHARS  = 0x14;

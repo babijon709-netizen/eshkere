@@ -200,10 +200,13 @@ struct SkinEntryView {
 };
 
 // Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
-// контроллера двадцать три (skin_changer_memory.h), но игроку нужно не «стадия
-// 13», а что делать. Unreadable и WrongLayout разделены намеренно: первое —
-// транспорт не читает голову WeaponPiece, второе — читает, но это не
-// WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии). Детальная расшифровка для CLI и разработчика —
+// контроллера двадцать шесть (skin_changer_memory.h), но игроку нужно не
+// «стадия 13», а что делать. Unreadable и WrongLayout разделены намеренно:
+// первое — транспорт не читает голову WeaponPiece, второе — читает, но это не
+// WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии).
+// Quarantined (§4.22) — отдельная причина: сборка вьюхи падала на этом скине,
+// чит сбросил полусобранный FPObject и временно не даёт выбирать его снова.
+// Детальная расшифровка для CLI и разработчика —
 // skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь,
 // чтобы меню и лог брали одну и ту же формулировку, а не две свои.
 enum class SkinBlock : int {
@@ -217,6 +220,7 @@ enum class SkinBlock : int {
     Unreadable,      // WeaponPiece не читается транспортом
     WrongLayout,     // читается, но это не WeaponPiece: оффсеты не от этого билда
     WriteFailed,     // запись не подтвердилась чтением обратно
+    Quarantined,     // §4.22: этот скин ломал сборку вьюхи — ствол на карантине
 };
 inline SkinBlock skin_block(int stage) {
     switch (stage) {
@@ -233,6 +237,7 @@ inline SkinBlock skin_block(int stage) {
         case 20:                                  return SkinBlock::Unreadable;
         case 21:                                  return SkinBlock::WrongLayout;
         case 22: case 23: case 24: case 25:       return SkinBlock::WriteFailed;
+        case 26:                                  return SkinBlock::Quarantined;
         default:                                  return SkinBlock::NoPlayer;
     }
 }
@@ -250,6 +255,7 @@ inline const char* skin_block_text(SkinBlock block) {
         case SkinBlock::Unreadable:  return "WeaponPiece не читается";
         case SkinBlock::WrongLayout: return "Оффсеты WeaponPiece не от этого билда";
         case SkinBlock::WriteFailed: return "Запись не подтвердилась";
+        case SkinBlock::Quarantined: return "Ствол в карантине: скин ломал сборку вьюхи";
         default:                     return "";
     }
 }
@@ -281,6 +287,14 @@ struct SkinUiInfo {
     // голова каноническая либо не прочиталась вовсе.
     char local_head[24] = {};
     bool piece_read = false;    // skin/level действительно прочитаны из памяти
+    // §4.22: сколько раз чит сбрасывал полусобранный FPObject (_currentWeapon)
+    // после исключения в сборке вьюхи. 0 — сборка ни разу не ломалась.
+    int  fp_build_resets = 0;
+    // §4.22: индекс скина, уронившего сборку, и ItemData.m_Id ствола, на
+    // котором это случилось; -1 — карантина нет. Пока stвол в карантине, тот
+    // же скин на том же стволе не применяется (стадия 26), а смена индекса
+    // или другого предмета снимает карантин и пробует заново.
+    int  quarantine_skin = -1;
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;
     char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках

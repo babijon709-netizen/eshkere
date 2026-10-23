@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-// Release profile, build 11966.
-// Source: dump11966.7z (dump.cs + libil2cpp.so + script.json), 31895 types.
+// Release profile, build 11978.
+// Source: dump11978.7z (dump.cs + libil2cpp.so + script.json).
 // Managed fields are resolved from dump.cs; TypeInfo RVAs are the inner
 // Il2CppClass* slots listed by script.json's TypeInfoPointers.
 
@@ -80,21 +80,23 @@ inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 // ПО ИМЕНИ. Старые ячейки 0xDDB1AD8/0xDDB1AA8 опровергнуты рантаймом: там
 // мусор 0xa000b409/0xa000b3fd (это «таблица типов v2» протектора S16 из
 // малых целых, НЕ слоты классов). Перекрёстное подтверждение: PM-PLH = 0x30,
-// как и в прошлом рабочем билде (0xD9C5310/0xD9C52E0).
-inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xDEA09F8; // release 11966: Oxide.PlayerManager TypeInfo slot
+// в предыдущем рабочем билде (0xD9C5310/0xD9C52E0); в release 11978
+// PlayerManager-TypeInfo минус PlayerLoopHelper-TypeInfo равен 0x38.
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE66DEE8; // release 11978: Oxide.PlayerManager TypeInfo slot
 // Cysharp.Threading.Tasks.PlayerLoopHelper.
-inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xDEA09C0; // release 11966 TypeInfo slot
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE66DEB0; // release 11978 TypeInfo slot
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = 0x08; // activePlayerList
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = 0x10; // clientPlayerList
 
 
-// Managed-object layouts verified against release 11966.
+// Changed managed-object layouts were checked against release 11978; stable
+// shared fields retain their prior offsets where the dumps agree.
 inline constexpr std::uint64_t IL2CPP_CLASS_STATIC_FIELDS_OFFSET = 0xB8;
 inline constexpr std::uint64_t PLAYERLOOPHELPER_RUNNERS = 0x30;
 inline constexpr std::uint64_t LOOPRUNNER_ITEMS = 0x38;
 inline constexpr std::uint64_t LOOPRUNNER_TAIL = 0x30;
-// Две раскладки промисов UniTask.Delay, сверены по dump11949 и dump11966
-// (поля в объекте: 0x10 nextNode, дальше тройка). Именование историческое:
+// Две раскладки промисов UniTask.Delay, сверены по dump11949, dump11966 и
+// dump11978 (поля в объекте: 0x10 nextNode, дальше тройка). Именование историческое:
 // «голый» набор полей — у DelayIgnoreTimeScalePromise (unscaled-таймер),
 // «SCALED» набор — у обычного DelayPromise (ждёт Time.deltaTime).
 inline constexpr std::uint64_t DELAYPROMISE_TIMESPAN = 0x18;          // DelayIgnoreTimeScalePromise.delayFrameTimeSpan
@@ -104,16 +106,15 @@ inline constexpr std::uint64_t DELAYPROMISE_SCALED_TIMESPAN = 0x1C;   // DelayPr
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_ELAPSED = 0x20;    // DelayPromise.elapsed
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = 0x18; // DelayPromise.initialFrame
 // TypeInfo-слоты классов промисов для быстрого подбора (см.
-// fast_loot_memory.h): release 11966, взяты из script.json TypeInfoPointers.
-// _ALT — запасной слот: в бете пара классов опознаётся по имени в рантайме
-// из двух кандидатов (см. game_offsets_beta.h), в релизе запасной не нужен.
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xDEAFE30;     // Cysharp...UniTask.DelayPromise
+// fast_loot_memory.h): release 11978, взяты из script.json TypeInfoPointers.
+// _ALT остаются нулевыми: прямые слоты указывают на сами классы, а не <>c.
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE67D4E8;     // Cysharp...UniTask.DelayPromise
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0;
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xDEAFE28;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE67D4E0;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
 inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0;
 inline constexpr std::uint64_t FPHITSCAN_CONFIG = 0x130;
-// Projectile/config offsets rechecked against release 11966. The beta profile
-// pins the pre-11966 values for the weapon fields that diverged.
+// Projectile/config offsets rechecked against release 11978. The beta profile
+// keeps beta-specific values for weapon fields that differ between dumps.
 inline constexpr std::uint64_t FPBOW_PROJECTILE_PREFAB = 0x150;
 inline constexpr std::uint64_t FPCROSSBOW_CONFIG = 0x138;
 inline constexpr std::uint64_t FPCROSSBOW_PROJECTILE_PREFAB = 0x148;
@@ -168,36 +169,36 @@ inline constexpr std::uint64_t DISPERSIONCONFIG_MAX_DISPERSION = 0x24;
 // Отдача («без отдачи»): конфиг-ассет хитскана (поле 0x70 в
 // HitscanWeaponConfig, рядом с dispersionConfig 0x68). Гасятся в ноль
 // вертикальные Мин/Макс (Vector2) и боковые дельты; оригиналы «нет отдачи»
-// хранит и возвращает при выключении/смене ствола (проверено по дампам
-// 11949 и 11966 — раскладка одна).
+// хранит и возвращает при выключении/смене ствола (11949, 11966 и 11978 —
+// общие поля в дампах остаются на тех же смещениях).
 inline constexpr std::uint64_t HITSCANCONFIG_RECOIL_CONFIG = 0x70;
 inline constexpr std::uint64_t RECOILCONFIG_MIN_RECOIL = 0x18;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MAX_RECOIL = 0x20;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MIN_SIDE = 0x28;
 inline constexpr std::uint64_t RECOILCONFIG_MAX_SIDE = 0x2C;
 
-inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xDE9BCB0; // release 11966: Oxide.GameControllerBase TypeInfo slot
-// Build 11966 TypeInfoPointers gives the inner slot directly.
-inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xDEA5540;
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE669190; // release 11978: Oxide.GameControllerBase TypeInfo slot
+// Build 11978 TypeInfoPointers gives the inner slot directly.
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE672A10;
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
 inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled
 // CreateVegetationRenderer checks +0x18; StartStreaming checks +0x19 before
 // constructing ChunkTreeRenderer (the terrain-tree renderer for bushes).
-inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD   = 0x10; // <ukT>k__BackingField (PlayerManager)
-inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = 0x38; // <ukA>k__BackingField (CameraManager)
+inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD   = 0x10; // <KOG>k__BackingField (PlayerManager)
+inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = 0x38; // <KOx>k__BackingField (CameraManager)
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD          = 0x20; // m_Camera
-// Статические поля GameControllerBase (dump11966, Oxide.GameControllerBase):
+// Статические поля GameControllerBase (dump11978, Oxide.GameControllerBase):
 // вход в UI-ветку ввода и в хендлер ввода — оба нужны «память-джойстику»
 // автофарма (стик вместо синтетического тача).
-//   +0x18 <qSp> = Vsh (playerEventHandler локального игрока)
-//   +0x20 <qSt> = Oxide.PlayerInputHandler     (экземпляр в сцене)
-//   +0x50 <qmo> = ScreenControlsManager        (его +0x28 — ScreenControlsReferenceHolder)
-//   +0x60 <qme> = GameControllerBase (сам контроллер; запасной путь к UI)
+//   +0x18 <KOL> = PlayerEventHandler локального игрока (kAu)
+//   +0x20 <KOH> = PlayerInputHandler            (экземпляр в сцене)
+//   +0x50 <KOP> = ScreenControlsManager         (его +0x28 — ScreenControlsReferenceHolder)
+//   +0x60 <KOO> = GameControllerBase (сам контроллер; запасной путь к UI)
 // Смещения статиков считаются от klass->static_fields (см. get_class_static_fields).
-inline constexpr std::uint64_t GAME_CONTROLLER_INPUT_HANDLER_FIELD      = 0x20; // <qSt> (PlayerInputHandler)
-inline constexpr std::uint64_t GAME_CONTROLLER_EVENT_HANDLER_FIELD      = 0x18; // <qSp> (Vsh)
-inline constexpr std::uint64_t GAME_CONTROLLER_STATIC_SELF_FIELD        = 0x60; // <qme> (GameControllerBase)
-inline constexpr std::uint64_t GAME_CONTROLLER_SCREEN_CONTROLS_FIELD    = 0x50; // <qmo> (ScreenControlsManager)
+inline constexpr std::uint64_t GAME_CONTROLLER_INPUT_HANDLER_FIELD      = 0x20; // <KOH> (PlayerInputHandler)
+inline constexpr std::uint64_t GAME_CONTROLLER_EVENT_HANDLER_FIELD      = 0x18; // <KOL> (kAu)
+inline constexpr std::uint64_t GAME_CONTROLLER_STATIC_SELF_FIELD        = 0x60; // <KOO> (GameControllerBase)
+inline constexpr std::uint64_t GAME_CONTROLLER_SCREEN_CONTROLS_FIELD    = 0x50; // <KOP> (ScreenControlsManager)
 
 // Слой ввода (dump 11949, Oxide.PlayerInputHandler / ScreenControls*).
 // Джойстик движения читается игрой отсюда, а не из тача: у UI-стика
@@ -225,19 +226,16 @@ inline constexpr std::uint64_t SCREEN_CONTROLS_HOLDER_FLOATING = 0x90; // GameOb
 // ScreenControlsManager.screenControlsReferenceHolder (0x28) — тот же слот,
 // что и у PlayerInputHandler.screenControlsReferenceHolder.
 inline constexpr std::uint64_t SCREEN_CONTROLS_HOLDER_FIELD    = 0x28;
-// PlayerInputHandler (класс с читаемым именем, Oxide.PlayerInputHandler):
-//   controller 0x20, screenControlsReferenceHolder 0x28,
-//   <qNU> PlayerManager 0x30 (обратная проверка владельца),
-//   <qNF> Vsh 0x38, PlayerInput qNa 0x40 (struct 0x28 байт: MovementInput
-//   Vector2 0x40, LookDirection Vector3 0x48, YRotation 0x54, Jump/Sprint/
-//   Crouch/Aim/Ready 0x58..0x5C, Tick 0x60, TooClose 0x64),
-//   bool 0x68 — «кнопка атаки зажата» (защёлка: ставится по нажатию кнопки
-//   атаки и снимается по отпусканию, см. PLAYER_INPUT_HANDLER_ATTACK_HELD),
-//   bool 0x69 — однокадровый импульс в PlayerInput.Jump (0x58),
-//   Nullable<Vector2> qNf 0x6C и qNP 0x78 (сырой ввод стика: hasValue по +0,
-//   значение по +4), Nullable<bool> 0x84, floats 0x88/0x8C/0x90,
-//   SprintJoystickHandler 0xB0.
-inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OWNER_BACKREF = 0x30; // <qNU> PlayerManager
+// PlayerInputHandler (release 11978): controller 0x20,
+// screenControlsReferenceHolder 0x28, PlayerManager backing field 0x30,
+// PlayerEventHandler backing field 0x38, PlayerInput 0x40. The PlayerInput
+// struct (0x28 bytes) holds MovementInput 0x40, LookDirection 0x48,
+// YRotation 0x54, Jump/Sprint/Crouch/Aim/Ready 0x58..0x5C, Tick 0x60,
+// TooClose 0x64. Handler state: attack-held bool 0x68, Jump pulse 0x69,
+// stick Nullable<Vector2> values 0x6C and 0x78, Nullable<bool> 0x84,
+// floats 0x88/0x8C/0x90, input-action collection 0x98,
+// SprintJoystickHandler 0xB0.
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OWNER_BACKREF = 0x30; // PlayerManager backing field
 inline constexpr std::uint64_t PLAYER_INPUT_MOVEMENT_INPUT        = 0x40; // PlayerInput.MovementInput (Vector2)
 inline constexpr std::uint64_t PLAYER_INPUT_YROTATION             = 0x54; // PlayerInput.YRotation (float)
 inline constexpr std::uint64_t PLAYER_INPUT_TICK                  = 0x60; // PlayerInput.Tick (uint)
@@ -247,39 +245,35 @@ inline constexpr std::uint64_t PLAYER_INPUT_TICK                  = 0x60; // Pla
 // .OnTry_Attack(true) -> оружие.TryAttackContinuously() — ровно то, что даёт
 // зажатая кнопка атаки в UI; частоту режет кулдаун самого оружия.
 inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_ATTACK_HELD   = 0x68; // bool: атака зажата
-inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_A    = 0x6C; // Nullable<Vector2> qNf
-inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_B    = 0x78; // Nullable<Vector2> qNP
-inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE = 0x84; // Nullable<bool> Jjb/Oua
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_A    = 0x6C; // Nullable<Vector2> KVD
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_OVERRIDE_B    = 0x78; // Nullable<Vector2> KVi
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE = 0x84; // Nullable<bool> KVQ (release 11978)
 // Layout Nullable<T> в il2cpp: bool hasValue по +0 (в метадате поле идёт
 // первым), значение — по +4 (Vector2 выравнивается по 4).
 inline constexpr std::uint64_t NULLABLE_HAS_VALUE = 0x0;
 inline constexpr std::uint64_t NULLABLE_VALUE     = 0x4;
 inline constexpr std::uint64_t NULLABLE_STRIDE    = 0x0C; // размер Nullable<Vector2>
 
-// БЕГ. Персонаж бежит только тогда, когда игра считает кнопку бега нажатой.
-// Оценщик спринта PlayerInputHandler.glv (RVA 0x67E3574; зовётся из glI на
-// 0x67E47D4) в КАЖДОМ кадре переписывает PlayerInput.Sprint (хендлер+0x59)
-// как «стойка стика && кнопка_бега»:
-//   w22 = !(|MovementInput.x| >= 0.9 || MovementInput.y <= -0.1)  (порог из glv)
-//   Sprint = w22 && InputAction(LD+0x48).inProgress   — во ВСЕХ трёх SprintMode
-// (0 Button / 1 Hybrid / 2 Swipe), то есть одной оттянутой ручки стика для бега
-// мало: нужен inProgress у акции. Кнопку на экране жмёт SprintJoystickHandler
-// (: OnScreenControl) — бот тачем не играет, поэтому ведём фазу акции в памяти:
-//   PlayerInputHandler+0x98  <qNJ> LD (обёртка нового Input System)
-//   LD+0x48                  InputAction кнопки бега (то, что читает glv)
-//   InputAction+0xC0         int m_ActionIndexInState
-//   InputAction+0xC8         InputActionMap -> +0x60 InputActionState
-//   InputActionState+0x60    TriggerState* m_ActionStates (шаг 0x44)
-//   TriggerState+0x00        InputActionPhase phase (byte: 2 = Started, 1 = Waiting)
-// Читает её InputAction.IsInProgress (0xC74CF84) / get_inProgress (0xC74BF3C)
-// как (phase & 0xFE) == 2, а TriggerState берётся по
-// &actionStates[action->0xC0] (InputActionState.FetchActionState 0xC767658).
-// Цепочку и раскладку Input System (пакет Unity, ассембли не обфусцирован)
-// сверяем на месте: имена классов LD/InputAction, диапазон индекса, ненулевые
-// указатели и фаза в пределах enum — не сошлось, не пишем.
-inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_INPUT_ACTIONS = 0x98; // <qNJ> LD
+// БЕГ. Поведение ниже восстановлено по native disassembly release 11966;
+// имена методов и RVA — исторические, не адреса кода для 11978. Тогда оценщик
+// каждый кадр переписывал PlayerInput.Sprint (handler+0x59) по гейту стика и
+// InputAction.IsInProgress:
+//   w22 = !(|MovementInput.x| >= 0.9 || MovementInput.y <= -0.1)
+//   Sprint = w22 && sprint-action.inProgress (во всех SprintMode: Button/Hybrid/Swipe)
+// Поэтому одного оттянутого стика недостаточно: кнопка бега тоже должна быть
+// активна. В release 11978 dump.cs подтверждает PlayerInputHandler+0x98 как
+// input-action collection Zp; текущая цепочка далее использует тот же слот
+// InputAction, затем action index/state и TriggerState phase:
+//   action+0xC0         int m_ActionIndexInState
+//   action+0xC8         holder -> +0x60 InputActionState
+//   InputActionState+0x60 TriggerState* m_ActionStates (stride 0x44)
+//   TriggerState+0x00  InputActionPhase (byte: 2 = Started, 1 = Waiting)
+// В прежнем release методы IsInProgress/get_inProgress сравнивали (phase & 0xFE)==2
+// и брали TriggerState по actionStates[action->0xC0]. На месте проверяем
+// ненулевые указатели, индекс и допустимую фазу; при несовпадении не пишем.
+inline constexpr std::uint64_t PLAYER_INPUT_HANDLER_INPUT_ACTIONS = 0x98; // PlayerInputHandler input-action collection
 inline constexpr std::uint64_t PLAYER_INPUT_SPRINT                 = 0x59; // PlayerInput.Sprint (bool)
-inline constexpr std::uint64_t LD_SPRINT_ACTION                    = 0x48; // InputAction кнопки бега
+inline constexpr std::uint64_t LD_SPRINT_ACTION                    = 0x48; // sprint InputAction slot in the generated collection
 inline constexpr std::uint64_t INPUT_ACTION_INDEX                  = 0xC0; // int, индекс в InputActionState
 inline constexpr std::uint64_t INPUT_ACTION_STATE_HOLDER           = 0xC8; // +0x60 -> InputActionState
 inline constexpr std::uint64_t INPUT_ACTION_STATE_HOLDER_STATE     = 0x60;
@@ -291,18 +285,17 @@ inline constexpr std::uint8_t  INPUT_ACTION_PHASE_STARTED          = 2;    // In
 
 // Oxide.PlayerManager instance fields (dump.cs)
 inline constexpr std::uint64_t PLAYER_TRANSFORM = 0x68; // worldCameraRoot
-// PlayerManager.lastSavedPosition. Совпадает в release 11949 и beta 11943;
-// 0x260 в этих билдах — ссылка fz, поэтому чтение Vector3 оттуда всегда
-// сваливалось на более тяжёлый KCC/model path.
+// PlayerManager.lastSavedPosition. Совпадает в release 11978 и beta 11977;
+// 0x260 — ссылка на PlayerModelInfo, поэтому чтение Vector3 оттуда вместо
+// последней сохранённой позиции сваливалось бы на неверный путь.
 inline constexpr std::uint64_t PLAYER_POSITION = 0x1F4;
 inline constexpr std::uint64_t PLAYER_CHARACTER_MODEL = 0x150; // characterModel (UnityEngine.GameObject)
-inline constexpr std::uint64_t PLAYER_NICKLABEL = 0x130; // nicklabel (class ij, was wK)
-// PlayerManager "uWc" (0x220, was LLI): the real human-readable display name (confirmed
-// on-device — equals the nicklabel widget's private name string, e.g.
-// "пахановский" / "#Фришка"), whereas userID/voice names carry the machine id.
-inline constexpr std::uint64_t PLAYER_DISPLAY_NAME = 0x240;  // было 0x220; zNy (protected string) — прежний uWc; ВНИМАНИЕ: 0x220 теперь enum HackType lastViolationType, вставка +0x20 до animator
+inline constexpr std::uint64_t PLAYER_NICKLABEL = 0x130; // nicklabel (Di in release 11978)
+// PlayerManager protected string at 0x240 is the human-readable display name
+// (matches the nicklabel's private name string); userID/voice names carry the machine id.
+inline constexpr std::uint64_t PLAYER_DISPLAY_NAME = 0x240;  // 0x220 is lastViolationType in release 11978
 
-// nicklabel (class gt this build; was ij/wK): player back-ref + nickname UI.Text.
+// nicklabel Di (release 11978): player back-ref + nickname UI.Text.
 inline constexpr std::uint64_t NICKLABEL_PLAYER_BACKREF = 0x20;
 inline constexpr std::uint64_t NICKLABEL_NICKNAME_TEXT  = 0x38;
 // UnityEngine.UI.Text: managed string with the visible nickname.
@@ -310,10 +303,10 @@ inline constexpr std::uint64_t UI_TEXT_MTEXT = 0xE0;
 // FPObject (base of FPWeaponBase): display name of the held weapon.
 inline constexpr std::uint64_t FPOBJECT_OBJECT_NAME = 0x78;
 // Dissonance voice identity: reliable synced display-name source.
-// PlayerManager.uWr (0x2E8, was LLT) : VoicePlayerState -> <Name>k__BackingField.
-inline constexpr std::uint64_t PLAYER_VOICE_STATE  = 0x328;  // было 0x2F8; zsd — единственное поле типа Dissonance.VoicePlayerState в классе (прежний uWr)
+// PlayerManager's VoicePlayerState field moved with the 11978 tail layout.
+inline constexpr std::uint64_t PLAYER_VOICE_STATE  = 0x338;  // VoicePlayerState
 inline constexpr std::uint64_t VOICE_STATE_NAME     = 0x38;
-// PlayerManager.voicePlayer (class WDB this build; was pJk/fuI) -> string at 0x78 (FKc).
+// PlayerManager.voicePlayer (kIq in release 11978) -> synced string at +0x78.
 inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = 0x140;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG     = 0x78;
 // FPObject -> Oxide.Item -> Oxide.ItemData display strings.
@@ -325,24 +318,17 @@ inline constexpr std::uint64_t ITEMDATA_SHORTNAME   = 0x20; // m_ShortName
 inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = 0x10;
 inline constexpr std::uint64_t IL2CPP_STRING_CHARS  = 0x14;
 
-// Local player "is aiming" (ADS) state (dump.cs + libil2cpp disasm):
-//   PlayerManager.playerEventHandler (0x78) -> class WxG (was Gum/DqO)
-//   handler.manager (0xD0) back-ref == PlayerManager (validation)
-//   handler.Aim (0x270, was 0x268) -> toggle activity (class Gub, was Dqg), its
-//   <...>k__BackingField (0x10) == Active
-//   This exact byte is what FPManager.LateUpdate reads to blend the camera to aimFOV.
-//   The handler class is a live target: builds add/remove activities in the middle
-//   of it. A KnockDoor field inserted at 0x188 shifted every later field by +8, so
-//   Aim moved 0x268 -> 0x270 and 0x268 became Jump ("only in scope" silently read
-//   the jump flag). offsets_map.json reaches these through `via`
-//   (playerEventHandler -> Aim), so update_offsets.py verifies them by field name.
-// Fallback: PlayerManager.fpManager (0x90) -> FPManager.LtZ (0x58, current FPWeaponBase)
-//   FPObject.Player (0xC0) back-ref == PlayerManager (validation)
-//   FPWeaponBase.<LKk>k__BackingField (0x120) == isAiming (set in weapon StartAim)
-//   FPManager.<LtX>k__BackingField (0xA8) == aim blend 0..1 (secondary hint)
+// Local player's Aim toggle (ADS) state in release 11978:
+//   PlayerManager.playerEventHandler (0x78) -> kAu; manager back-ref is +0xD0.
+//   kAu.Aim is an Activity at +0x2B0 (its Active byte is +0x10).
+//   FPManager.LateUpdate consumes this activity when blending aim FOV; nearby
+//   input/activity fields move between builds, so use this build's exact field.
+// Fallback: PlayerManager.fpManager (0x90) -> FPManager's current FPWeaponBase (+0x58);
+//   FPObject.Player (+0xC0) validates the player, and the FPWeaponBase aiming
+//   flag is +0x120. The FPManager aim blend is +0xB8.
 inline constexpr std::uint64_t PLAYER_EVENT_HANDLER          = 0x78;
 inline constexpr std::uint64_t EVENT_HANDLER_MANAGER_BACKREF = 0xD0;
-inline constexpr std::uint64_t EVENT_HANDLER_AIM_ACTIVITY    = 0x298;  // было 0x290; класс переименован Gum->WxG (поля теперь с читаемыми именами: Run 0x280, Crouch 0x288, Jump 0x290, Aim 0x298 — вставка +0x8 перед Run)
+inline constexpr std::uint64_t EVENT_HANDLER_AIM_ACTIVITY    = 0x2B0; // kAu.Aim
 // eventHandler.MovementInput (0x128): Vsf<Vector2> — «канал движения» игрока
 // (вход KCC), ровно как LookDirection (0x140) для взгляда. Значение внутри
 // обёртки — по SYNC_VALUE_OFFSET (+0x20). Отдаём его памяти-джойстику
@@ -439,41 +425,28 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // global-metadata.dat и бандлах, поэтому items.txt за таблицей номеров всё
 // равно снимается с устройства.
 // ---- Remote (third-person) held weapon, from dump.cs ------------------------
-// The FP objects above are local-only MonoBehaviours, so enemies never resolve
-// through them. What every client *does* get is the networked weapon component:
-//   HyperHug.Games.Oxide.Features.Weapons.PlayerWeapon : Mirror.NetworkBehaviour
-//     playerWeaponViewReference  0xD0  (-> class sR, third-person weapon view)
-//     Oxide.WeaponPiece          0x100 (SyncVar "weaponPiece", 0x10 bytes)
-//     WeaponState                0x110
-//     <player>k__BackingField    0x128 (back-ref to PlayerManager, validation)
-// It hangs off PlayerManager.weaponReference (0xF0), which is an obfuscated
-// lazy-reference wrapper just like kccReference, so it needs the same probing.
-// This build inserted 0x40 bytes of new fields before `animator`, so every
-// field from there on moved (old 0x90/0xD8/0xE8/0x100). The SyncVar trio was
-// re-identified positionally against the _Mirror_SyncVarHookDelegate__loaded /
-// _weaponPiece / _weaponState tail, not by name (names are re-obfuscated).
-// NB: the new layout also has a second WeaponPiece (YHO, was 0xA8, now
-// 0xC0) - that one is NOT the SyncVar and must not be used.
-inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0xE8;  // было 0xE0; перед вьюхой вставлен YHw(bool)+паддинг; SyncVar-тройка не тронута (хуки _loaded/_weaponPiece/_weaponState на 0x150/0x158/0x160)
-inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x110;
-inline constexpr std::uint64_t PLAYERWEAPON_STATE          = 0x120;
-inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x138;
+// PlayerWeapon is networked on remote players; its view reference is a Yp
+// wrapper and may contain a decorator before the concrete weapon view.
+// Release 11978 fields: view reference 0x100, FP view 0x108, FPManager 0x110;
+// SyncVar WeaponPiece 0x130, attack type 0x148, WeaponState 0x14C, and
+// <player>k__BackingField 0x160 (back-reference validation). PlayerManager's
+// weaponReference at 0xF0 is an obfuscated lazy-reference wrapper.
+// The separate WeaponPiece at 0xD0 is not the SyncVar; use the value at 0x130.
+inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // playerWeaponViewReference (Yp)
+inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar WeaponPiece
+inline constexpr std::uint64_t PLAYERWEAPON_STATE          = 0x14C; // SyncVar WeaponState
+inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160; // <player>k__BackingField
 // Oxide.WeaponPiece (value type): Enabled 0x0, Number 0x2, Skin 0x4,
 // SkinLevel 0x6, Loaded 0x7, Mods 0x8. Number is the item id of the weapon.
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = 0x00;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER  = 0x02;
-// The third-person weapon view (class ON this build; was sR/Mo. Interface is
-// OB now, was sY/Ms; the decorator is WRU, was pGW/fSN).
-// Found after the rename by field shape, not by name - see tools/offsets:
-//   il2cpp_layout.py find "WeaponBase_o*" "Oxide_WeaponPiece_o" "UnityEngine_Transform_o*"
-//   WeaponBase  0x48  -> MonoBehaviour on the spawned weapon GameObject
-//   WeaponPiece 0x50
-//   Transform   0x60  -> root transform of the spawned weapon
-// A decorator (class pGW, was fSN) wraps another view at +0x10, so unwrap
-// one level when needed. All four offsets survived the update unchanged.
-inline constexpr std::uint64_t WEAPONVIEW_WEAPON_BASE    = 0x48;
-inline constexpr std::uint64_t WEAPONVIEW_PIECE          = 0x50;
-inline constexpr std::uint64_t WEAPONVIEW_ROOT_TRANSFORM = 0x60;
+// Concrete third-person weapon view is YU : Yp in release 11978. Its fields
+// were identified by type shape: WeaponBase +0x50, WeaponPiece +0x58, and root
+// Transform +0x70. The decorator `kun` also implements Yp and wraps another
+// Yp at +0x10, so unwrap one level when needed.
+inline constexpr std::uint64_t WEAPONVIEW_WEAPON_BASE    = 0x50;
+inline constexpr std::uint64_t WEAPONVIEW_PIECE          = 0x58;
+inline constexpr std::uint64_t WEAPONVIEW_ROOT_TRANSFORM = 0x70;
 inline constexpr std::uint64_t WEAPONVIEW_INNER          = 0x10;
 // HyperHug...Player.PlayerModelInfo — the character model rig. The equipment
 // view parents the weapon prefab under these holders, so their first child is
@@ -509,7 +482,7 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG          = 0x10;
 inline constexpr std::uint64_t PLAYER_FP_MANAGER             = 0x90;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT      = 0x50; // _currentWeapon (authoritative active FPObject)
-inline constexpr std::uint64_t FPMANAGER_AIM_BLEND           = 0xA8;
+inline constexpr std::uint64_t FPMANAGER_AIM_BLEND           = 0xB8;
 inline constexpr std::uint64_t FPOBJECT_PLAYER_BACKREF       = 0xC0;
 inline constexpr std::uint64_t FPWEAPON_IS_AIMING            = 0x120;
 
@@ -639,8 +612,8 @@ inline constexpr std::uint64_t MARKER_DATA_HEAD_POS          = 0x28;  // NX.Rqs 
 inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // NX.Rqv (Transform PlayerModelInfo.head)
 inline constexpr std::uint64_t MARKER_DATA_USER_ID           = 0x58;  // NV.Rqd / Iu.nmj (string userId)
 inline constexpr std::uint64_t MARKER_DATA_IS_HIT            = 0x73;  // NV.Rqb (bool, копируется в ctx+0x50 в NearbyPlayerScreenMarkerView::Tick)
-inline constexpr std::uint64_t PLAYER_HIT_TRACKER            = 0x348; // PlayerManager.uGa / xkd (Nt/Iz hit tracker)
-inline constexpr std::uint64_t HIT_TRACKER_HIT_DICT          = 0x18;  // Nt.RWf (Dictionary<uint, float> hit expire times)
+inline constexpr std::uint64_t PLAYER_HIT_TRACKER            = 0x358; // PlayerManager's lE hit tracker (release 11978)
+inline constexpr std::uint64_t HIT_TRACKER_HIT_DICT          = 0x18;  // lE dictionary<uint, float> hit-expiry map
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT    = 0x28;  // ScreenMarkerView.context (ScreenMarkerModuleContext)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES    = 0x30;  // ScreenMarkerView.modules (List<Nk/IH>)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MARKER     = 0x40;  // ScreenMarkerView.<Rse>k__BackingField (Marker)
@@ -656,7 +629,7 @@ inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL        = 0x2C;  // Occlusi
 inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME       = 0x38;  // OcclusionModule.RcZ (float)
 inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL         = 0x3C;  // OcclusionModule.RcS.hasValue (uint8)
 inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED     = 0x3D;  // OcclusionModule.RcS.value (uint8, 0=виден, 1=за стеной)
-inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xDEA6BD8; // release 11966: hMj TypeInfo slot (outer 0xDB4AE38)
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xE674BE8; // release 11978: kiQ candidate (TypeDefIndex 6610)
 inline constexpr std::int32_t  MARKER_TYPE_NEARBY_PLAYER     = 10;    // MarkerType.NearbyPlayer
 // Тот же struct UnityEngine.RaycastHit (dump.cs 62a8534, строка 642061):
 //   m_Point 0x0 (Vector3), m_Normal 0xC (Vector3), m_FaceID 0x18,
@@ -672,9 +645,9 @@ inline constexpr std::uint64_t RAYCASTHIT_COLLIDER           = 0x28;  // UnityEn
 // Ragdoll bone list route (dump.cs) — game-maintained list of rig bone
 // transforms, no name matching needed:
 //   PlayerManager.kccReference (0xB0, possibly a wrapper) -> KCC
-//   KCC.ZMl = CharacterAnimation (0x108); KCC.player back-ref (0x78) validates
-//   CharacterAnimation.ragdoll (0x38); CharacterAnimation.ZCu back-ref (0x78)
-//   Ragdoll.m_Pelvis Rigidbody (0x20), Ragdoll.m_Bones BodyPart[] (0x88)
+//   KCC CharacterAnimation reference (+0xE0); KCC.player back-ref (+0x78) validates
+//   CharacterAnimation.ragdoll (+0x38); CharacterAnimation player back-ref (+0x78)
+//   Ragdoll.m_Pelvis Rigidbody (+0x20), m_Bones Rigidbody[] (+0x90)
 //   Ragdoll.BodyPart.transform (0x10)
 inline constexpr std::uint64_t PLAYER_KCC_REFERENCE        = 0xB0;
 inline constexpr std::uint64_t KCC_PLAYER_BACKREF          = 0x78;
@@ -691,24 +664,21 @@ inline constexpr std::uint64_t HITBOX_SIZE                = 0x24;
 inline constexpr std::uint64_t HITBOX_CENTER              = 0x30;
 inline constexpr std::uint64_t HITBOX_AREA                = 0x68;
 inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET     = 0x90; // float, eye = pos + (capsule height + this) * up
-// KCC.ZYW : HyperHug.Games.Oxide.Features.Player.Move (value struct @0x16C)
-//   +0x00 MoveState State (0 idle,1 walk,2 run,3 crouching,4 air,5 climb,6 swim,7 dead)
-//   +0x04 Pose (0 Stand, 1 Crouch)   +0x08 bool Aim  +0x0C Vector3 Position
-//   +0x18 Vector3 RealVelocity
-inline constexpr std::uint64_t KCC_MOVE                   = 0x13C;  // было 0x154; luY (был ZYW): State +0x0 (uint8), Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
-inline constexpr std::uint64_t KCC_VISIBILITY             = 0x298;  // [SyncVar(hook = "OnVisibilityChanged")] public Visibility visibility; // 0x298 (0 = Visible, 1 = Hidden)
-inline constexpr std::uint64_t KCC_MOTOR_ENABLED          = 0x29D;  // [SyncVar] private bool motorEnabled; // 0x29D
-inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x350;  // private bool RMu; // 0x350 (1 after first full ObserverMove on remote client)
+// KCC.Move is a value struct at +0x1AC in release 11978. Its internal layout
+// is stable: State +0x00, Pose +0x04, Aim +0x08, Position +0x0C,
+// RealVelocity +0x18, MoveDirection +0x24, BaseVelocity +0x38.
+inline constexpr std::uint64_t KCC_MOVE                   = 0x1AC;
+inline constexpr std::uint64_t KCC_VISIBILITY             = 0x308; // SyncVar Visibility (0 = Visible, 1 = Hidden)
+inline constexpr std::uint64_t KCC_MOTOR_ENABLED          = 0x30D; // SyncVar bool motorEnabled
+inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x3C0; // set after first full ObserverMove on remote client
 // MoveState значения (dump 11949, enum MoveState TypeDefIndex 4284): 0 IDLE,
 // 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE, 5 CLIMBING, 6 SWIMMING,
 // 7 DEAD, 8 SEATED. Поза (Move.Pose, TypeDefIndex 4285) знает только
 // Stand 0 и Crouch 1 — лежачей позы в этой сборке НЕТ.
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD          = 7;
-// Внутренние смещения самого значения Move (value struct внутри KCC). Имя
-// поля ротируется (11966: Move RhW 0x13C, 11968: Move ydh 0x1AC), а раскладка
-// значения — нет: сверено по dump.cs обеих сборок (struct Move, TypeDefIndex
-// 4309 / 4453): State 0x00, Pose 0x04, Aim 0x08, Position 0x0C,
-// RealVelocity 0x18, MoveDirection 0x24, BaseVelocity 0x38.
+// Внутренние смещения самого значения Move (value struct внутри KCC);
+// layout сверена в dump.cs 11978 и 11977: State 0x00, Pose 0x04, Aim 0x08,
+// Position 0x0C, RealVelocity 0x18, MoveDirection 0x24, BaseVelocity 0x38.
 inline constexpr std::uint64_t KCC_MOVE_STATE              = 0x00; // int32 MoveState
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY      = 0x18; // Vector3
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY_Y    = 0x1C; // float .y
@@ -720,11 +690,11 @@ inline constexpr std::int32_t KCC_MOVE_STATE_AIRBORNE      = 4;
 // Выше (5 CLIMBING, 6 SWIMMING, 7 DEAD, 8 SEATED) вертикальная скорость —
 // часть другой логики (лезу, плыву, сижу), и трогать её нельзя.
 inline constexpr std::int32_t KCC_MOVE_STATE_CLAMP_MAX     = 4;
-inline constexpr std::uint64_t KCC_CHARACTER_ANIMATION     = 0xE0;  // было 0xF0; lua CharacterAnimation (был ZMl)
+inline constexpr std::uint64_t KCC_CHARACTER_ANIMATION     = 0xE0;  // release 11978 CharacterAnimation reference
 inline constexpr std::uint64_t CHAR_ANIM_PLAYER_BACKREF    = 0x78;
 inline constexpr std::uint64_t CHAR_ANIM_RAGDOLL           = 0x38;
 inline constexpr std::uint64_t RAGDOLL_PELVIS_RIGIDBODY    = 0x20;
-inline constexpr std::uint64_t RAGDOLL_BONES_ARRAY         = 0x88;
+inline constexpr std::uint64_t RAGDOLL_BONES_ARRAY         = 0x90; // m_Bones (Rigidbody[])
 inline constexpr std::uint64_t RAGDOLL_BODYPART_TRANSFORM  = 0x10;
 inline constexpr std::uint64_t IL2CPP_ARRAY_LENGTH         = 0x18;
 
@@ -759,11 +729,11 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 // MineableTree / MineableObjectWithRandomSpawn), each a Mirror.NetworkBehaviour,
 // so the client-side Mirror registry lists all of them:
 //   Mirror.NetworkClient.spawned : Dictionary<uint, NetworkIdentity>
-// The NetworkClient TypeInfo slot is from release 11966 script.json's
+// The NetworkClient TypeInfo slot is from release 11978 script.json's
 // TypeInfoPointers; its static-field access pattern is also checked against the
 // owning class's methods:
-//   ldr x0,[x19] ; ldr x8,[x0,#0xb8] (static_fields) ; ldr x0,[x8,#0x28] (spawned)
-inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xDE9FC60; // release 11966: Mirror.NetworkClient TypeInfo slot
+//   ldr x0,[x19] ; ldr x8,[x0,#0xb8] (static_fields) ; ldr x0,[x8,#0x30] (spawned)
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE66D238; // release 11978: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // было 0x28; перед spawned вставлен handlers(+0x28)
 
 // System.Collections.Generic.Dictionary<uint, NetworkIdentity> (this BCL has no
@@ -819,16 +789,14 @@ inline constexpr std::uint64_t HEALTH_VALUE          = 0x20;
 inline constexpr std::uint64_t VITALS_MAX_HEALTH     = 0x88; // GenericVitals.m_MaxHealth
 
 // ---- Время суток: TOD_Sky (ассет Time Of Day) ------------------------------
-// In dump11966 TOD_Sky is the obfuscated class `lE` (TypeDefIndex 704): its
-// only static field is List<lE> at 0x0 and Cycle is at 0x40. The nested
-// TOD_CycleParameters fields are Hour 0x10, Day 0x14, Month 0x18, Year 0x1C.
-// script.json TypeInfoPointers lists `lE_TypeInfo` at 0xDEA7F10.
-// libil2cpp.so .data spans 0xDC21730..0xE262E70; the scan window below is
-// inside that section and contains the lE slot. day_tod_scan() checks 1 KiB
-// per frame and validates candidates against the list/Cycle/date signature;
-// re-check the range against the next dump's ELF before changing the profile.
-inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xDE90000;
-inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xDEB0000; // includes lE_TypeInfo at 0xDEA7F10
+// In dump11978 TOD_Sky is class `QA` (TypeDefIndex 706): List<QA> is static
+// at 0x0 and Cycle is at 0x40. TOD_CycleParameters fields are Hour 0x10,
+// Day 0x14, Month 0x18, Year 0x1C; script.json places QA_TypeInfo at 0xE66E548.
+// The release 11978 libil2cpp.so .data spans 0xE3D7800..0xEA3C4E0.
+// day_tod_scan() checks 1 KiB per frame and validates candidates against the
+// list/Cycle/date signature, so keep its scan window within this section.
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE660000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xE690000; // includes QA, kiQ and delay-promise TypeInfo slots
 inline constexpr std::uint64_t TOD_SKY_CYCLE      = 0x40; // TOD_Sky.Cycle
 inline constexpr std::uint64_t TOD_CYCLE_HOUR     = 0x10; // TOD_CycleParameters.Hour
 inline constexpr std::uint64_t TOD_CYCLE_DAY      = 0x14;
@@ -950,20 +918,19 @@ enum class MineableEntityType : std::int32_t {
     Rat = 25,                                  // added by this game update
 };
 
-// ---- Team / clan membership (Oxide.PlayerManager, dump.cs) ------------------
-// All three are Mirror SyncVars (they have _Mirror_SyncVarHookDelegate_* twins
-// at 0x378/0x390/0x398), so every client sees them for every player.
-inline constexpr std::uint64_t PLAYER_USER_ID   = 0x298; // string userID; было 0x278
-inline constexpr std::uint64_t PLAYER_TEAM_NAME = 0x2A0; // string teamName; было 0x280
-inline constexpr std::uint64_t PLAYER_CLAN_ID   = 0x2B0; // string clanId; было 0x290
-inline constexpr std::uint64_t PLAYER_CLAN_TAG  = 0x2B8; // string clanTag; было 0x298
+// ---- PlayerManager SyncVars (release 11978 dump.cs) -------------------------
+// User/team/vehicle/seat/clan fields are synced to every client. Their delegate
+// twins are at +0x448..+0x478; the field block moved +0x10 from release 11966.
+inline constexpr std::uint64_t PLAYER_USER_ID   = 0x2A8; // string userID
+inline constexpr std::uint64_t PLAYER_TEAM_NAME = 0x2B0; // string teamName
+inline constexpr std::uint64_t PLAYER_CLAN_ID   = 0x2C0; // string clanId
+inline constexpr std::uint64_t PLAYER_CLAN_TAG  = 0x2C8; // string clanTag
 
-// Vehicles: both are SyncVars (uint netId of the vehicle / index of the seat),
-// zero while the player is on foot. A mounted player stops updating
-// lastSavedPosition, so his box has to come from the rendered transform.
-inline constexpr std::uint64_t PLAYER_VEHICLE_ID = 0x2A8; // uint vehicleID; было 0x288
-inline constexpr std::uint64_t PLAYER_SEAT_ID    = 0x2AC; // uint seatID; было 0x28C
-inline constexpr std::uint64_t PLAYER_ZIPLINE_ID = 0x2CC; // uint ziplineID; 0x2CC
+// Vehicles: SyncVars (uint netId of vehicle / seat index), zero while on foot.
+// A mounted player stops updating lastSavedPosition, so use the rendered transform.
+inline constexpr std::uint64_t PLAYER_VEHICLE_ID = 0x2B8; // uint vehicleID
+inline constexpr std::uint64_t PLAYER_SEAT_ID    = 0x2BC; // uint seatID
+inline constexpr std::uint64_t PLAYER_ZIPLINE_ID = 0x2DC; // uint ziplineID
 
 // ---- World loot containers (Oxide.LootObject : fNZ : Mirror.NetworkBehaviour)
 // Everything openable in the world is a LootObject: road crates, barrels,
@@ -990,25 +957,30 @@ inline constexpr std::uint64_t ITEMPICKUP_AMOUNT      = 0xE0; // int amount
 inline constexpr std::uint64_t GAME_CONTROLLER_NET_IDENTITY_FIELD = 0x8;
 
 // Custom world FOV and first-person model position (VIEWMODEL.md).
-inline constexpr std::uint64_t FPMANAGER_WORLD_FOV_TARGET       = 0x9C; // Oxide_FPManager_Fields.BYu
+inline constexpr std::uint64_t FPMANAGER_WORLD_FOV_TARGET       = 0xAC; // FPManager FOV target (release 11978)
 inline constexpr std::uint64_t FPOBJECT_DRAW_EVENT              = 0x20; // Oxide_FPObject_Fields.Draw
 inline constexpr std::uint64_t FPDRAW_ACTION                    = 0x10; // eDt_Fields.BXi
 inline constexpr std::uint64_t DELEGATE_TARGET                  = 0x20; // System_Delegate_Fields.m_target
 inline constexpr std::uint64_t MULTICAST_DELEGATES              = 0x78; // System_MulticastDelegate_Fields.delegates
-inline constexpr std::uint64_t FPMOTION_OBJECT                  = 0xC8; // Oxide_FPMotion_Fields.BYc
-inline constexpr std::uint64_t FPMOTION_PLAYER                  = 0xE8; // Oxide_FPMotion_Fields.Player
-inline constexpr std::uint64_t TRANSFORMOFFSET_POSITION         = 0x24; // Oxide_TransformOffset_Fields.m_Position
-inline constexpr std::uint64_t TRANSFORMOFFSET_CURRENT_POSITION = 0x44; // Oxide_TransformOffset_Fields.BYE
-inline constexpr std::uint64_t FPMOTION_IDLE_OFFSET             = 0x78; // Oxide_FPMotion_Fields.m_IdleOffset
-inline constexpr std::uint64_t FPMOTION_RUN_OFFSET              = 0x80; // Oxide_FPMotion_Fields.m_RunOffset
-inline constexpr std::uint64_t FPMOTION_RUN_RELOAD_OFFSET       = 0x88; // Oxide_FPMotion_Fields.runReloadOffset
-inline constexpr std::uint64_t FPMOTION_ATTACK_OFFSET           = 0x90; // Oxide_FPMotion_Fields.m_AttackOffset
-inline constexpr std::uint64_t FPMOTION_AIM_OFFSET              = 0x98; // Oxide_FPMotion_Fields.m_AimOffset
-inline constexpr std::uint64_t FPMOTION_LADDER_OFFSET           = 0xA0; // Oxide_FPMotion_Fields.m_OnLadderOffset
-inline constexpr std::uint64_t FPMOTION_JUMP_OFFSET             = 0xA8; // Oxide_FPMotion_Fields.m_JumpOffset
-inline constexpr std::uint64_t FPMOTION_LOOK_OFFSET             = 0xB0; // Oxide_FPMotion_Fields.m_LookOffset
-inline constexpr std::uint64_t FPMOTION_CLOSE_OFFSET            = 0xB8; // Oxide_FPMotion_Fields.m_TooCloseOffset
-inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xD8; // Oxide_FPMotion_Fields.BYH
+// Release 11978 FPMotion: object FPObject +0xD0, player event handler +0x120.
+inline constexpr std::uint64_t FPMOTION_OBJECT                  = 0xD0; // FPObject reference
+inline constexpr std::uint64_t FPMOTION_PLAYER                  = 0x120; // PlayerEventHandler reference
+inline constexpr std::uint64_t TRANSFORMOFFSET_POSITION         = 0x24; // TransformOffset.m_Position
+inline constexpr std::uint64_t TRANSFORMOFFSET_CURRENT_POSITION = 0x44; // TransformOffset current-position cache
+inline constexpr std::uint64_t FPMOTION_IDLE_OFFSET             = 0x40; // m_IdleOffset
+inline constexpr std::uint64_t FPMOTION_RUN_OFFSET              = 0x48; // m_RunOffset
+inline constexpr std::uint64_t FPMOTION_RUN_RELOAD_OFFSET       = 0x50; // runReloadOffset
+inline constexpr std::uint64_t FPMOTION_ATTACK_OFFSET           = 0x58; // m_AttackOffset
+inline constexpr std::uint64_t FPMOTION_AIM_OFFSET              = 0x60; // m_AimOffset
+// Ladder/jump fields no longer exist; alias the aim slot so the viewmodel
+// controller recognizes and safely skips these legacy pose slots.
+inline constexpr std::uint64_t FPMOTION_LADDER_OFFSET           = FPMOTION_AIM_OFFSET;
+inline constexpr std::uint64_t FPMOTION_JUMP_OFFSET             = FPMOTION_AIM_OFFSET;
+inline constexpr std::uint64_t FPMOTION_LOOK_OFFSET             = 0x68; // m_LookOffset
+inline constexpr std::uint64_t FPMOTION_CLOSE_OFFSET            = 0x70; // m_TooCloseOffset
+// No active TransformOffset has been identified; this unconsumed legacy slot
+// names the first TransformOffset after the weapon references in this layout.
+inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xE8;
 
 // Legacy snapshot field; custom hands no longer modify animation speed.
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = 0x20; // Oxide.TransformOffset.m_LerpSpeed

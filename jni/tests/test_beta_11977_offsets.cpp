@@ -1,7 +1,7 @@
 // Пин beta-профиля сборки 11977 (dumpbeta11977.7z).
 //
-// Закрепляет TypeInfo RVAs и отличающиеся от release offsets, сверенные с
-// script.json и dump.cs 11977; также проверяет, что release-профиль не меняется.
+// Закрепляет beta 11977 TypeInfo RVAs и изменённые offsets, сверенные с
+// script.json/dump.cs; проверяет beta selection и возврат к release 11978.
 #include "game_offsets_active.h"
 #include "maps_lookup.h"
 
@@ -12,12 +12,12 @@ int main() {
 
     // --- Релизный профиль не должен пострадать ---
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xDEA09F8);
-    assert(go_active::PLAYER_USER_ID == 0x298);
-    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x298);
-    assert(go_active::KCC_MOVE == 0x13C);
-    assert(go_active::FPMOTION_IDLE_OFFSET == 0x78);
-    assert(go_active::PLAYERWEAPON_VIEW == 0xE8);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE66DEE8);
+    assert(go_active::PLAYER_USER_ID == 0x2A8);
+    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x2B0);
+    assert(go_active::KCC_MOVE == 0x1AC);
+    assert(go_active::FPMOTION_IDLE_OFFSET == 0x40);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
 
     go_active::Select(GameVersion::Beta);
 
@@ -181,22 +181,26 @@ int main() {
 
     // --- Возврат в релизный профиль обязан восстановить всё ---
     go_active::Select(GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xDEA09F8);
-    assert(go_active::PLAYER_USER_ID == 0x298);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE66DEE8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE66DEB0);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE669190);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE66D238);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE672A10);
+    assert(go_active::PLAYER_USER_ID == 0x2A8);
     assert(go_active::PLAYER_UKX == 0x260);
     assert(go_active::UKX_MODEL_INFO == 0x10);
-    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x298);
+    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x2B0);
     assert(go_active::EVENT_HANDLER_HEALTH == 0x98);
-    assert(go_active::KCC_MOVE == 0x13C);
-    assert(go_active::KCC_VISIBILITY == 0x298);
-    assert(go_active::KCC_MOTOR_ENABLED == 0x29D);
-    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x350);
+    assert(go_active::KCC_MOVE == 0x1AC);
+    assert(go_active::KCC_VISIBILITY == 0x308);
+    assert(go_active::KCC_MOTOR_ENABLED == 0x30D);
+    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C0);
     assert(go_active::VITALS_MIN_FALL_SPEED == 0xC0);
     assert(go_active::KCC_MOVE_BASE_VELOCITY_Y == 0x3C);
-    assert(go_active::FPMOTION_IDLE_OFFSET == 0x78);
-    assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0x9C);
-    assert(go_active::PLAYERWEAPON_VIEW == 0xE8);
-    assert(go_active::RAGDOLL_BONES_ARRAY == 0x88);
+    assert(go_active::FPMOTION_IDLE_OFFSET == 0x40);
+    assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0xAC);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
+    assert(go_active::RAGDOLL_BONES_ARRAY == 0x90);
 
     // Split APK mapping fallback (when extractNativeLibs="false" maps libil2cpp.so
     // directly from split_config.arm64_v8a.apk or base.apk!/lib/arm64-v8a/libil2cpp.so

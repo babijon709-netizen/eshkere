@@ -46,13 +46,13 @@ constexpr float kAckAlpha  = 0.25f;   // сглаживание скорости
 enum {
     WHY_OK = 0,
     WHY_NO_STATICS,      // нет статиков GameControllerBase
-    WHY_NO_HANDLER,      // нет PlayerInputHandler (статика <qSt>)
+    WHY_NO_HANDLER,      // нет PlayerInputHandler в статическом поле контроллера
     WHY_HANDLER_OWNER,   // хендлер ввода принадлежит другому игроку
     WHY_NO_PLAYER,       // нет локального игрока
     WHY_NO_EVENT,        // нет PlayerEventHandler у локального игрока
     WHY_NO_CHANNEL,      // не сошлась раскладка канала движения (Vsf)
     WHY_WRITE,           // запись не прошла (память отвалилась)
-    WHY_NO_SPRINT,       // не сошлась цепочка кнопки бега (LD/InputAction)
+    WHY_NO_SPRINT,       // не сошлась цепочка кнопки бега (collection/InputAction)
 };
 
 // Раскладка Nullable<Vector2>: основной вариант (hasValue по +0, значение по
@@ -314,32 +314,28 @@ Target resolve(int candidate) {
 }
 
 // --- бег -------------------------------------------------------------------
-// Персонаж бежит, только когда игра считает кнопку бега нажатой: оценщик
-// спринта хендлера (glv, RVA 0x67E3574, зовётся из glI на 0x67E47D4) каждый
-// кадр переписывает PlayerInput.Sprint (хендлер+0x59) как «стойка стика &&
-// кнопка_бега», где кнопка — InputAction (LD+0x48). Отклонение стика бег НЕ
-// включает: оно лишь масштабирует скорость (и при |x| >= 0.9 или y <= -0.1
-// игра бег ещё и запрещает). Поэтому состояние кнопки ведём в памяти: пишем
-// фазу акции в TriggerState (InputActionPhase.Started), дальше игра сама
-// ставит PlayerInput.Sprint, а контроллер персонажа (KCC, RVA 0x7B95830)
-// зеркалит его в PlayerEventHandler.Run (Vsh+0x280). Если фазу игра не
-// подхватила за kSprintMissFrames — пишем и сам байт PlayerInput.Sprint, тот
-// же, что пишет оценщик; это страховка от сброса/переезда акции, включается
-// не более одного раза за ходьбу.
+// Поведение и порядок вызовов восстановлены по native disassembly release
+// 11966; указанные там имена методов/RVA не являются адресами release 11978.
+// Предыдущий оценщик каждый кадр переписывал PlayerInput.Sprint (handler+0x59)
+// по гейту стика и sprint InputAction. Порог |x| >= 0.9 или y <= -0.1 запрещал
+// бег, поэтому фазу кнопки ведём в TriggerState (InputActionPhase.Started).
+// В release 11978 dump.cs подтверждает PlayerInputHandler.input-actions +0x98
+// (Zp), PlayerInput.Sprint +0x59 и PlayerEventHandler kAu.Run +0x288.
+// Если игра не подхватит фазу за kSprintMissFrames, ведём сам байт Sprint как
+// запасной путь; он ограничен одним включением за ходьбу.
 constexpr int   kSprintMissFrames = 30;     // ~0.5 с
-constexpr float kSprintGateX      = 0.9f;   // порог glv: |x| >= 0.9 — бег запрещён
-constexpr float kSprintGateY      = -0.1f;  // порог glv: y <= -0.1 — бег запрещён
+constexpr float kSprintGateX      = 0.9f;   // 11966 trace: |x| >= 0.9 blocks sprint
+constexpr float kSprintGateY      = -0.1f;  // 11966 trace: y <= -0.1 blocks sprint
 
-// Цепочка кнопки бега: хендлер -> LD -> InputAction -> TriggerState. Раскладка
-// Input System не наша, поэтому перед КАЖДОЙ записью сверяем имена классов,
-// диапазон индекса, ненулевые указатели и фазу в пределах enum (см. sprint_alive).
+// Цепочка кнопки бега: хендлер -> input-action collection -> InputAction ->
+// TriggerState. Перед каждой записью сверяем классы, индекс и фазу enum.
 struct SprintTarget {
     bool     ok = false;
     int      why = WHY_NO_SPRINT;
     uint64_t handler = 0;
     uint64_t klass = 0;
-    uint64_t ld = 0;         // обёртка нового Input System у хендлера
-    uint64_t action = 0;     // InputAction кнопки бега (то, что читает glv)
+    uint64_t ld = 0;         // generated input-action collection у хендлера
+    uint64_t action = 0;     // sprint InputAction из collection
     uint64_t phase = 0;      // байт фазы в TriggerState — куда пишем
 };
 
@@ -418,9 +414,9 @@ bool sprint_alive() {
 }
 
 // Раз в кадр: подхватила ли игра нашу фазу. Признак — PlayerInput.Sprint,
-// который оценщик спринта переписывает сам. Ноль там законен, когда стойка
-// стика бег запрещает (|x| >= 0.9 или y <= -0.1 — пороги из glv), поэтому
-// «промахом» считаем только кадры с разрешающей стойкой.
+// который оценщик переписывает сам. Ноль там законен, когда стойка стика
+// запрещает бег (пороги из release 11966 trace), поэтому «промахом» считаем
+// только кадры с разрешающей стойкой.
 void sprint_check() {
     if (!s_sprint_on || s_sprint_direct) { s_sprint_miss = 0; return; }
     if (!(fabsf(s_x) < kSprintGateX && s_y > kSprintGateY)) { s_sprint_miss = 0; return; }
@@ -555,12 +551,11 @@ bool sprint(bool on) {
         s_sprint_why = why;
         return false;
     }
-    // Оценщик спринта вызывается ДО применения слота A (+0x6C), поэтому видит
-    // нулевой вектор стика и ставит PlayerInput.Sprint = 0. Сразу после слота A
-    // игра проверяет Nullable<bool>
-    // по смещению +0x84 (в beta 11977 это PlayerInputHandler.cGP; hasValue
-    // на +0x84, value на +0x85) и пишет value & 1 в PlayerInput.Sprint (+0x59),
-    // откуда KCC включает eventHandler->Run.
+    // По release 11966 trace оценщик вызывался до применения слота A (+0x6C),
+    // а затем игра проверяла Nullable<bool> здесь: +0x84 (release 11978:
+    // PlayerInputHandler.KVQ; beta 11977: cGP; hasValue +0x84, value +0x85).
+    // Текущий dump подтверждает эту раскладку; value & 1 попадает в
+    // PlayerInput.Sprint (+0x59), а kAu.Run в release 11978 расположен на +0x288.
     const uint64_t ovr_addr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;
     const unsigned char v = on ? 1u : 0u;
     const unsigned char want_ovr[2] = { v, v };

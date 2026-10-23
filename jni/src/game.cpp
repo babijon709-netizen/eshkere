@@ -9621,11 +9621,9 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
 }
 
 // Сброс таймеров попадания локального игрока.
-// Release: Nt.RWf ([PlayerManager + 0x348] + 0x18); Nt::lsM (0x5CFE33C)
-// пишет Time.time + 2.0f, Nt::lsh (0x5CFE3C8) проверяет этот срок, а NearbyPlayer
-// переносит результат в MarkerData+0x73 и дальше в OcclusionModule.
-// Beta 11977: PlayerManager.cFm — Yf (+0x358); Yf has dictionaries at +0x10
-// and +0x18. The +0x18 hit-map selection remains a beta-profile assumption.
+// Release 11978: PlayerManager.lE hit tracker is at +0x358; lE has
+// dictionaries at +0x10 and +0x18. Beta 11977's Yf tracker is also at +0x358
+// with the same dictionary layout; +0x18 is the hit-expiry map in both profiles.
 static void expire_local_player_hit_timers(uint64_t local_player) {
     if (!valid_obj(local_player)) return;
     const uint64_t nt = rd_ptr(local_player + PLAYER_HIT_TRACKER);
@@ -9662,9 +9660,10 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
     }
 }
 
-// Поиск статического класса hMj (TypeDefIndex: 6280, RVA 0xDEA6BD8 в Release 11966)
-// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98). В Beta 11977 слот указывает на
-// IWt (TypeDefIndex: 6610), его 25 LayerMask полей проверяются той же сигнатурой.
+// Release 11978 HMJ_TYPEINFO_RVA points to kiQ (TypeDefIndex: 6610); beta
+// 11977 points to IWt at the same TypeDefIndex. Both candidates expose 25 static
+// LayerMask fields, accepted only when the verified signature matches. Legacy
+// release 11966 candidates were hMj (6280) and hMD (6279).
 // Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
 // ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
@@ -9686,9 +9685,9 @@ static bool try_extract_wall_masks_from_klass(uint64_t klass,
     int32_t fields[25]{};
     if (rd_buf(statics, fields, sizeof(fields)) &&
         vis_check::extract_hmj_solid_wall_mask(fields, out_solid_mask, out_strip_mask)) {
-        // Очищаем также маску препятствий AimAssist (hMj + 0x34 = f[13], читаемую
-        // в hwR::ohb на 0x65003CC / 0x6500600) от слоёв Deployed (+0x10), Vehicle (+0x54),
-        // Water (+0x18) и FirstPerson (+0x24), оставляя только твёрдые стены
+        // Очищаем также маску препятствий AimAssist (static LayerMask candidate
+        // +0x34 = f[13], historically hMj) от слоёв Deployed (+0x10),
+        // Vehicle (+0x54), Water (+0x18) и FirstPerson (+0x24), оставляя только твёрдые стены
         // (Default | Construction | Terrain) и коллайдеры целей (ProxyEntity | Entity).
         const int32_t desired_hwr_mask = out_solid_mask | fields[7] | fields[8];
         if (desired_hwr_mask > 0 && fields[13] != desired_hwr_mask) {
@@ -10744,9 +10743,9 @@ static void revalidate_dead_direct_position(const std::vector<uint64_t>& players
 
 static void note_direct_position_health(const std::vector<uint64_t>& players,
                                         const std::vector<char>& sources) {
-    // Beta 11977 dump.cs places lastSavedPosition at 0x1F4 and lastDeathPosition
-    // at 0x200; neither is marked SyncVar. Keep lastDeathPosition out of direct
-    // position scans and do not switch g_player_position_offset to that field.
+    // Release 11978 and beta 11977 dumps place lastSavedPosition at 0x1F4 and
+    // lastDeathPosition at 0x200; neither is marked SyncVar. Keep lastDeathPosition
+    // out of direct position scans and do not switch g_player_position_offset to it.
     (void)players;
     (void)sources;
     s_direct_dead_frames = 0;

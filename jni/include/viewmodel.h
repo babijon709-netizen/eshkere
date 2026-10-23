@@ -214,8 +214,9 @@ struct SkinEntryView {
 // TooManySkins (§4.23) — не «нет скинов»: массив длиннее предела списка,
 // лечится поднятием предела, а не поиском отсутствующих скинов.
 // Детальная расшифровка для CLI и разработчика —
-// skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь,
-// чтобы меню и лог брали одну и ту же формулировку, а не две свои.
+// skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь —
+// одна укрупнённая причина на меню, лог и CLI, но формулировки у них свои:
+// меню говорит с пользователем (SkinBlockUi в menu.cpp), лог — с разработчиком.
 enum class SkinBlock : int {
     None = 0,        // порядок, скин применён
     NoPlayer,        // нет локального игрока
@@ -250,8 +251,10 @@ inline SkinBlock skin_block(int stage) {
         default:                                  return SkinBlock::NoPlayer;
     }
 }
-// Русские строки: меню пропускает их через XS() (перевод в lang_tables.inc),
-// автолог пишет как есть — весь остальной вывод чита тоже на русском.
+// Технические строки для автолога и CLI — пишутся как есть (весь служебный
+// вывод чита на русском). Меню их НЕ показывает: у SkinBlockUi (menu.cpp)
+// свои пользовательские формулировки — без вьюх, оффсетов и стадий
+// (KERNEL.md §6).
 inline const char* skin_block_text(SkinBlock block) {
     switch (block) {
         case SkinBlock::None:        return "Применено";

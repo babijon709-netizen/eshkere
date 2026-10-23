@@ -647,7 +647,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.viewmodel.skin_level = viewmodel::bounded((int)skin.level, 0,
                                                           go_active::SKIN_LEVEL_MAX, 0);
     }
-    g_state.sl_skin_index = {}; g_state.sl_skin_level = {};
+    g_state.sl_skin_level = {};
     g_state.esp_turrets = g_state.esp_backpacks = g_state.esp_sleepers = false;
     g_state.esp_cupboards = false;
     // Поле aim_lead_ms в старых прицепах читается только как часть формата:

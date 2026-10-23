@@ -100,6 +100,8 @@ bool SettingsHeader(const char* id, const char* lbl, const char* summary = nullp
                     bool defaultOpen = false, bool* enabled = nullptr,
                     float anim = 0.f, bool* changed = nullptr);
 bool ChoiceRow(const char* id, int* value, const char* const* labels, int count);
+// Строка выбираемого списка: имя, метка справа, галочка у выбранной.
+bool SelectRow(const char* id, const char* lbl, const char* tag, bool selected, bool last = false);
 
 void DrawSheet(float dt, ImVec2 menuPos, float WW, float WH);
 void DrawPopover(float dt, ImVec2 menuPos, float WW, float WH);

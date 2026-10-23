@@ -580,6 +580,60 @@ bool ChoiceRow(const char* id, int* value, const char* const* labels, int count)
     return changed;
 }
 
+// Строка выбираемого списка (меню скинов): имя слева, необязательная метка
+// справа, у выбранной строки — галочка акцентом. Нажатие на невыбранную строку
+// выбирает её: выбор сразу виден по галочке, тост не нужен.
+bool SelectRow(const char* id, const char* lbl, const char* tag, bool selected, bool last) {
+    auto* dl  = ImGui::GetWindowDrawList();
+    auto* fn  = ImGui::GetFont();
+    float avW = ImGui::GetContentRegionAvail().x;
+    const float rowH = Layout::RowH;
+    const float inset = Layout::Inset, padX = Layout::PadX;
+    const auto pos = ImGui::GetCursorScreenPos();
+    const float fs = ImGui::GetFontSize();
+
+    ImGui::InvisibleButton(id, {avW, rowH});
+    if (!DrawRectVisible(dl, pos, {pos.x + avW, pos.y + rowH})) return false;
+    const bool blocked = (g_pop.visible && !g_pop.closing) || g_sheet.visible;
+    bool picked = false;
+    if (WasTappedHere() && !blocked && !IsScrollDragging() && !g_input.touchConsumed && !selected) {
+        picked = true;
+        g_input.touchConsumed = true;
+        PlaySound(SND_CLICK);
+    }
+
+    const float cX = pos.x + inset, cW = avW - inset * 2.f;
+    const float cy = pos.y + rowH * 0.5f;
+
+    // Галочка выбранной строки — акцентом у правого края.
+    const float chkW = selected ? 36.f : 0.f;
+    if (selected) {
+        const float x = cX + cW - padX - 14.f;
+        dl->AddLine({x - 9.f, cy + 1.f}, {x - 4.f, cy + 6.f}, C::U(C::Acc()), 2.6f);
+        dl->AddLine({x - 4.f, cy + 6.f}, {x + 6.f, cy - 6.f}, C::U(C::Acc()), 2.6f);
+    }
+    // Метка (например, «Перекраска») — мелким тусклым слева от галочки.
+    float tagW = 0.f;
+    if (tag && tag[0]) {
+        const auto tsz = fn->CalcTextSizeA(fs * 0.95f, FLT_MAX, 0, tag);
+        tagW = tsz.x;
+        dl->AddText(fn, fs * 0.95f, {cX + cW - padX - chkW - 12.f - tagW, cy - tsz.y * 0.5f},
+                    C::U(C::Dim()), tag);
+    }
+    const float textX = cX + padX;
+    const float textMaxX = cX + cW - padX - chkW - (tagW > 0.f ? tagW + 24.f : 16.f);
+    dl->PushClipRect({textX, pos.y}, {ImMax(textX + 1.f, textMaxX), pos.y + rowH}, true);
+    const auto nsz = fn->CalcTextSizeA(fs * 1.15f, FLT_MAX, 0, lbl);
+    dl->AddText(fn, fs * 1.15f, {textX, cy - nsz.y * 0.5f},
+                C::U(selected ? C::Acc() : C::Txt()), lbl);
+    dl->PopClipRect();
+
+    if (!last && g_state.ui_show_sep)
+        dl->AddLine({cX + padX, pos.y + rowH - 0.5f}, {cX + cW - padX, pos.y + rowH - 0.5f},
+                    C::U(C::Sep()), 0.8f);
+    return picked;
+}
+
 
 static void DrawExitButtons(ImDrawList* fg, ImFont* fn, float fs, float alpha,
                              float b1X, float b2X, float bW, float bY, float btnH,

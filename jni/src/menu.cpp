@@ -14,6 +14,8 @@
 #include "str.h"
 #include "esp_draw.h"
 #include "aim.h"
+#include "weapon_name.h"    // читаемое имя ствола для панели скинов
+#include "skin_name.h"      // читаемое имя скина (чистка технического id)
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -105,24 +107,25 @@ static void CalibrationRow(const char* id, const char* label, int mode, const ch
     dl->AddLine({right - 3.f, cy}, {right - 8.f, cy + 5.f}, C::U(C::Acc()), 2.f);
 }
 
-// Вердикт скинченджера для меню. skin_block_text() (viewmodel.h) отдаёт тот же
-// текст, но голой строкой — для лога и CLI, где перевод не нужен. Здесь нужен
-// XS(), а он раскрывается в constexpr-лямбду и принимает ТОЛЬКО литерал, поэтому
-// маппинг перечислен вручную и литералы совпадают с skin_block_text() символ в
-// символ: одна русская строка — одна запись в lang_tables.inc.
+// Тост скинченджера для меню — на языке пользователя: без имён классов,
+// оффсетов и вьюх. skin_block_text() (viewmodel.h) держит технические
+// формулировки для skin.log и CLI; меню и лог расходятся СОЗНАТЕЛЬНО
+// (KERNEL.md §6). XS() раскрывается в constexpr-лямбду и принимает ТОЛЬКО
+// литерал, поэтому маппинг перечислен вручную: одна русская строка — одна
+// запись в lang_tables.inc.
 static const char* SkinBlockUi(viewmodel::SkinBlock block) {
     switch (block) {
-        case viewmodel::SkinBlock::NoPlayer:    return XS("Нет локального игрока");
+        case viewmodel::SkinBlock::NoPlayer:    return XS("Игрок не найден");
         case viewmodel::SkinBlock::NoWeapon:    return XS("Оружие не найдено");
         case viewmodel::SkinBlock::EmptyHands:  return XS("В руках пусто");
-        case viewmodel::SkinBlock::NoItemData:  return XS("Нет данных предмета");
+        case viewmodel::SkinBlock::NoItemData:  return XS("Предмет не распознан");
         case viewmodel::SkinBlock::NoSkins:     return XS("У предмета нет скинов");
-        case viewmodel::SkinBlock::BadIndex:    return XS("Индекс не подходит стволу");
-        case viewmodel::SkinBlock::Unreadable:  return XS("WeaponPiece не читается");
-        case viewmodel::SkinBlock::WrongLayout: return XS("Оффсеты WeaponPiece не от этого билда");
-        case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
-        case viewmodel::SkinBlock::Quarantined: return XS("Ствол в карантине: скин ломал сборку вьюхи");
-        case viewmodel::SkinBlock::TooManySkins: return XS("У предмета больше скинов, чем вмещает список");
+        case viewmodel::SkinBlock::BadIndex:    return XS("Скин не подходит этому оружию");
+        case viewmodel::SkinBlock::Unreadable:  return XS("Скин не применился — перезапусти игру и чит");
+        case viewmodel::SkinBlock::WrongLayout: return XS("Версия игры не поддерживается — жди обновления чита");
+        case viewmodel::SkinBlock::WriteFailed: return XS("Скин не применился — попробуй ещё раз");
+        case viewmodel::SkinBlock::Quarantined: return XS("Скин ломал игру — он временно отключён");
+        case viewmodel::SkinBlock::TooManySkins: return XS("У предмета слишком много скинов");
         case viewmodel::SkinBlock::None:
         default:                                return XS("Скин применён");
     }
@@ -847,20 +850,28 @@ float TabContent(int tab, float dt, float cW) {
                 esp_viewmodel_tick(vm);
         }
         // ---- Скины -------------------------------------------------------
-        // Скинченджер пишет ИНДЕКС в обе копии Oxide.WeaponPiece (SyncVar и
-        // рабочую +0xC0): игра сама берёт по нему SkinData из
-        // ItemData.skinData[] этого предмета и собирает визуал на своём
-        // событии — холстер/дроу пересобирает из рабочей копии (pMZ ->
-        // FPManager.Kxi -> CreateFPWeapon, skin.log v13), RPC насадок/модов
-        // читает SyncVar, спавн/подбор ствола идёт через OnStartClient
-        // (см. skin_changer_memory.h, «КТО ПЕРЕСОБИРАЕТ»).
-        // Список — живой, из памяти игры: глобальной таблицы скинов не
-        // существует, индекс у каждого предмета свой.
+        // Скинченджер пишет ИНДЕКС в копии Oxide.WeaponPiece (SyncVar и
+        // рабочую) и в Item (skin/skinLevel, включая кэш дроу pw+0x120):
+        // игра сама берёт по нему SkinData из ItemData.skinData[] этого
+        // предмета и собирает визуал на своём событии — холстер/дроу, RPC
+        // насадок/модов, спавн/подбор ствола (см. skin_changer_memory.h,
+        // «КТО ПЕРЕСОБИРАЕТ»). Список — живой, из памяти игры: глобальной
+        // таблицы скинов не существует, индекс у каждого предмета свой.
+        // Панель — пользовательская: технические id («deagle.skin.rusty.event»)
+        // чистятся в читаемые имена (skin_name.h), ствол подписывается таблицей
+        // weapon_name.h, диагностика живёт в тостах и skin.log — статусных
+        // строк про вьюхи и ассеты в меню нет (KERNEL.md §6).
         SHdr(XS("Скины"));
         {
             viewmodel::SkinEntryView skinEntries[viewmodel::kSkinEntryMax];
             const viewmodel::SkinUiInfo skinUi = esp_skin_ui();
             const int skinCount = esp_skin_entries(skinEntries, viewmodel::kSkinEntryMax);
+            // Читаемое имя ствола — как в подписях ESP: игровой shortName
+            // («dmr», «pistol_deagle») через таблицу weapon_name.h.
+            char weaponLabel[64];
+            snprintf(weaponLabel, sizeof(weaponLabel), "%s", skinUi.weapon);
+            if (weaponLabel[0])
+                weaponname::canonicalize(weaponLabel, sizeof(weaponLabel), lang::english());
             char skinSummary[192];
             if (!vm.skin_enabled)
                 snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Выкл"));
@@ -868,14 +879,13 @@ float TabContent(int tab, float dt, float cW) {
                 snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Скинов нет"));
             else {
                 const int sel = ImClamp(vm.skin_index, 0, skinCount - 1);
-                const viewmodel::SkinEntryView& e = skinEntries[sel];
-                snprintf(skinSummary, sizeof(skinSummary), "%s%s%s · %s",
-                         skinUi.weapon[0] ? skinUi.weapon : "",
-                         skinUi.weapon[0] ? ": " : "",
-                         e.id[0] ? e.id : XS("Скин"),
-                         !viewmodel::skin_kind_identified(e.kind) ? XS("тип?")
-                         : viewmodel::skin_kind_is_object(e.kind) ? XS("модель")
-                                                                  : XS("перекраска"));
+                char selName[96], pos[8];
+                snprintf(pos, sizeof(pos), "%d", sel + 1);
+                if (!skinname::humanize(skinEntries[sel].id, skinEntries[sel].base_id,
+                                        selName, sizeof(selName)))
+                    snprintf(selName, sizeof(selName), XS("Скин %s"), pos);
+                snprintf(skinSummary, sizeof(skinSummary), "%s%s%s",
+                         weaponLabel, weaponLabel[0] ? ": " : "", selName);
             }
             if (SettingsHeader("##misc_skins", XS("Скинченджер"), skinSummary,
                                false, &vm.skin_enabled, g_state.a_skin)) {
@@ -887,56 +897,60 @@ float TabContent(int tab, float dt, float cW) {
                 if (vm.skin_index < 0) vm.skin_index = 0;
                 const int levels = (n > 0) ? ImMax(1, skinEntries[vm.skin_index].levels) : 1;
                 if (vm.skin_level >= levels) vm.skin_level = levels - 1;
-
-                const int sliders = 1 + (levels > 1 ? 1 : 0);
-                CardBg(Layout::SliderH * (float)sliders);
                 const int oldIndex = vm.skin_index, oldLevel = vm.skin_level;
 
-                float indexValue = (float)vm.skin_index;
-                SliderRow("##skin_index", XS("Скин"), &indexValue, 0.f,
-                          (float)(n > 1 ? n - 1 : 1), "#%.0f", false, true,
-                          g_state.sl_skin_index, dt);
-                vm.skin_index = ImClamp((int)(indexValue + 0.5f), 0, n > 0 ? n - 1 : 0);
-                if (levels > 1) {
-                    float levelValue = (float)vm.skin_level;
-                    SliderRow("##skin_level", XS("Уровень"), &levelValue, 0.f,
-                              (float)(levels - 1), "%.0f", false, false,
-                              g_state.sl_skin_level, dt);
-                    vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
+                if (n <= 0) {
+                    // Пустой список — одна понятная строка вместо слепого «#0».
+                    CardBg(Layout::RowH);
+                    auto* dlS = ImGui::GetWindowDrawList();
+                    auto* fnS = ImGui::GetFont();
+                    const float fsS = ImGui::GetFontSize() * 1.15f;
+                    const auto pS = ImGui::GetCursorScreenPos();
+                    dlS->AddText(fnS, fsS,
+                                 {pS.x + Layout::Inset + Layout::PadX,
+                                  pS.y + (Layout::RowH - fsS) * 0.5f},
+                                 C::U(C::Dim()), XS("В руках нет предмета со скинами"));
+                    ImGui::Dummy({ImGui::GetContentRegionAvail().x, Layout::RowH});
+                } else {
+                    // Выбор скина — именованный список: пользователь видит,
+                    // что выбирает. Метка «Перекраска» предупреждает, что
+                    // скин меняет только материал, а не модель.
+                    CardBg(Layout::RowH * (float)n + (levels > 1 ? Layout::SliderH : 0.f));
+                    for (int i = 0; i < n; ++i) {
+                        const viewmodel::SkinEntryView& e = skinEntries[i];
+                        char rowName[96], pos[8], rowId[24];
+                        snprintf(pos, sizeof(pos), "%d", i + 1);
+                        if (!skinname::humanize(e.id, e.base_id, rowName, sizeof(rowName)))
+                            snprintf(rowName, sizeof(rowName), XS("Скин %s"), pos);
+                        snprintf(rowId, sizeof(rowId), "##skin_pick%d", i);
+                        const char* tag =
+                            (e.kind == viewmodel::SkinKind::WeaponRecolor ||
+                             e.kind == viewmodel::SkinKind::EquipRecolor)
+                                ? XS("Перекраска") : nullptr;
+                        if (SelectRow(rowId, rowName, tag, vm.skin_index == i,
+                                      i == n - 1 && levels <= 1))
+                            vm.skin_index = i;
+                    }
+                    if (levels > 1) {
+                        float levelValue = (float)vm.skin_level;
+                        SliderRow("##skin_level", XS("Уровень"), &levelValue, 0.f,
+                                  (float)(levels - 1), "%.0f", true, false,
+                                  g_state.sl_skin_level, dt);
+                        vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
+                    }
                 }
 
-                // Состояние, которое на устройстве отвечает на «применилось ли»:
-                // пока FP-вьюха собрана из другого индекса, картинка старая.
-                char skinLine[192];
-                if (n <= 0)
-                    snprintf(skinLine, sizeof(skinLine), "%s",
-                             XS("В руках нет предмета со скинами"));
-                else {
-                    // «Ассет загружен» для моделей — это живой handle визуала
-                    // (skinVisualHandle._model). У перекрасок handle не
-                    // появляется вовсе, там признак один: запрашивался ли
-                    // материал (AssetReference.m_Operation), то есть ready.
-                    // Показывать перекраске «ассет не загружен» — врать.
-                    // А если тип не распознан вовсе (слот TypeInfo не совпал —
-                    // база не от живого образа, — и имя класса не прочлось),
-                    // то ready измерить нечем, и врать нельзя уже про тип.
-                    const viewmodel::SkinEntryView& sel = skinEntries[vm.skin_index];
-                    const bool identified = viewmodel::skin_kind_identified(sel.kind);
-                    const bool recolor = sel.kind == viewmodel::SkinKind::WeaponRecolor ||
-                                         sel.kind == viewmodel::SkinKind::EquipRecolor;
-                    snprintf(skinLine, sizeof(skinLine), "%s: %s · %s: %s",
-                             XS("Вьюха"), skinUi.fp_stale ? XS("старая") : XS("собрана"),
-                             !identified ? XS("Тип") : recolor ? XS("Материал") : XS("Ассет"),
-                             !identified ? XS("не распознан")
-                             : recolor ? (sel.ready ? XS("запрашивался") : XS("не запрашивался"))
-                                     : (skinUi.handle_live ? XS("загружен") : XS("не загружен")));
-                }
-                SHdr(skinLine, 4.f);
+                // Единственная подсказка панели: скин применится, когда
+                // оружие снова окажется в руках — пересборка картинки это
+                // событие игры (убрал/достал), а не покадровый процесс.
+                if (vm.skin_enabled && n > 0 && skinUi.fp_stale)
+                    SHdr(XS("Убери и достань оружие — скин применится"), 4.f);
 
-                // Вердикт одной строкой и тост на его СМЕНУ: диагностика
-                // должна приходить сама, а не через команду в терминале. Тот же
-                // текст пишет skin_log.h в <каталог конфигов>/skin.log, поэтому
-                // строка в меню и лог не расходятся.
+                // Диагностика состояния — тостом на СМЕНУ укрупнённой причины:
+                // приходит сама, без команд в терминале. Формулировки —
+                // пользовательские (SkinBlockUi); технические подробности
+                // (стадии, копии, сырые байты) пишет в skin.log skin_log.h —
+                // языком skin_block_text() (viewmodel.h).
                 const viewmodel::SkinBlock skinBlock = viewmodel::skin_block(skinUi.stage);
                 static viewmodel::SkinBlock skinToasted = viewmodel::SkinBlock::None;
                 if (skinBlock != skinToasted) {
@@ -944,74 +958,6 @@ float TabContent(int tab, float dt, float cW) {
                         skinToasted != viewmodel::SkinBlock::None)
                         ShowToast(SkinBlockUi(skinBlock));
                     skinToasted = skinBlock;
-                }
-                // Ассет не запрашивался — не сбой записи и не повод гнать
-                // пользователя в магазин: докачка автоматическая — первая же
-                // сборка вьюхи сама ставит недостающий ассет в очередь игры
-                // (hbB.VkF -> Vkp -> обновление каталога; Tick -> VkX ->
-                // Vkl/Vkn -> приоритетная очередь hbw; ретрай плейсхолдера
-                // каждые 250 мс — Vkh -> VkM; KERNEL.md §4.16). Вердикт
-                // поэтому про ожидание сборки, а не про ручную закачку.
-                // НО «нет ассета» —
-                // утверждение, а не измерение, когда тип не распознан: ready
-                // для Unknown/Other не читается вовсе, и объявлять скин
-                // отсутствующим по нечитаемому типу — тот же класс ошибки, что
-                // «поле скина не читается» на здоровом билде (KERNEL.md §4.13).
-                // Тип не распознаётся, когда база libil2cpp привязана не к
-                // живому образу (перезапуск игры через exec, старый
-                // «(deleted)» образ, статика NULL во время загрузки), —
-                // лечится перезапуском игры и чита (KERNEL.md §4.14).
-                const char* skinVerdict =
-                    (skinBlock != viewmodel::SkinBlock::None) ? SkinBlockUi(skinBlock)
-                    : (!vm.skin_enabled)                      ? XS("Скины: включите тумблер")
-                    : (n > 0 && !viewmodel::skin_kind_identified(skinEntries[vm.skin_index].kind))
-                                          ? XS("Тип скина не распознан — перезапустите игру и чит")
-                    // Перекраска — легальная строка списка, но модель она не
-                    // меняет (материал), и пользователь об этом узнаёт только
-                    // из лога. Устройство показало: раз за разом выбирают
-                    // именно recolor и ждут смены модели.
-                    : (n > 0 && !viewmodel::skin_kind_is_object(skinEntries[vm.skin_index].kind))
-                                          ? XS("Это перекраска — материал, а не модель")
-                    : (skinUi.fp_stale)   ? XS("Скин записан — убери и достань ствол (пересборка на дроу)")
-                    : (n > 0 && !skinUi.handle_live)
-                                          ? XS("Вьюха собрана — ассет докачивается сам (нужен интернет)")
-                                          : XS("Скин применён");
-                SHdr(skinVerdict, 4.f);
-
-                // §4.22: чит починил сломанную сборку вьюхи — пользователь
-                // обязан узнать об этом из меню, без команд в терминале. Сам
-                // сброс _currentWeapon вьюху не пересобирает: пересборка —
-                // событие игры (холстер/дроу), поэтому строка говорит, что
-                // делать. Карантин отдельной строки не просит: пока он
-                // действует на этом стволе, вердикт выше и есть «в карантине»,
-                // а на чужом стволе чужой карантин не мешает.
-                if (skinUi.fp_build_resets > 0)
-                    SHdr(XS("Игра уронила сборку вьюхи — чит сбросил: убери и достань ствол"), 4.f);
-
-                // §4.24: сборка вьюхи встала — наблюдение идёт. Порог 10 с:
-                // здоровые окна сборки (<1 с на каждом дроу) меню не шумят, а
-                // долгое зависание пользователь видит без терминала и знает,
-                // что чит лечит сам (панцирь сбросится, детали уйдут в лог).
-                if (skinUi.shell_watch >= 10)
-                    SHdr(XS("Вьюха полусобрана — чит наблюдает: докачка достроит, отравление сбросит"), 4.f);
-                else if (skinUi.stuck_seconds >= 10)
-                    SHdr(XS("Вьюха не собирается — игра уронила сборку: подробности в skin.log"), 4.f);
-                // §4.25: дроу не доходит до сборки — все сигналы чита «применено»,
-                // а вьюха мертва (Number в руках давно разошёлся с uzL). Форму
-                // лечит только перезайти: сбрасывать нечего, резолв здоров.
-                else if (skinUi.stall_seconds >= 10)
-                    SHdr(XS("Дроу не доходит до сборки — перезайди на сервер (подробности в skin.log)"), 4.f);
-
-                // «Переписать обе копии» — не пересборка вьюхи (её делает игра
-                // на своих событиях: холстер/дроу, RPC насадок/модов,
-                // спавн/подбор ствола; внешний процесс функции игры не зовёт),
-                // а немедленная перезапись индекса даже когда значения
-                // совпадают.
-                const char* const rewriteNow[] = {XS("Переписать обе копии")};
-                int skinAction = -1;
-                if (ChoiceRow("##skin_rewrite_now", &skinAction, rewriteNow, 1)) {
-                    esp_skin_request_rebuild();
-                    ShowToast(XS("Копии будут перезаписаны"));
                 }
 
                 if (oldIndex != vm.skin_index || oldLevel != vm.skin_level)

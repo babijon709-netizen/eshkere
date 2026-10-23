@@ -821,7 +821,7 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 9:          return "held FP object has no Oxide.Item";
         case 10:         return "ItemData not found on the held item";
         case 11:         return "ItemData.skinData array not found";
-        case 12:         return "skinData length out of range (item has no skins)";
+        case 12:         return "skinData array is empty or its length is unreadable (item has no skins)";
         case 13:         return "selected index is not in this item's skinData";
         case 14:         return "WeaponPiece head unreadable";
         case 15:         return "WeaponPiece head is not a WeaponPiece (offset mismatch)";
@@ -836,6 +836,7 @@ const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
         case 24:         return "достройка головы рабочей копии (зеркало низа из SyncVar) не подтвердилась чтением";
         case 25:         return "достройка головы рабочей копии (зеркало хвоста из SyncVar) не подтвердилась чтением";
         case 26:         return "ствол в карантине: этот скин ломал сборку FP-вьюхи, чит сбросил её и вернул родной скин — выберите другой индекс";
+        case 27:         return "в ItemData.skinData больше позиций, чем вмещает список чита (kSkinEntryMax) — это не «нет скинов»";
         default:         return "waiting for bind or player";
     }
 }

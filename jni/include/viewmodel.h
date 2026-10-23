@@ -184,9 +184,14 @@ inline bool skin_kind_identified(SkinKind kind) {
     return kind != SkinKind::Unknown && kind != SkinKind::Other;
 }
 
-// Предел списка: массив ItemData.skinData у предмета короткий, а больше меню
-// и не нужно. Совпадает с skinchanger::kMaxSkins.
-constexpr int kSkinEntryMax = 24;
+// Предел списка. Был 24 с формулировкой «массив короткий, а больше меню и не
+// нужно» — устройство (§4.23) показало обратное: у популярных стволов
+// (Томпсон, Дезерт Игл, Самопал) в ItemData.skinData больше 24 позиций, и
+// прежний предел отвергал ствол ЦЕЛИКОМ с враньём «у предмета нет скинов».
+// Теперь 64 = SKIN_INDEX_MAX + 1: sanitize дальше и не пустит индекс, а
+// более длинный массив получает честную стадию 27 (TooManySkins). Совпадает
+// с skinchanger::kMaxSkins.
+constexpr int kSkinEntryMax = 64;
 
 // Одна строка списка: скин предмета, который сейчас в руках.
 struct SkinEntryView {
@@ -200,12 +205,14 @@ struct SkinEntryView {
 };
 
 // Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
-// контроллера двадцать шесть (skin_changer_memory.h), но игроку нужно не
+// контроллера двадцать семь (skin_changer_memory.h), но игроку нужно не
 // «стадия 13», а что делать. Unreadable и WrongLayout разделены намеренно:
 // первое — транспорт не читает голову WeaponPiece, второе — читает, но это не
 // WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии).
 // Quarantined (§4.22) — отдельная причина: сборка вьюхи падала на этом скине,
 // чит сбросил полусобранный FPObject и временно не даёт выбирать его снова.
+// TooManySkins (§4.23) — не «нет скинов»: массив длиннее предела списка,
+// лечится поднятием предела, а не поиском отсутствующих скинов.
 // Детальная расшифровка для CLI и разработчика —
 // skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь,
 // чтобы меню и лог брали одну и ту же формулировку, а не две свои.
@@ -221,6 +228,7 @@ enum class SkinBlock : int {
     WrongLayout,     // читается, но это не WeaponPiece: оффсеты не от этого билда
     WriteFailed,     // запись не подтвердилась чтением обратно
     Quarantined,     // §4.22: этот скин ломал сборку вьюхи — ствол на карантине
+    TooManySkins,    // §4.23: скинов больше предела списка — это не «нет скинов»
 };
 inline SkinBlock skin_block(int stage) {
     switch (stage) {
@@ -238,6 +246,7 @@ inline SkinBlock skin_block(int stage) {
         case 21:                                  return SkinBlock::WrongLayout;
         case 22: case 23: case 24: case 25:       return SkinBlock::WriteFailed;
         case 26:                                  return SkinBlock::Quarantined;
+        case 27:                                  return SkinBlock::TooManySkins;
         default:                                  return SkinBlock::NoPlayer;
     }
 }
@@ -256,6 +265,7 @@ inline const char* skin_block_text(SkinBlock block) {
         case SkinBlock::WrongLayout: return "Оффсеты WeaponPiece не от этого билда";
         case SkinBlock::WriteFailed: return "Запись не подтвердилась";
         case SkinBlock::Quarantined: return "Ствол в карантине: скин ломал сборку вьюхи";
+        case SkinBlock::TooManySkins: return "У предмета больше скинов, чем вмещает список";
         default:                     return "";
     }
 }

@@ -122,6 +122,7 @@ static const char* SkinBlockUi(viewmodel::SkinBlock block) {
         case viewmodel::SkinBlock::WrongLayout: return XS("Оффсеты WeaponPiece не от этого билда");
         case viewmodel::SkinBlock::WriteFailed: return XS("Запись не подтвердилась");
         case viewmodel::SkinBlock::Quarantined: return XS("Ствол в карантине: скин ломал сборку вьюхи");
+        case viewmodel::SkinBlock::TooManySkins: return XS("У предмета больше скинов, чем вмещает список");
         case viewmodel::SkinBlock::None:
         default:                                return XS("Скин применён");
     }

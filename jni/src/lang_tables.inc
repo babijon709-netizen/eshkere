@@ -250,6 +250,7 @@ static const LangPair kUiEn[] = {
     {"Турели", "Turrets"},
     {"Тыквы", "Pumpkins"},
     {"Тёмная тема", "Dark theme"},
+    {"У предмета больше скинов, чем вмещает список", "The item has more skins than the list can hold"},
     {"У предмета нет скинов", "Item has no skins"},
     {"Удалить", "Delete"},
     {"Удалить конфиг?", "Delete config?"},

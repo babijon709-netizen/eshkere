@@ -836,12 +836,12 @@ void test_piece_bad_number() {
 void test_skin_block_grouping() {
     using viewmodel::SkinBlock;
     assert(viewmodel::skin_block(0) == SkinBlock::None);
-    assert(viewmodel::skin_block(27) != SkinBlock::None);   // вне диапазона — не «порядок»
+    assert(viewmodel::skin_block(28) != SkinBlock::None);   // вне диапазона — не «порядок»
     assert(viewmodel::skin_block(-1) != SkinBlock::None);
 
     const char* texts[16] = {};
     int distinct = 0;
-    for (int stage = 1; stage <= 26; ++stage) {
+    for (int stage = 1; stage <= 27; ++stage) {
         const SkinBlock b = viewmodel::skin_block(stage);
         assert(b != SkinBlock::None);
         const char* text = viewmodel::skin_block_text(b);
@@ -855,7 +855,7 @@ void test_skin_block_grouping() {
                 assert(std::strcmp(texts[i], text) != 0);   // формулировки не дублируются
         }
     }
-    assert(distinct == 10);     // ровно 10 причин, ни одна стадия не потерялась
+    assert(distinct == 11);     // ровно 11 причин, ни одна стадия не потерялась
 
     // Конкретные соответствия, которые видит пользователь.
     assert(viewmodel::skin_block(5)  == SkinBlock::NoWeapon);
@@ -896,8 +896,16 @@ void test_skin_block_grouping() {
     assert(viewmodel::skin_block(26) != SkinBlock::WriteFailed);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::Quarantined),
                        "Ствол в карантине: скин ломал сборку вьюхи") == 0);
+    // §4.23: «длиннее предела списка» и «скинов нет» — разные причины: первая
+    // лечится поднятием предела, вторая — констатация факта. Смешивать их
+    // значит врать меню и логу на популярных стволах.
+    assert(viewmodel::skin_block(27) == SkinBlock::TooManySkins);
+    assert(viewmodel::skin_block(27) != SkinBlock::NoSkins);
+    assert(viewmodel::skin_block(12) == SkinBlock::NoSkins);
+    assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::TooManySkins),
+                       "У предмета больше скинов, чем вмещает список") == 0);
     assert(std::strcmp(viewmodel::skin_block_text(SkinBlock::None), "") != 0);
-    std::printf("  skin_block: 26 stages -> 10 distinct causes, texts unique\n");
+    std::printf("  skin_block: 27 stages -> 11 distinct causes, texts unique\n");
 }
 
 // ---- 26. Слоты TypeInfo разъехались: тип даёт точное имя класса ------------
@@ -1153,6 +1161,35 @@ void test_reset_is_not_slot_restore() {
     std::printf("  reset: raw write, never restored back by slots\n");
 }
 
+// ---- 34. §4.23: skinData длиннее прежнего предела 24 — это НЕ «нет скинов» --
+void test_long_skin_array_is_not_no_skins() {
+    Fixture f;
+    // Томпсон/Дезерт Игл: позиций больше 24, но в пределах нового предела.
+    // Резолв обязан пройти, список — собрать доступные строки фикстуры.
+    f.io.put<int32_t>(skins + go_active::IL2CPP_ARRAY_LENGTH, 30);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().count == 3);          // в фикстуре 3 живых указателя
+    assert(f.live_skin() == 1);
+    // За пределами нового предела (64) — честная стадия 27 и ноль записей,
+    // а не «у предмета нет скинов» (нерезолв — Waiting, причину несёт стадия).
+    Fixture g;
+    g.io.put<int32_t>(skins + go_active::IL2CPP_ARRAY_LENGTH, 65);
+    g.tick(g.settings(true, 1));
+    assert(g.c.status == viewmodel::Status::Waiting);
+    assert(g.c.ui().stage == 27);
+    assert(viewmodel::skin_block(27) == viewmodel::SkinBlock::TooManySkins);
+    assert(g.io.writes == 0);
+    // Пустой массив — по-прежнему стадия 12: у предмета правда нет скинов.
+    Fixture h;
+    h.io.put<int32_t>(skins + go_active::IL2CPP_ARRAY_LENGTH, 0);
+    h.tick(h.settings(true, 1));
+    assert(h.c.ui().stage == 12);
+    assert(viewmodel::skin_block(12) == viewmodel::SkinBlock::NoSkins);
+    assert(h.io.writes == 0);
+    std::printf("  long skinData: 30 resolves, >64 is stage 27 (not NoSkins), empty is 12\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1194,6 +1231,7 @@ int main() {
     test_healthy_build_never_resets();
     test_quarantine_is_per_weapon_id();
     test_reset_is_not_slot_restore();
+    test_long_skin_array_is_not_no_skins();
     std::printf("OK\n");
     return 0;
 }

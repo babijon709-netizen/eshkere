@@ -191,10 +191,13 @@ using weapon_tuning::kWeapons;
 // в профиле отсутствует или не читается).
 inline constexpr const char* kPlayerNs = "HyperHug.Games.Oxide.Features.Player";
 
-// Массив skinData у предмета короткий (единицы-десятки позиций), а id скинов —
-// ascii-идентификаторы ассетов. Оба предела защищают от чтения мусора: длина
-// массива больше kMaxSkins или строка длиннее kIdCap означает, что мы смотрим
-// не на тот объект, и список остаётся пустым.
+// Массив skinData у предмета бывает ДЛИННЫМ: устройство (§4.23) показало
+// популярные стволы (Томпсон, Дезерт Игл, Самопал), у которых позиций больше
+// прежнего предела 24 — и ствол отвергался целиком с враньём «нет скинов».
+// Предел списка теперь 64 = SKIN_INDEX_MAX + 1 (sanitize дальше не пустит
+// индекс, запись большего числа — мусор в SyncVar). Строка длиннее kIdCap по-
+// прежнему означает, что мы смотрим не на тот объект: id скинов — короткие
+// ascii-идентификаторы ассетов.
 constexpr int kMaxSkins = viewmodel::kSkinEntryMax;
 constexpr int kIdCap    = 40;
 
@@ -653,8 +656,14 @@ template<class IO> class Controller {
         if (!pointer(io, data + ITEMDATA_SKIN_DATA, skins) || !skins ||
             !c.skins.capture(io, skins, false)) return fail(11);
         int32_t length = 0;
-        if (!io.read(skins + IL2CPP_ARRAY_LENGTH, length) ||
-            length <= 0 || length > kMaxSkins) return fail(12);
+        if (!io.read(skins + IL2CPP_ARRAY_LENGTH, length) || length <= 0)
+            return fail(12);
+        // §4.23: длинный массив — НЕ «нет скинов». У популярных стволов
+        // skinData длиннее прежнего предела 24, и общая стадия 12 врала
+        // меню и логу «у предмета нет скинов» на стволах, чьи скины видны
+        // в самой игре. Предел поднят до kMaxSkins=64 (sanitize дальше и
+        // не пустит индекс), а остаток получает честную стадию 27.
+        if (length > kMaxSkins) return fail(27);
         stage_ = 0;
         return true;
     }

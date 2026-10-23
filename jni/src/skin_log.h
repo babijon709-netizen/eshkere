@@ -95,7 +95,7 @@ private:
     // появление/смену деталей и каждые 10 с ожидания. Отравленный хвост
     // больше не молчит: даже если игрок закроет игру до сброса, в логе
     // останется форма отравления (класс панциря, ссылка, обработчик).
-    int  shell_bucket_ = -1, stuck_bucket_ = -1;
+    int  shell_bucket_ = -1, stuck_bucket_ = -1, cache_bucket_ = -1;
     char shell_state_[64] = {};
     int  picked_index_ = -2, picked_ready_ = -2;
     char weapon_[48] = {};
@@ -109,7 +109,7 @@ private:
         enabled_ = -1; skin_ = level_ = count_ = -2; known_ = -1; block_ = -1;
         stale_ = handle_ = -1; local_ = -2; item_ = -2; refill_ = -1;
         resets_ = -1; quarantine_ = -2;
-        shell_bucket_ = -1; stuck_bucket_ = -1;
+        shell_bucket_ = -1; stuck_bucket_ = -1; cache_bucket_ = -1;
         shell_state_[0] = '\0';
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
@@ -322,6 +322,26 @@ inline void Writer::note(const Snapshot& s) {
         }
     } else {
         stuck_bucket_ = -1;
+    }
+
+    // §4.24: зомби-резолв — _currentWeapon пуст, однако резолв ПРОХОДИТ через
+    // типизированный кэш uzN (+0x58) живым объектом прежней сборки: стадия 0
+    // («применено»), дедуп блока молчит, детектор панциря живёт в нерезолв-
+    // ветке — без этой строки форма невидима в логе вовсе (устройство v16:
+    // 1–2 минуты отравления — и НИ одной строки после «применено wooden.bow»).
+    // Строка на 10-й секунде и дальше каждые 10 с. Записей в память игры здесь
+    // нет: сбрасывать нечего (_currentWeapon и так пуст), а на устройстве
+    // форму лечило только перезайти на сервер.
+    if (s.ui.cache_seconds >= 10) {
+        const int bucket = s.ui.cache_seconds / 10;
+        if (bucket != cache_bucket_) {
+            cache_bucket_ = bucket;
+            say(s, "!! _currentWeapon пуст уже ~%d с, а резолв проходит через кэш игры (+0x58): "
+                   "чит пишет «применено», но вьюха не пересобрана — эту форму лечит только перезайти на сервер",
+                s.ui.cache_seconds);
+        }
+    } else {
+        cache_bucket_ = -1;
     }
 
     if (resets_ < 0) {

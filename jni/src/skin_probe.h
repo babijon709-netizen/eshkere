@@ -263,6 +263,8 @@ inline void PrintUi(metadump::Log& log, const viewmodel::SkinUiInfo& ui) {
                 ui.shell_peh_null ? "; сброс прилетит сам" : "");
     if (ui.stuck_seconds >= 10)
         log.say("застревание: предмет в руках, а вьюха не собирается ~%d с (стадия %d) — панциря нет, игра уронила сборку раньше создания FPObject", ui.stuck_seconds, ui.stage);
+    if (ui.cache_seconds >= 10)
+        log.say("кэш      : _currentWeapon пуст уже ~%d с, резолв проходит через кэш uzN (+0x58) — вьюха не пересобрана; лечит перезайти на сервер", ui.cache_seconds);
     log.say("предмет  : Oxide.Item.skin %s",
             ui.item_state < 0 ? "не читается (третья копия не пишется)"
             : ui.item_state == 0 ? "держит наш индекс (дроп и сохранение несут его)"

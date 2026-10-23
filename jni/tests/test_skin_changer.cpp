@@ -1266,6 +1266,31 @@ void test_peh_alive_keeps_slow_path() {
     std::printf("  PEH alive: fast path silent, slow 450-tick path unchanged\n");
 }
 
+// ---- 38. §4.24: зомби-резолв — _currentWeapon пуст, цепочка через кэш uzN --
+void test_zombie_resolve_via_cache() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().cache_seconds == 0);
+    // Игра уронила сборку до хранения FPObject: _currentWeapon (+0x50) пуст,
+    // но типизированный кэш uzN (+0x58) держит живой объект прежней сборки —
+    // резолв «проходит» (стадия 0, «применено»), дедуп блока молчит. Форму
+    // видно только по счётчику: устройство v16 провело в ней 1–2 минуты, и
+    // лог не напечатал ни строки.
+    f.io.put<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT, 0);
+    f.io.put<uint64_t>(fp + go_active::FPMANAGER_CURRENT_WEAPON, fp_object);
+    for (int i = 0; i < 100; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);   // резолв через кэш
+    assert(f.c.ui().cache_seconds == 10);              // 100 тиков × 100 мс
+    assert(f.c.ui().fp_build_resets == 0);             // записей в память игры нет
+    // Ствол не держится (SyncVar Enabled=0) — пустой _currentWeapon законен
+    // (холстер), зомби-счёт останавливается.
+    f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED, 0);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().cache_seconds == 0);
+    std::printf("  zombie resolve: counted via uzN cache, empty hands not counted\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1311,6 +1336,7 @@ int main() {
     test_peh_null_shell_fast_reset();
     test_backref_null_shell_is_seen();
     test_peh_alive_keeps_slow_path();
+    test_zombie_resolve_via_cache();
     std::printf("OK\n");
     return 0;
 }

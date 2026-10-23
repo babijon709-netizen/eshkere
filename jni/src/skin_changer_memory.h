@@ -349,6 +349,13 @@ struct Context {
     uint64_t fp_view = 0;      // PlayerWeapon.playerFPWeaponView (диагностика)
     uint64_t piece = 0;        // адрес SyncVar-копии Oxide.WeaponPiece (+0x110)
     uint64_t piece_local = 0;  // адрес рабочей копии (+0xC0) — цель записи №2
+    // §4.24: FP-объект взят из типизированного кэша uzN (+0x58), потому что
+    // _currentWeapon (+0x50) пуст. Диагностика зомби-резолва: игра уронила
+    // сборку до хранения FPObject, а цепочка Item/ItemData ещё читается
+    // через прежний объект — чит считает «применено», вьюха мертва. В
+    // operator== НЕ входит: смена флага — не смена контекста (иначе каждый
+    // дроу дёргал бы restore_all/перескан).
+    bool via_cache = false;
     bool operator==(const Context& b) const {
         return player == b.player && weapon == b.weapon && fp == b.fp &&
                fp_object == b.fp_object && item == b.item &&
@@ -602,6 +609,12 @@ template<class IO> class Controller {
     int  shell_back_ = -1;
     char shell_class_[24] = {};
     int  stuck_ticks_ = 0;
+    // §4.24: зомби-резолв — _currentWeapon пуст, а резолв проходит через кэш
+    // uzN (+0x58) живым объектом прежней сборки: чит видит «применено», вьюха
+    // мертва, детектор панциря и дедуп блока молчат. Считаем только когда
+    // piece «держится в руках» (Enabled=1): пустой _currentWeapon при пустых
+    // руках — нормальный холстер.
+    int  cache_ticks_ = 0;
     bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
     int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
     int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
@@ -674,6 +687,9 @@ template<class IO> class Controller {
         object = (have_active && active) ? active : 0;
         if (!object && !pointer(io, fp + FPMANAGER_CURRENT_WEAPON, object)) return fail(7);
         if (!object) return fail(7);
+        // §4.24: объект взят из кэша uzN (+0x58) при пустом _currentWeapon —
+        // признак зомби-резолва (см. Context.via_cache).
+        c.via_cache = !(have_active && active);
         if (!pointer(io, object + FPOBJECT_PLAYER_BACKREF, back) || back != player) return fail(8);
         if (!c.fp_object.capture(io, object, true)) return fail(8);
         if (!pointer(io, object + FPOBJECT_ITEM, item) || !item ||
@@ -970,6 +986,7 @@ public:
         info.shell_peh_null = shell_peh_null_;
         info.shell_back = shell_ticks_ > 0 ? shell_back_ : -1;
         info.stuck_seconds = stuck_ticks_ / 10;
+        info.cache_seconds = cache_ticks_ / 10;
         std::snprintf(info.shell_class, sizeof(info.shell_class), "%s",
                       shell_ticks_ > 0 ? shell_class_ : "");
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
@@ -997,6 +1014,7 @@ public:
         local_head_raw_[0] = '\0';
         shell_ticks_ = 0;
         stuck_ticks_ = 0;
+        cache_ticks_ = 0;
         shell_peh_null_ = false;
         shell_back_ = -1;
         shell_class_[0] = '\0';
@@ -1056,6 +1074,9 @@ public:
 
         Context next;
         if (!resolve(player, next)) {
+            // §4.24: зомби-резолв — форма УСПЕШНОГО резолва через кэш uzN;
+            // в нерезолв-ветке ей места нет (там считают панцирь и застревание).
+            cache_ticks_ = 0;
             // Нерезолв (пустые руки, игрок временно вышел из мира) — не повод
             // возвращать оригиналы: слоты держат живые адреса, и следующий
             // успешный резолв либо подтвердит их (записи не будет вовсе), либо
@@ -1300,6 +1321,13 @@ public:
         // событиях (холстер/дроу, RPC насадок/модов, спавн/подбор ствола —
         // см. заголовок файла). Наша работа закончена, когда обе копии держат
         // нужный индекс: ближайший дроу пересоберёт вьюху из рабочей копии.
+        // §4.24: зомби-резолв — _currentWeapon пуст, цепочка прошла через кэш
+        // uzN (+0x58). Считаем только с piece «в руках» (Enabled=1): при
+        // пустых руках узаконенный холстером ноль — не зомби. Счётчик кормит
+        // периодические строки skin.log: форма невидима ни детектору панциря
+        // (тот живёт в нерезолв-ветке), ни дедупу блока (стадия 0, «применено»).
+        if (next.via_cache && piece.enabled == 1) ++cache_ticks_;
+        else cache_ticks_ = 0;
         // §4.22: резолв прошёл всю цепочку (Item и uhq на месте) — вьюха
         // здорова, счётчик наблюдения обнуляется, а сброс снова взводится
         // для следующего эпизода отравления.

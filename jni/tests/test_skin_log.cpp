@@ -707,6 +707,33 @@ void test_shell_watch_and_stuck_lines() {
     std::printf("  §4.24: shell-watch/stuck lines — onset, 10-s progress, dedup\n");
 }
 
+// §4.24: строка зомби-резолва — единственная весть о форме, где молчит всё
+// остальное: стадия 0 («применено»), дедуп блока, детектор панциря (нерезолв-
+// ветка). Устройство v16: 1–2 минуты отравления — и ни строки в логе.
+void test_zombie_cache_line() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);
+    assert(count_of(slurp(log_path()), "_currentWeapon пуст") == 0);
+    skinlog::Snapshot z = s;      // стадия 0, «применено» — но резолв через кэш
+    z.now = 30.0;
+    z.ui.cache_seconds = 10;
+    w.note(z);
+    assert(count_of(slurp(log_path()), "!! _currentWeapon пуст уже ~10 с") == 1);
+    assert(count_of(slurp(log_path()), "лечит только перезайти на сервер") == 1);
+    // Тот же 10-секундный бакет — дедупликация.
+    z.now = 30.1;
+    w.note(z);
+    assert(count_of(slurp(log_path()), "_currentWeapon пуст уже") == 1);
+    // Новая десятисекундка — новая строка прогресса.
+    z.ui.cache_seconds = 20;
+    z.now = 40.0;
+    w.note(z);
+    assert(count_of(slurp(log_path()), "_currentWeapon пуст уже ~20 с") == 1);
+    std::printf("  §4.24: zombie-resolve line — onset at 10 s, progress, dedup\n");
+}
+
 int main() {
     test_disabled_writes_nothing();
     test_unbound_writes_nothing();
@@ -730,6 +757,7 @@ int main() {
     test_unwritable_dir_is_survivable();
     test_build_reset_and_quarantine_lines();
     test_shell_watch_and_stuck_lines();
+    test_zombie_cache_line();
     ::unlink(log_path().c_str());
     std::printf("OK\n");
     return 0;

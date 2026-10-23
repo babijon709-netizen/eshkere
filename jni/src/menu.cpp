@@ -107,30 +107,6 @@ static void CalibrationRow(const char* id, const char* label, int mode, const ch
     dl->AddLine({right - 3.f, cy}, {right - 8.f, cy + 5.f}, C::U(C::Acc()), 2.f);
 }
 
-// Тост скинченджера для меню — на языке пользователя: без имён классов,
-// оффсетов и вьюх. skin_block_text() (viewmodel.h) держит технические
-// формулировки для skin.log и CLI; меню и лог расходятся СОЗНАТЕЛЬНО
-// (KERNEL.md §6). XS() раскрывается в constexpr-лямбду и принимает ТОЛЬКО
-// литерал, поэтому маппинг перечислен вручную: одна русская строка — одна
-// запись в lang_tables.inc.
-static const char* SkinBlockUi(viewmodel::SkinBlock block) {
-    switch (block) {
-        case viewmodel::SkinBlock::NoPlayer:    return XS("Игрок не найден");
-        case viewmodel::SkinBlock::NoWeapon:    return XS("Оружие не найдено");
-        case viewmodel::SkinBlock::EmptyHands:  return XS("В руках пусто");
-        case viewmodel::SkinBlock::NoItemData:  return XS("Предмет не распознан");
-        case viewmodel::SkinBlock::NoSkins:     return XS("У предмета нет скинов");
-        case viewmodel::SkinBlock::BadIndex:    return XS("Скин не подходит этому оружию");
-        case viewmodel::SkinBlock::Unreadable:  return XS("Скин не применился — перезапусти игру и чит");
-        case viewmodel::SkinBlock::WrongLayout: return XS("Версия игры не поддерживается — жди обновления чита");
-        case viewmodel::SkinBlock::WriteFailed: return XS("Скин не применился — попробуй ещё раз");
-        case viewmodel::SkinBlock::Quarantined: return XS("Скин ломал игру — он временно отключён");
-        case viewmodel::SkinBlock::TooManySkins: return XS("У предмета слишком много скинов");
-        case viewmodel::SkinBlock::None:
-        default:                                return XS("Скин применён");
-    }
-}
-
 float TabContent(int tab, float dt, float cW) {
     float sY = ImGui::GetCursorPosY();
 
@@ -859,8 +835,8 @@ float TabContent(int tab, float dt, float cW) {
         // таблицы скинов не существует, индекс у каждого предмета свой.
         // Панель — пользовательская: технические id («deagle.skin.rusty.event»)
         // чистятся в читаемые имена (skin_name.h), ствол подписывается таблицей
-        // weapon_name.h, диагностика живёт в тостах и skin.log — статусных
-        // строк про вьюхи и ассеты в меню нет (KERNEL.md §6).
+        // weapon_name.h; ни статусных строк, ни тостов — вся диагностика живёт
+        // только в skin.log (KERNEL.md §6).
         SHdr(XS("Скины"));
         {
             viewmodel::SkinEntryView skinEntries[viewmodel::kSkinEntryMax];
@@ -940,26 +916,9 @@ float TabContent(int tab, float dt, float cW) {
                     }
                 }
 
-                // Единственная подсказка панели: скин применится, когда
-                // оружие снова окажется в руках — пересборка картинки это
-                // событие игры (убрал/достал), а не покадровый процесс.
-                if (vm.skin_enabled && n > 0 && skinUi.fp_stale)
-                    SHdr(XS("Убери и достань оружие — скин применится"), 4.f);
-
-                // Диагностика состояния — тостом на СМЕНУ укрупнённой причины:
-                // приходит сама, без команд в терминале. Формулировки —
-                // пользовательские (SkinBlockUi); технические подробности
-                // (стадии, копии, сырые байты) пишет в skin.log skin_log.h —
-                // языком skin_block_text() (viewmodel.h).
-                const viewmodel::SkinBlock skinBlock = viewmodel::skin_block(skinUi.stage);
-                static viewmodel::SkinBlock skinToasted = viewmodel::SkinBlock::None;
-                if (skinBlock != skinToasted) {
-                    if (skinBlock != viewmodel::SkinBlock::None ||
-                        skinToasted != viewmodel::SkinBlock::None)
-                        ShowToast(SkinBlockUi(skinBlock));
-                    skinToasted = skinBlock;
-                }
-
+                // Диагностика состояния в меню не показывается вовсе: ни
+                // строк, ни тостов (KERNEL.md §6). Подробности живут в
+                // skin.log — их пишет skin_log.h языком skin_block_text().
                 if (oldIndex != vm.skin_index || oldLevel != vm.skin_level)
                     esp_viewmodel_tick(vm);
             }
@@ -1685,6 +1644,7 @@ void RenderMenu() {
     Tick(g_state.a_no_spread, g_state.viewmodel.no_spread, dt);
     Tick(g_state.a_no_ballistics, g_state.viewmodel.no_ballistics, dt);
     Tick(g_state.a_fast_loot, g_state.viewmodel.fast_loot, dt);
+    Tick(g_state.a_skin, g_state.viewmodel.skin_enabled, dt);
     Tick(g_state.a_fast_fire, g_state.fast_fire, dt);
     Tick(g_state.a_fast_reload, g_state.fast_reload, dt);
     Tick(g_state.a_fake_lag, g_state.fake_lag, dt);

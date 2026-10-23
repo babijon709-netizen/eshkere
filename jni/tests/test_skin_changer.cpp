@@ -188,6 +188,9 @@ struct Fixture {
         // Цепочка FP: FPObject -> Item -> ItemData -> skinData[].
         io.object(fp_object, "FPHitscan", "Oxide");
         io.put<uint64_t>(fp + FPMANAGER_CURRENT_OBJECT, fp_object);
+        // §4.25: uzL (+0x68, Number +0x2) — копия piece последней сборки:
+        // Number совпадает с головой в руках (фикстура здорова, застревания нет).
+        io.put<int16_t>(fp + FPMANAGER_UZL_NUMBER, 114);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
         // §4.24: PlayerEventHandler (+0xC8) жив — у здорового панциря (медленный
         // путь §4.22) и ссылка, и обработчик на месте. Быстрый путь сброса
@@ -1291,6 +1294,31 @@ void test_zombie_resolve_via_cache() {
     std::printf("  zombie resolve: counted via uzN cache, empty hands not counted\n");
 }
 
+// ---- 39. §4.25: застревание дроу — uzL разошёлся с Number в руках ----------
+void test_draw_stall_detector() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().stall_seconds == 0);
+    // Дроу перестал доходить до сборки: uzL (+0x6A) застыл на старом Number,
+    // а piece в руках (SyncVar) обновлён игрой. Резолв при этом здоров
+    // («применено», стадия 0) — сбрасывать нечего, только счёт и лог.
+    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL_NUMBER, 999);
+    for (int i = 0; i < 99; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().stall_seconds == 9);
+    f.tick(f.settings(true, 1));                  // 100-й тик: 10 с
+    assert(f.c.ui().stall_seconds == 10);
+    assert(f.c.ui().stall_hand_number == 114);
+    assert(f.c.ui().stall_view_number == 999);
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().fp_build_resets == 0);        // записей в память игры нет
+    // Сборка дошла (uzL догнал piece в руках) — счёт обнуляется.
+    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL_NUMBER, 114);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().stall_seconds == 0);
+    std::printf("  draw stall: uzL vs hand Number counted, heal zeroes\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1337,6 +1365,7 @@ int main() {
     test_backref_null_shell_is_seen();
     test_peh_alive_keeps_slow_path();
     test_zombie_resolve_via_cache();
+    test_draw_stall_detector();
     std::printf("OK\n");
     return 0;
 }

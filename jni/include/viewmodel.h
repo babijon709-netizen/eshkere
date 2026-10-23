@@ -329,6 +329,16 @@ struct SkinUiInfo {
     // только в этой форме. Счёт идёт при piece Enabled=1 (ствол в руках):
     // пустой _currentWeapon при пустых руках — нормальный холстер.
     int  cache_seconds = 0;
+    // §4.25: застревание дроу — секунды, которые Number в руках (SyncVar
+    // piece) расходится с Number последней сборки, дошедшей до TAIL
+    // (FPManager.uzL, +0x68; Number внутри +0x2). Дроу не доходит до
+    // CreateFPWeapon: все сигналы чита «применено», вьюха мертва — форма,
+    // которую устройство описывает как «в рандом момент перестают применяться
+    // скины, лечит только перезайти» (v17: сессия оборвалась на «применено»,
+    // ни панциря, ни зомби, ни застревания). Оба номера — для строки лога.
+    int  stall_seconds = 0;
+    int  stall_hand_number = -1;   // SyncVar piece.Number (что в руках)
+    int  stall_view_number = -1;   // uzL.Number (из чего последний раз собиралась вьюха)
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;
     char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках

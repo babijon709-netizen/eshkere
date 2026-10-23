@@ -734,6 +734,35 @@ void test_zombie_cache_line() {
     std::printf("  §4.24: zombie-resolve line — onset at 10 s, progress, dedup\n");
 }
 
+// §4.25: строка застревания дроу — форма, где всё пишет «применено», а вьюха
+// мертва (устройство v17: сессия оборвалась на «применено» — ни панциря, ни
+// зомби, ни застревания; детектор uzL-vs-Number делает форму видимой).
+void test_draw_stall_line() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);
+    assert(count_of(slurp(log_path()), "дроу не доходит до сборки") == 0);
+    skinlog::Snapshot st = s;      // стадия 0, «применено» — но uzL разошёлся
+    st.now = 30.0;
+    st.ui.stall_seconds = 10;
+    st.ui.stall_hand_number = 114;
+    st.ui.stall_view_number = 999;
+    w.note(st);
+    assert(count_of(slurp(log_path()), "!! дроу не доходит до сборки уже ~10 с") == 1);
+    assert(count_of(slurp(log_path()), "в руках Number 114, последняя сборка вьюхи Number 999") == 1);
+    // Тот же 10-секундный бакет — дедупликация.
+    st.now = 30.1;
+    w.note(st);
+    assert(count_of(slurp(log_path()), "дроу не доходит до сборки") == 1);
+    // Новая десятисекундка — новая строка прогресса.
+    st.ui.stall_seconds = 20;
+    st.now = 40.0;
+    w.note(st);
+    assert(count_of(slurp(log_path()), "уже ~20 с") == 1);
+    std::printf("  §4.25: draw-stall line — onset at 10 s, progress, dedup\n");
+}
+
 int main() {
     test_disabled_writes_nothing();
     test_unbound_writes_nothing();
@@ -758,6 +787,7 @@ int main() {
     test_build_reset_and_quarantine_lines();
     test_shell_watch_and_stuck_lines();
     test_zombie_cache_line();
+    test_draw_stall_line();
     ::unlink(log_path().c_str());
     std::printf("OK\n");
     return 0;

@@ -282,6 +282,7 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG = game_offsets::ACTIVITY_ACT
 inline constexpr std::uint64_t PLAYER_FP_MANAGER = game_offsets::PLAYER_FP_MANAGER;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON = game_offsets::FPMANAGER_CURRENT_WEAPON;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT = game_offsets::FPMANAGER_CURRENT_OBJECT;
+inline constexpr std::uint64_t FPMANAGER_UZL_NUMBER = game_offsets::FPMANAGER_UZL_NUMBER;
 // Хвост Oxide.FPManager: AssetReference на 0x80, поле cdf на 0xAC и
 // backing field <cdg>k__BackingField на 0xB8.
 inline constexpr std::uint64_t FPMANAGER_AIM_BLEND = 0xB8;          // <cdg>k__BackingField

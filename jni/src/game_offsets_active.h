@@ -212,6 +212,7 @@ inline std::uint64_t ACTIVITY_ACTIVE_FLAG = game_offsets::ACTIVITY_ACTIVE_FLAG;
 inline std::uint64_t PLAYER_FP_MANAGER = game_offsets::PLAYER_FP_MANAGER;
 inline std::uint64_t FPMANAGER_CURRENT_WEAPON = game_offsets::FPMANAGER_CURRENT_WEAPON;
 inline std::uint64_t FPMANAGER_CURRENT_OBJECT = game_offsets::FPMANAGER_CURRENT_OBJECT;
+inline std::uint64_t FPMANAGER_UZL_NUMBER = game_offsets::FPMANAGER_UZL_NUMBER;
 inline std::uint64_t FPMANAGER_AIM_BLEND = game_offsets::FPMANAGER_AIM_BLEND;
 inline std::uint64_t FPOBJECT_PLAYER_BACKREF = game_offsets::FPOBJECT_PLAYER_BACKREF;
 inline std::uint64_t FPWEAPON_IS_AIMING = game_offsets::FPWEAPON_IS_AIMING;
@@ -704,6 +705,7 @@ inline void Select(GameVersion version) {
         PLAYER_FP_MANAGER = game_offsets_beta::PLAYER_FP_MANAGER;
         FPMANAGER_CURRENT_WEAPON = game_offsets_beta::FPMANAGER_CURRENT_WEAPON;
         FPMANAGER_CURRENT_OBJECT = game_offsets_beta::FPMANAGER_CURRENT_OBJECT;
+        FPMANAGER_UZL_NUMBER = game_offsets_beta::FPMANAGER_UZL_NUMBER;
         FPMANAGER_AIM_BLEND = game_offsets_beta::FPMANAGER_AIM_BLEND;
         FPOBJECT_PLAYER_BACKREF = game_offsets_beta::FPOBJECT_PLAYER_BACKREF;
         FPWEAPON_IS_AIMING = game_offsets_beta::FPWEAPON_IS_AIMING;
@@ -1197,6 +1199,7 @@ inline void Select(GameVersion version) {
         PLAYER_FP_MANAGER = game_offsets::PLAYER_FP_MANAGER;
         FPMANAGER_CURRENT_WEAPON = game_offsets::FPMANAGER_CURRENT_WEAPON;
         FPMANAGER_CURRENT_OBJECT = game_offsets::FPMANAGER_CURRENT_OBJECT;
+        FPMANAGER_UZL_NUMBER = game_offsets::FPMANAGER_UZL_NUMBER;
         FPMANAGER_AIM_BLEND = game_offsets::FPMANAGER_AIM_BLEND;
         FPOBJECT_PLAYER_BACKREF = game_offsets::FPOBJECT_PLAYER_BACKREF;
         FPWEAPON_IS_AIMING = game_offsets::FPWEAPON_IS_AIMING;

@@ -66,6 +66,7 @@ static const LangPair kUiEn[] = {
     {"Дистанция", "Distance"},
     {"Драйвер не найден — прошей .sh своей версии ядра", "Driver not found — flash the .sh for your kernel version"},
     {"Драйвер: найден (семейство %d)", "Driver: found (family %d)"},
+    {"Дроу не доходит до сборки — перезайди на сервер (подробности в skin.log)", "The draw never reaches the build — rejoin the server (details in skin.log)"},
     {"Ещё настройки", "More settings"},
     {"Железо", "Iron"},
     {"Животные", "Animals"},

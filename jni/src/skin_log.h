@@ -95,7 +95,7 @@ private:
     // появление/смену деталей и каждые 10 с ожидания. Отравленный хвост
     // больше не молчит: даже если игрок закроет игру до сброса, в логе
     // останется форма отравления (класс панциря, ссылка, обработчик).
-    int  shell_bucket_ = -1, stuck_bucket_ = -1, cache_bucket_ = -1;
+    int  shell_bucket_ = -1, stuck_bucket_ = -1, cache_bucket_ = -1, stall_bucket_ = -1;
     char shell_state_[64] = {};
     int  picked_index_ = -2, picked_ready_ = -2;
     char weapon_[48] = {};
@@ -109,7 +109,7 @@ private:
         enabled_ = -1; skin_ = level_ = count_ = -2; known_ = -1; block_ = -1;
         stale_ = handle_ = -1; local_ = -2; item_ = -2; refill_ = -1;
         resets_ = -1; quarantine_ = -2;
-        shell_bucket_ = -1; stuck_bucket_ = -1; cache_bucket_ = -1;
+        shell_bucket_ = -1; stuck_bucket_ = -1; cache_bucket_ = -1; stall_bucket_ = -1;
         shell_state_[0] = '\0';
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
@@ -342,6 +342,23 @@ inline void Writer::note(const Snapshot& s) {
         }
     } else {
         cache_bucket_ = -1;
+    }
+
+    // §4.25: застревание дроу — Number в руках (SyncVar piece) давно разошёлся
+    // с Number последней сборки, дошедшей до TAIL (FPManager.uzL): дроу не
+    // доходит до сборки, все сигналы чита «применено», а вьюха мертва. Форма
+    // невидима ни детектору панциря, ни счётчику зомби (резолв проходит через
+    // прежний живой FPObject, стадия 0); устройство описывает её как «в
+    // рандом момент перестают применяться скины, лечит только перезайти».
+    if (s.ui.stall_seconds >= 10) {
+        const int bucket = s.ui.stall_seconds / 10;
+        if (bucket != stall_bucket_) {
+            stall_bucket_ = bucket;
+            say(s, "!! дроу не доходит до сборки уже ~%d с: в руках Number %d, последняя сборка вьюхи Number %d (uzL) — пишет «применено», а вьюха не пересобирается; лечит перезайти на сервер",
+                s.ui.stall_seconds, s.ui.stall_hand_number, s.ui.stall_view_number);
+        }
+    } else {
+        stall_bucket_ = -1;
     }
 
     if (resets_ < 0) {

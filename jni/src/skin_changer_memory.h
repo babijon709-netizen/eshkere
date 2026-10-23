@@ -615,6 +615,17 @@ template<class IO> class Controller {
     // piece «держится в руках» (Enabled=1): пустой _currentWeapon при пустых
     // руках — нормальный холстер.
     int  cache_ticks_ = 0;
+    // §4.25: застревание дроу — Number в руках (SyncVar piece) расходится с
+    // Number последней сборки, дошедшей до TAIL (FPManager.uzL +0x68, Number
+    // +0x2; копия кладётся в 0x68EFD40 в начале каждой сборки). Расхождение
+    // десятками секунд при Enabled=1 означает, что дроу не доходит до
+    // CreateFPWeapon: резолв при этом ПРОХОДИТ (живой FPObject прежней
+    // сборки, стадия 0, «применено») — форма, невидимая ни детектору панциря,
+    // ни счётчику зомби, ни дедупу блока. Устройство v17: «в рандом момент
+    // перестают применяться скины, хотя пишет применено; лечит перезайти».
+    int  stall_ticks_ = 0;
+    int  stall_hand_ = -1;       // SyncVar piece.Number (что в руках)
+    int  stall_view_ = -1;       // uzL.Number (из чего собиралась вьюха)
     bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
     int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
     int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
@@ -987,6 +998,9 @@ public:
         info.shell_back = shell_ticks_ > 0 ? shell_back_ : -1;
         info.stuck_seconds = stuck_ticks_ / 10;
         info.cache_seconds = cache_ticks_ / 10;
+        info.stall_seconds = stall_ticks_ / 10;
+        info.stall_hand_number = stall_hand_;
+        info.stall_view_number = stall_view_;
         std::snprintf(info.shell_class, sizeof(info.shell_class), "%s",
                       shell_ticks_ > 0 ? shell_class_ : "");
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
@@ -1015,6 +1029,8 @@ public:
         shell_ticks_ = 0;
         stuck_ticks_ = 0;
         cache_ticks_ = 0;
+        stall_ticks_ = 0;
+        stall_hand_ = stall_view_ = -1;
         shell_peh_null_ = false;
         shell_back_ = -1;
         shell_class_[0] = '\0';
@@ -1077,6 +1093,8 @@ public:
             // §4.24: зомби-резолв — форма УСПЕШНОГО резолва через кэш uzN;
             // в нерезолв-ветке ей места нет (там считают панцирь и застревание).
             cache_ticks_ = 0;
+            stall_ticks_ = 0;
+            stall_hand_ = stall_view_ = -1;
             // Нерезолв (пустые руки, игрок временно вышел из мира) — не повод
             // возвращать оригиналы: слоты держат живые адреса, и следующий
             // успешный резолв либо подтвердит их (записи не будет вовсе), либо
@@ -1328,6 +1346,24 @@ public:
         // (тот живёт в нерезолв-ветке), ни дедупу блока (стадия 0, «применено»).
         if (next.via_cache && piece.enabled == 1) ++cache_ticks_;
         else cache_ticks_ = 0;
+        // §4.25: застревание дроу. uzL (FPM+0x68) — копия piece, которую TAIL
+        // кладёт в начале каждой дошедшей до него сборки (dump11966
+        // 0x68EFD40-44). Number в руках (SyncVar) и Number последней сборки
+        // обязаны совпадать уже через цикл холстер/дроу; расхождение на
+        // десятки секунд при поднятой голове — дроу не доходит до сборки
+        // вовсе. Только наблюдение: сбрасывать здесь нечего (резолв healthy,
+        // стадия 0), а безопасная запись в uzL не доказана реверсом.
+        int16_t uzl_number = 0;
+        if (piece.enabled == 1 && context_.fp.object &&
+            io.read(context_.fp.object + go_active::FPMANAGER_UZL_NUMBER, uzl_number)) {
+            stall_hand_ = piece.number;
+            stall_view_ = (int)uzl_number;
+            if ((int)uzl_number != (int)piece.number) ++stall_ticks_;
+            else stall_ticks_ = 0;
+        } else {
+            stall_ticks_ = 0;
+            stall_hand_ = stall_view_ = -1;
+        }
         // §4.22: резолв прошёл всю цепочку (Item и uhq на месте) — вьюха
         // здорова, счётчик наблюдения обнуляется, а сброс снова взводится
         // для следующего эпизода отравления.

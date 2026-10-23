@@ -549,6 +549,7 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG          = 0x10;
 inline constexpr std::uint64_t PLAYER_FP_MANAGER             = 0x90;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT      = 0x50; // _currentWeapon (authoritative active FPObject)
+inline constexpr std::uint64_t FPMANAGER_UZL_NUMBER          = 0x6A; // uzL (WeaponPiece, +0x68) — копия piece, которую TAIL кладёт в начале каждой дошедшей до него сборки (dump11966 0x68EFD40-44); Number внутри неё +0x2
 inline constexpr std::uint64_t FPMANAGER_AIM_BLEND           = 0xA8;
 inline constexpr std::uint64_t FPOBJECT_PLAYER_BACKREF       = 0xC0;
 inline constexpr std::uint64_t FPWEAPON_IS_AIMING            = 0x120;

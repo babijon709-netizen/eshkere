@@ -549,7 +549,12 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG          = 0x10;
 inline constexpr std::uint64_t PLAYER_FP_MANAGER             = 0x90;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT      = 0x50; // _currentWeapon (authoritative active FPObject)
-inline constexpr std::uint64_t FPMANAGER_UZL_NUMBER          = 0x6A; // uzL (WeaponPiece, +0x68) — копия piece, которую TAIL кладёт в начале каждой дошедшей до него сборки (dump11966 0x68EFD40-44); Number внутри неё +0x2
+inline constexpr std::uint64_t FPMANAGER_UZL                 = 0x68; // WeaponPiece последней сборки, дошедшей до TAIL (dump11966 0x68EFD40-44, stur q0 -> [FPM+0x68]); поля — WEAPONPIECE_* (Number = +0x6A)
+inline constexpr std::uint64_t FPMANAGER_CTS                 = 0x78; // uzf CancellationTokenSource: Kxi создаёт новый на каждый вызов (0x68EE2B4) — смена указателя = дроу дошёл до Kxi
+inline constexpr std::uint64_t FPMANAGER_CTS2                = 0x80; // uzi второй CTS (тот же жизненный цикл)
+inline constexpr std::uint64_t FPMANAGER_UTCS                = 0x88; // uzD UniTaskCompletionSource: тоже пересоздаётся в Kxi (0x68EE290)
+inline constexpr std::uint64_t FPMANAGER_UZJ                 = 0x90; // bool uzj
+inline constexpr std::uint64_t FPMANAGER_UHF                 = 0xB0; // <uhF>k__BackingField (сеттер 0x68EE308)
 inline constexpr std::uint64_t FPMANAGER_AIM_BLEND           = 0xA8;
 inline constexpr std::uint64_t FPOBJECT_PLAYER_BACKREF       = 0xC0;
 inline constexpr std::uint64_t FPWEAPON_IS_AIMING            = 0x120;
@@ -1130,6 +1135,12 @@ inline constexpr std::uint64_t ASSETREF_OPERATION    = 0x28; // AsyncOperationHa
 // PlayerWeapon.playerFPWeaponView — FP-вьюха ствола. В релизе 0xF0, в бете
 // 0x108 (см. game_offsets_beta.h).
 inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW = 0xF0;
+// §4.26: два поля PlayerWeapon из цепочки дроу pMZ -> pFz (dump11966):
+// гейт 0xDC (pFz читает его до вызова FPManager.Kxi — значение уходит в
+// срез сырым, смысл сравнивается по здоровым и отравленным окнам) и
+// указатель на FPManager 0xF8 (pFz берёт FPM отсюда, а не от игрока).
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE = 0xDC;
+inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0xF8;
 // PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
 //   dV/IXG visual 0x20, WeaponPiece piece 0x28, CancellationTokenSource 0x38/0x40
 // Копия piece здесь — диагностическая: пока weaponPiece.Skin != piece.Skin,

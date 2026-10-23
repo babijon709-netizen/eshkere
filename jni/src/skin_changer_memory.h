@@ -626,6 +626,21 @@ template<class IO> class Controller {
     int  stall_ticks_ = 0;
     int  stall_hand_ = -1;       // SyncVar piece.Number (что в руках)
     int  stall_view_ = -1;       // uzL.Number (из чего собиралась вьюха)
+    // §4.26: сырой срез FP-состояния — максимально подробное логирование
+    // против молчаливых форм отравления (устройство v18: 25 с здоровой игры,
+    // затем ~15 минут ПОЛНОЙ тишины при «применено» — ни один счётчик не
+    // сработал). Сердцебиение раз в kDumpHeartbeatTicks плюс срез на каждое
+    // изменение триггерных полей (указатель cur, uzL.Number, голова SyncVar)
+    // с минимальным интервалом kDumpCooldownTicks. Сердцебиение заодно —
+    // доказательство живости тика: нет строк среза в окне отравления = умер
+    // чит/транспорт, а не игра.
+    int  dump_seq_ = 0;          // монотонный номер среза (не сбрасывается)
+    char dump_text_[256] = {};
+    int  dump_ticks_ = 0;        // тики с последнего среза (сердцебиение)
+    int  dump_cooldown_ = 0;     // минимальный интервал между срезами
+    uint32_t last_sv_head_ = 0xFFFFFFFFu;  // Enabled|Number SyncVar последнего среза
+    int  last_uzl_number_ = 0x7FFFFFFF;
+    uint64_t last_cur_ = ~0ull;
     bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
     int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
     int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
@@ -952,6 +967,149 @@ template<class IO> class Controller {
         restore_all();
     }
 
+    // §4.26: читатели полей среза. Нечитаемое уходит в строку как «?», а не
+    // выдуманный ноль: срез существует, чтобы показывать правду, в том числе
+    // «транспорт это не читает».
+    void dump_hex(uint64_t addr, char* out, size_t cap) {
+        uint64_t v = 0;
+        if (addr >= 0x10000 && io.read(addr, v))
+            std::snprintf(out, cap, "%llx", (unsigned long long)v);
+        else
+            std::snprintf(out, cap, "?");
+    }
+    void dump_u32(uint64_t addr, char* out, size_t cap) {
+        uint32_t v = 0;
+        if (addr >= 0x10000 && io.read(addr, v))
+            std::snprintf(out, cap, "%x", v);
+        else
+            std::snprintf(out, cap, "?");
+    }
+    void dump_byte(uint64_t addr, char* out, size_t cap) {
+        uint8_t v = 0;
+        if (addr >= 0x10000 && io.read(addr, v))
+            std::snprintf(out, cap, "%u", v);
+        else
+            std::snprintf(out, cap, "?");
+    }
+    void dump_i16(uint64_t addr, char* out, size_t cap) {
+        int16_t v = 0;
+        if (addr >= 0x10000 && io.read(addr, v))
+            std::snprintf(out, cap, "%d", (int)v);
+        else
+            std::snprintf(out, cap, "?");
+    }
+
+    // §4.26: одна строка сырого FP-состояния — всё, из чего состоит конвейер
+    // сборки вьюхи. cur с классом и инвариантом (Item/uhq/обратная ссылка/
+    // обработчик); CTS/CTS2/UTCS — Kxi пересоздаёт их на КАЖДЫЙ вызов
+    // (dump11966 0x68EE290/0x68EE2B4), поэтому смена их указателей —
+    // доказательство, что дроу дошёл до Kxi; флаги uzj/uhF; uzL — piece
+    // последней сборки, дошедшей до TAIL; все три копии piece (SyncVar/
+    // рабочая/вьюха); гейт дроу PW+0xDC и FPManager от PW +0xF8 (цепочка
+    // pMZ->pFz); ручка визуала. Срез не зависит от исхода резолва и полезнее
+    // всего именно в молчаливых окнах.
+    void build_fp_dump(uint64_t player) {
+        using namespace go_active;
+        char* p = dump_text_;
+        size_t left = sizeof(dump_text_);
+        *p = '\0';
+        auto ap = [&](const char* s) {
+            if (left <= 1 || !s || !s[0]) return;
+            size_t n = std::strlen(s);
+            if (n >= left) n = left - 1;
+            std::memcpy(p, s, n);
+            p += n; left -= n; *p = '\0';
+        };
+        char v[24];
+        uint64_t fp = 0;
+        pointer(io, player + PLAYER_FP_MANAGER, fp);
+        const uint64_t fpa = fp >= 0x10000 ? fp : 0;
+        uint64_t cur = 0;
+        ap("cur=");
+        if (fpa && pointer(io, fpa + FPMANAGER_CURRENT_OBJECT, cur) && cur >= 0x10000) {
+            dump_hex(cur, v, sizeof(v)); ap(v);
+            char klass[20] = {};
+            klass_name_read(io, cur, klass, sizeof(klass));
+            ap("("); ap(klass[0] ? klass : "?"); ap(")");
+            ap(" It=");   dump_hex(cur + FPOBJECT_ITEM, v, sizeof(v)); ap(v);
+            ap(" uhq=");  dump_byte(cur + FPOBJECT_SHOWN, v, sizeof(v)); ap(v);
+            ap(" back="); dump_hex(cur + FPOBJECT_PLAYER_BACKREF, v, sizeof(v)); ap(v);
+            ap(" peh=");  dump_hex(cur + FPOBJECT_EVENT_HANDLER, v, sizeof(v)); ap(v);
+        } else {
+            ap("0");
+        }
+        ap(" CTS=");  dump_hex(fpa ? fpa + FPMANAGER_CTS : 0, v, sizeof(v)); ap(v);
+        ap("/");      dump_hex(fpa ? fpa + FPMANAGER_CTS2 : 0, v, sizeof(v)); ap(v);
+        ap(" UTCS="); dump_hex(fpa ? fpa + FPMANAGER_UTCS : 0, v, sizeof(v)); ap(v);
+        ap(" uzj=");  dump_byte(fpa ? fpa + FPMANAGER_UZJ : 0, v, sizeof(v)); ap(v);
+        ap(" uhF=");  dump_byte(fpa ? fpa + FPMANAGER_UHF : 0, v, sizeof(v)); ap(v);
+        ap(" uzL=");
+        dump_byte(fpa ? fpa + FPMANAGER_UZL + WEAPONPIECE_ENABLED : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(fpa ? fpa + FPMANAGER_UZL + WEAPONPIECE_NUMBER : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(fpa ? fpa + FPMANAGER_UZL + WEAPONPIECE_SKIN : 0, v, sizeof(v)); ap(v);
+        ap(" SV=");
+        dump_byte(context_.piece ? context_.piece + WEAPONPIECE_ENABLED : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(context_.piece ? context_.piece + WEAPONPIECE_NUMBER : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(context_.piece ? context_.piece + WEAPONPIECE_SKIN : 0, v, sizeof(v)); ap(v);
+        ap(" wk=");
+        dump_byte(context_.piece_local ? context_.piece_local + WEAPONPIECE_ENABLED : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(context_.piece_local ? context_.piece_local + WEAPONPIECE_NUMBER : 0, v, sizeof(v)); ap(v); ap("/");
+        dump_i16(context_.piece_local ? context_.piece_local + WEAPONPIECE_SKIN : 0, v, sizeof(v)); ap(v);
+        const uint64_t pw = context_.weapon.object;
+        uint64_t view = 0;
+        ap(" vw=");
+        if (pw && pointer(io, pw + PLAYERWEAPON_FP_VIEW, view) && view >= 0x10000) {
+            dump_hex(view, v, sizeof(v)); ap(v); ap(" ");
+            dump_byte(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_ENABLED, v, sizeof(v)); ap(v); ap("/");
+            dump_i16(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_NUMBER, v, sizeof(v)); ap(v); ap("/");
+            dump_i16(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN, v, sizeof(v)); ap(v);
+        } else {
+            ap("0");
+        }
+        ap(" gate="); dump_u32(pw ? pw + PLAYERWEAPON_DRAW_GATE : 0, v, sizeof(v)); ap(v);
+        ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
+        ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
+    }
+
+    // §4.26: ритм срезов — на изменение триггерных полей (указатель cur,
+    // uzL.Number, голова SyncVar) и по сердцебиению, с минимальным интервалом,
+    // чтобы быстрая смена стволов не топила лог. Зовётся каждый тик из
+    // включённой ветки ДО резолва: срез обязан строиться и в нерезолве.
+    // Триггер, пришедшийся на интервал ожидания, не теряется (last_* не
+    // обновляются) — срез будет собран сразу по истечении интервала с
+    // новейшим состоянием.
+    void dump_watch(uint64_t player) {
+        using namespace go_active;
+        if (!has_state()) return;
+        ++dump_ticks_;
+        if (dump_cooldown_ > 0) --dump_cooldown_;
+        uint64_t fp = 0;
+        pointer(io, player + PLAYER_FP_MANAGER, fp);
+        uint64_t cur = 0;
+        if (fp >= 0x10000) pointer(io, fp + FPMANAGER_CURRENT_OBJECT, cur);
+        int16_t uzl_n = 0;
+        const bool uzl_ok = fp >= 0x10000 &&
+            io.read(fp + FPMANAGER_UZL + WEAPONPIECE_NUMBER, uzl_n);
+        uint32_t sv_head = 0xFFFFFFFFu;
+        uint8_t en = 0;
+        int16_t num = 0;
+        if (context_.piece && io.read(context_.piece + WEAPONPIECE_ENABLED, en) &&
+            io.read(context_.piece + WEAPONPIECE_NUMBER, num))
+            sv_head = ((uint32_t)en << 16) | (uint32_t)(uint16_t)num;
+        const bool changed = cur != last_cur_ ||
+                             (uzl_ok && (int)uzl_n != last_uzl_number_) ||
+                             sv_head != last_sv_head_;
+        if (!changed && dump_ticks_ < kDumpHeartbeatTicks) return;
+        if (dump_cooldown_ > 0) return;
+        build_fp_dump(player);
+        ++dump_seq_;
+        last_cur_ = cur;
+        last_uzl_number_ = uzl_ok ? (int)uzl_n : 0x7FFFFFFF;
+        last_sv_head_ = sv_head;
+        dump_ticks_ = 0;
+        dump_cooldown_ = kDumpCooldownTicks;
+    }
+
 public:
     viewmodel::Status status = viewmodel::Status::Off;
     explicit Controller(IO& memory) : io(memory) {}
@@ -1001,6 +1159,8 @@ public:
         info.stall_seconds = stall_ticks_ / 10;
         info.stall_hand_number = stall_hand_;
         info.stall_view_number = stall_view_;
+        info.dump_seq = dump_seq_;
+        std::snprintf(info.dump_text, sizeof(info.dump_text), "%s", dump_text_);
         std::snprintf(info.shell_class, sizeof(info.shell_class), "%s",
                       shell_ticks_ > 0 ? shell_class_ : "");
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
@@ -1031,6 +1191,14 @@ public:
         cache_ticks_ = 0;
         stall_ticks_ = 0;
         stall_hand_ = stall_view_ = -1;
+        // §4.26: состояние срезов сбрасывается, кроме монотонного dump_seq_ —
+        // нумерация живёт всю жизнь процесса, дедуп лога по ней не сбивается.
+        dump_ticks_ = 0;
+        dump_cooldown_ = 0;
+        dump_text_[0] = '\0';
+        last_sv_head_ = 0xFFFFFFFFu;
+        last_uzl_number_ = 0x7FFFFFFF;
+        last_cur_ = ~0ull;
         shell_peh_null_ = false;
         shell_back_ = -1;
         shell_class_[0] = '\0';
@@ -1087,6 +1255,11 @@ public:
             return;
         }
         if (!base) return;
+
+        // §4.26: сырой срез FP-состояния — ДО резолва, чтобы строился и при
+        // успехе, и при провале: самые ценные срезы приходятся на молчаливые
+        // окна «применено» и нерезолва.
+        dump_watch(player);
 
         Context next;
         if (!resolve(player, next)) {
@@ -1355,7 +1528,8 @@ public:
         // стадия 0), а безопасная запись в uzL не доказана реверсом.
         int16_t uzl_number = 0;
         if (piece.enabled == 1 && context_.fp.object &&
-            io.read(context_.fp.object + go_active::FPMANAGER_UZL_NUMBER, uzl_number)) {
+            io.read(context_.fp.object + go_active::FPMANAGER_UZL +
+                        go_active::WEAPONPIECE_NUMBER, uzl_number)) {
             stall_hand_ = piece.number;
             stall_view_ = (int)uzl_number;
             if ((int)uzl_number != (int)piece.number) ++stall_ticks_;
@@ -1396,5 +1570,13 @@ private:
     // между хранениями (0x68F00B0 -> 0x68F01E4, субмиллисекунды), поэтому
     // 20 тиков × 100 мс = 2 с — с запасом, но в 22 раза быстрее медленного.
     static constexpr int kShellPoisonTicks = 20;
+    // §4.26: ритм срезов FP-состояния. Сердцебиение 600 тиков × 100 мс = 60 с;
+    // минимальный интервал событийных срезов 20 тиков = 2 с — при быстрой
+    // смене стволов (устройство v18: переключения каждые 0.5 с) срезы не
+    // топят лог, а при отравлении застывшее состояние видно максимум через
+    // минуту. Объём среза ~250 Б: час активной игры ≈ 25–50 КБ, ротация
+    // 256 КБ оставляет окну отравления место даже в длинной сессии.
+    static constexpr int kDumpHeartbeatTicks = 600;
+    static constexpr int kDumpCooldownTicks = 20;
 };
 }  // namespace skinchanger

@@ -282,7 +282,16 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG = game_offsets::ACTIVITY_ACT
 inline constexpr std::uint64_t PLAYER_FP_MANAGER = game_offsets::PLAYER_FP_MANAGER;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON = game_offsets::FPMANAGER_CURRENT_WEAPON;
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT = game_offsets::FPMANAGER_CURRENT_OBJECT;
-inline constexpr std::uint64_t FPMANAGER_UZL_NUMBER = game_offsets::FPMANAGER_UZL_NUMBER;
+inline constexpr std::uint64_t FPMANAGER_UZL = game_offsets::FPMANAGER_UZL;
+inline constexpr std::uint64_t FPMANAGER_CTS = game_offsets::FPMANAGER_CTS;
+inline constexpr std::uint64_t FPMANAGER_CTS2 = game_offsets::FPMANAGER_CTS2;
+inline constexpr std::uint64_t FPMANAGER_UTCS = game_offsets::FPMANAGER_UTCS;
+// §4.26: два bool-поля идут по релизной раскладке: у беты FPManager
+// расходится с релизом где-то после 0x90 (AIM_BLEND 0xB8 против 0xA8), но
+// они попадают только в диагностический срез skin.log — записей по ним нет,
+// цена возможного бета-сдвига равна двум байтам правды в строке.
+inline constexpr std::uint64_t FPMANAGER_UZJ = game_offsets::FPMANAGER_UZJ;
+inline constexpr std::uint64_t FPMANAGER_UHF = game_offsets::FPMANAGER_UHF;
 // Хвост Oxide.FPManager: AssetReference на 0x80, поле cdf на 0xAC и
 // backing field <cdg>k__BackingField на 0xB8.
 inline constexpr std::uint64_t FPMANAGER_AIM_BLEND = 0xB8;          // <cdg>k__BackingField
@@ -632,6 +641,11 @@ inline constexpr std::uint64_t ASSETREF_OPERATION   = game_offsets::ASSETREF_OPE
 //   WeaponPiece jUh 0x130 (SyncVar), WeaponState jUs 0x14C.
 inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW     = 0x108;
 inline constexpr std::uint64_t PLAYERWEAPON_SKIN_HANDLE = 0xC0;
+// §4.26: гейт дроу и указатель на FPManager — по обоим профилям одинаковы
+// (проверено сверкой полей PlayerWeapon в дампах 11966/11977: расхождение
+// только у FP_VIEW/SKIN_HANDLE). Диагностические, записей по ним нет.
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE   = game_offsets::PLAYERWEAPON_DRAW_GATE;
+inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
 inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
 inline constexpr std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;
 // WeaponPiece стал 0x18 байт, поэтому CancellationTokenSource уехал с 0x38.

@@ -431,8 +431,10 @@ void test_rotation_is_bounded() {
     fresh();
     skinlog::Writer w;
     // Гоним разные имена ствола, пока файл не упрётся в предел: каждая смена —
-    // одна строка, то есть управляемый способ вырастить лог.
-    for (int i = 0; i < 6000; ++i) {
+    // одна строка (~34 Б), то есть управляемый способ вырастить лог. 12000
+    // строк ≈ 408 КБ — с запасом больше предела 256 КБ (§4.26), поэтому
+    // ротация гарантированно случается.
+    for (int i = 0; i < 12000; ++i) {
         skinlog::Snapshot s = make_snap(0.1 * i);
         std::snprintf(s.ui.weapon, sizeof(s.ui.weapon), "w%05d", i);
         w.note(s);
@@ -445,7 +447,10 @@ void test_rotation_is_bounded() {
     // а шапка остаётся ровно одна: та, что написана после обрезки.
     assert(count_of(text, "== skin.log") == 1);
     assert(count_of(text, "ствол w00000") == 0);
-    assert(count_of(text, "ствол w05999") == 1);
+    // Последняя строка переживает любое число ротаций; промежуточная (w05999)
+    // не гарантирована — при 12000 строк и пределе 256 КБ ротаций может быть
+    // две, и середина уходит вместе с первой.
+    assert(count_of(text, "ствол w11999") == 1);
     // После ротации состояние сообщается заново: старый контекст из файла
     // исчез, и читать его продолжение без шапки было бы бессмысленно.
     assert(count_of(text, "в памяти игры Skin=1 SkinLevel=0") == 1);
@@ -763,6 +768,34 @@ void test_draw_stall_line() {
     std::printf("  §4.25: draw-stall line — onset at 10 s, progress, dedup\n");
 }
 
+// §4.26: строка среза FP-состояния — одна на каждый новый dump_seq, текст
+// как есть. Отсутствие срезов в окне поломки — само диагноз (умер тик),
+// поэтому дедуп по номеру обязан быть точным: ни повторов, ни пропусков.
+void test_fp_dump_line() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);                                    // seq 0, текст пуст — строки нет
+    assert(count_of(slurp(log_path()), "срез #") == 0);
+    skinlog::Snapshot d = s;
+    d.now = 5.0;
+    d.ui.dump_seq = 1;
+    std::snprintf(d.ui.dump_text, sizeof(d.ui.dump_text),
+                  "cur=38000(FPHitscan) It=39000 uhq=1 uzL=1/114/5 SV=1/114/5 gate=1");
+    w.note(d);
+    assert(count_of(slurp(log_path()), "срез #1: cur=38000(FPHitscan)") == 1);
+    // Тот же номер — дедупликация (сердцебиение не меняет seq без нужды).
+    d.now = 5.1;
+    w.note(d);
+    assert(count_of(slurp(log_path()), "срез #") == 1);
+    // Новый номер (сердцебиение или триггер) — новая строка.
+    d.ui.dump_seq = 2;
+    d.now = 65.0;
+    w.note(d);
+    assert(count_of(slurp(log_path()), "срез #2:") == 1);
+    std::printf("  §4.26: fp-dump line — per seq, dedup, verbatim\n");
+}
+
 int main() {
     test_disabled_writes_nothing();
     test_unbound_writes_nothing();
@@ -788,6 +821,7 @@ int main() {
     test_shell_watch_and_stuck_lines();
     test_zombie_cache_line();
     test_draw_stall_line();
+    test_fp_dump_line();
     ::unlink(log_path().c_str());
     std::printf("OK\n");
     return 0;

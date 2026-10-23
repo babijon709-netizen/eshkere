@@ -187,10 +187,26 @@ struct Fixture {
 
         // Цепочка FP: FPObject -> Item -> ItemData -> skinData[].
         io.object(fp_object, "FPHitscan", "Oxide");
+        // §4.26: имя класса обязано читаться и ИЗ ПАМЯТИ (klass->name), а не
+        // только из таблицы named(): срез печатает класс полусобранного
+        // объекта через klass_name_read.
+        put_klass_name(io, fp_object, "FPHitscan");
         io.put<uint64_t>(fp + FPMANAGER_CURRENT_OBJECT, fp_object);
-        // §4.25: uzL (+0x68, Number +0x2) — копия piece последней сборки:
-        // Number совпадает с головой в руках (фикстура здорова, застревания нет).
-        io.put<int16_t>(fp + FPMANAGER_UZL_NUMBER, 114);
+        // §4.25: uzL (+0x68) — копия piece последней сборки: совпадает с
+        // головой в руках (фикстура здорова, застревания нет).
+        io.put<uint8_t>(fp + FPMANAGER_UZL + WEAPONPIECE_ENABLED, 1);
+        io.put<int16_t>(fp + FPMANAGER_UZL + WEAPONPIECE_NUMBER, 114);
+        io.put<int16_t>(fp + FPMANAGER_UZL + WEAPONPIECE_SKIN, original_skin);
+        // §4.26: поля среза — CTS/CTS2/UTCS (маркеры вызова Kxi), флаги
+        // uzj/uhF, гейт дроу и FPManager со стороны PW. Значения произвольны,
+        // но стабильны: срез в тестах обязан читаться целиком.
+        io.put<uint64_t>(fp + FPMANAGER_CTS, 0xC750);
+        io.put<uint64_t>(fp + FPMANAGER_CTS2, 0xC760);
+        io.put<uint64_t>(fp + FPMANAGER_UTCS, 0xC7D0);
+        io.put<uint8_t>(fp + FPMANAGER_UZJ, 0);
+        io.put<uint8_t>(fp + FPMANAGER_UHF, 1);
+        io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_GATE, 1);
+        io.put<uint64_t>(pw + PLAYERWEAPON_FP_MANAGER, fp);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
         // §4.24: PlayerEventHandler (+0xC8) жив — у здорового панциря (медленный
         // путь §4.22) и ссылка, и обработчик на месте. Быстрый путь сброса
@@ -1303,7 +1319,7 @@ void test_draw_stall_detector() {
     // Дроу перестал доходить до сборки: uzL (+0x6A) застыл на старом Number,
     // а piece в руках (SyncVar) обновлён игрой. Резолв при этом здоров
     // («применено», стадия 0) — сбрасывать нечего, только счёт и лог.
-    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL_NUMBER, 999);
+    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL + go_active::WEAPONPIECE_NUMBER, 999);
     for (int i = 0; i < 99; ++i) f.tick(f.settings(true, 1));
     assert(f.c.ui().stall_seconds == 9);
     f.tick(f.settings(true, 1));                  // 100-й тик: 10 с
@@ -1313,10 +1329,49 @@ void test_draw_stall_detector() {
     assert(f.c.status == viewmodel::Status::Active);
     assert(f.c.ui().fp_build_resets == 0);        // записей в память игры нет
     // Сборка дошла (uzL догнал piece в руках) — счёт обнуляется.
-    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL_NUMBER, 114);
+    f.io.put<int16_t>(fp + go_active::FPMANAGER_UZL + go_active::WEAPONPIECE_NUMBER, 114);
     f.tick(f.settings(true, 1));
     assert(f.c.ui().stall_seconds == 0);
     std::printf("  draw stall: uzL vs hand Number counted, heal zeroes\n");
+}
+
+// ---- 40. §4.26: сырой срез FP-состояния — триггеры, интервал, сердцебиение --
+void test_fp_dump_watch() {
+    Fixture f;
+    f.tick(f.settings(true, 1));    // применение: has_state() станет true здесь
+    assert(f.c.ui().dump_seq == 0); // срез строится со следующего тика
+    f.tick(f.settings(true, 1));
+    // Первый срез: триггерные поля отличаются от сентинелей — базовая линия.
+    assert(f.c.ui().dump_seq == 1);
+    assert(std::strstr(f.c.ui().dump_text, "cur=") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "FPHitscan") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "uzL=1/114/") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "SV=1/114/") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "CTS=c750/c760 UTCS=c7d0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "uzj=0 uhF=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "gate=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "hnd=abcd0") != nullptr);
+    const int seq = f.c.ui().dump_seq;
+    // Ничего не меняется — срезов нет до сердцебиения.
+    for (int i = 0; i < 50; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().dump_seq == seq);
+    // Сменился ствол в руках (SyncVar Number) — срез сразу (интервал истёк).
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, 228);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().dump_seq == seq + 1);
+    assert(std::strstr(f.c.ui().dump_text, "SV=1/228/") != nullptr);
+    // Интервал: быстрая смена не даёт второй срез раньше 20 тиков.
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, 229);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().dump_seq == seq + 1);         // интервал ещё не истёк
+    for (int i = 0; i < 19; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().dump_seq == seq + 2);         // триггер не потерялся
+    assert(std::strstr(f.c.ui().dump_text, "SV=1/229/") != nullptr);
+    // Сердцебиение: 600 тиков — срез даже без изменений полей.
+    const int seq2 = f.c.ui().dump_seq;
+    for (int i = 0; i < 600; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().dump_seq == seq2 + 1);
+    std::printf("  fp dump: baseline, trigger+cooldown, heartbeat\n");
 }
 
 int main() {
@@ -1366,6 +1421,7 @@ int main() {
     test_peh_alive_keeps_slow_path();
     test_zombie_resolve_via_cache();
     test_draw_stall_detector();
+    test_fp_dump_watch();
     std::printf("OK\n");
     return 0;
 }

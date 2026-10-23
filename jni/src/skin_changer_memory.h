@@ -420,6 +420,28 @@ bool klass_name_is(IO& io, uint64_t klass, const char* name) {
     return std::memcmp(buf, name, length + 1) == 0;
 }
 
+// §4.24: имя класса объекта в буфер — для диагностики панциря. Читает тот же
+// klass->name (IL2CPP_CLASS_NAME), что klass_name_is, но БЕЗ образца: в логе
+// имя само по себе вердикт («FPBow» — у его FDN override NRE на погашенном
+// PlayerEventHandler, «FPHitscan» — базовый FDN выходит молча). Нечитаемое —
+// пустая строка, не догадка.
+template<class IO>
+void klass_name_read(IO& io, uint64_t obj, char* out, size_t cap) {
+    if (!out || cap == 0) return;
+    out[0] = '\0';
+    uint64_t klass = 0, text = 0;
+    if (!pointer(io, obj, klass) ||
+        !pointer(io, klass + go_active::IL2CPP_CLASS_NAME, text) || text < 0x10000)
+        return;
+    size_t pos = 0;
+    while (pos + 1 < cap) {
+        char c = 0;
+        if (!io.read(text + pos, c) || c == '\0') break;
+        out[pos++] = c;
+    }
+    out[pos] = '\0';
+}
+
 // Тип скина — сравнением класса с TypeInfo-слотом профиля. Слот быстрее всего
 // (одно разыменование qword) и есть в обоих профилях для всех классов скинов
 // (в бете нет только EG, он здесь и не нужен). НО слот — абсолютный RVA,
@@ -574,6 +596,12 @@ template<class IO> class Controller {
     // панциря (сбрасывается, как только сигнатура пропала); порог отделяет
     // отравление от здоровой первой закачки ассета, у которой сигнатура та же.
     int  shell_ticks_ = 0;
+    // §4.24: детали текущего панциря (порог и лог) и счётчик беспанцирного
+    // застревания: piece в руках, а FP-цепочка не резолвится (стадии 7–9).
+    bool shell_peh_null_ = false;
+    int  shell_back_ = -1;
+    char shell_class_[24] = {};
+    int  stuck_ticks_ = 0;
     bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
     int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
     int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
@@ -815,25 +843,50 @@ template<class IO> class Controller {
         return ok;
     }
 
-    // §4.22: сигнатура полусобранного панциря — _currentWeapon жив, обратная
-    // ссылка указывает на нашего игрока, Item==null и uhq==0. Доказывается
-    // структурой (обратная ссылка), а не классом: панцирь — недоинициализи-
-    // рованный FPWeapon, строгая проверка имени здесь только мешала бы.
-    // Здоровый инвариант (dump11966): uhq==1 <=> Item!=null; FDN (слот 10)
-    // гасит оба вместе, On_Draw (слот 17) — ставит оба вместе. Нечитаемое
-    // поле — не панцирь: не угадываем.
-    bool fp_build_shell(uint64_t player, uint64_t& fp) {
+    // §4.24: чем оказался панцирь. Детали читаются только когда сигнатура
+    // совпала и нужны порогу и логу; «не прочиталось» остаётся «не знаем».
+    struct ShellLook {
+        bool peh_null = false;   // PlayerEventHandler (+0xC8) прочитался нулём
+        int  back = -1;          // ссылка на игрока: 1 наша, 0 null, 2 чужая, -1 не читается
+        char klass[24] = {};     // имя класса полусобранного объекта
+    };
+
+    // §4.22/§4.24: сигнатура полусобранного панциря — _currentWeapon жив,
+    // лежит в именном FPManager, Item==null и uhq==0. Здоровый инвариант
+    // (dump11966): uhq==1 <=> Item!=null; FDN (слот 10) гасит оба вместе,
+    // On_Draw (слот 17) — ставит оба вместе. Нечитаемое поле — не панцирь:
+    // не угадываем. Обратная ссылка на игрока в §4.24 перестала быть частью
+    // сигнатуры и стала деталью (ShellLook.back): ASSEMBLY хранит
+    // _currentWeapon (dump11966 0x68F00B0) РАНЬШЕ, чем Player+0xC0
+    // (0x68F015C) и PlayerEventHandler+0xC8 (0x68F01E4), и исключение в этом
+    // окне (NRE-трамплины 0x68F0480–0x68F0490 на геттерах weaponManager)
+    // оставляет панцирь с нулевой ссылкой — прежний детектор его не видел.
+    bool fp_build_shell(uint64_t player, uint64_t& fp, ShellLook& look) {
         using namespace go_active;
+        look = ShellLook{};
         if (!player || !pointer(io, player + PLAYER_FP_MANAGER, fp) || fp < 0x10000 ||
             !io.named(fp, "FPManager", "Oxide")) return false;
         uint64_t cur = 0;
         if (!pointer(io, fp + FPMANAGER_CURRENT_OBJECT, cur) || cur < 0x10000) return false;
-        uint64_t back = 0;
-        if (!pointer(io, cur + FPOBJECT_PLAYER_BACKREF, back) || back != player) return false;
         uint64_t item = 0;
         if (!io.read(cur + FPOBJECT_ITEM, item) || item != 0) return false;
         uint8_t shown = 0xFF;
         if (!io.read(cur + FPOBJECT_SHOWN, shown) || shown != 0) return false;
+        // Детали. PEH: здоровая сборка ставит его синхронно, до первого await,
+        // поэтому погашенный PEH, продержавшийся секунды, — исключение в окне
+        // геттеров. Для классов с override FDN это ещё и блокада каждого дроу:
+        // FPBow.FDN (0x68C4970) делает NRE 0x594D46C на [this+0xC8]==0, а гейт
+        // CreateFPWeapon зовёт FDN на _currentWeapon (виртуальный слот,
+        // 0x68EFA0C) ДО очистки и пересборки — базовый FPObject.FDN (0x68FCD10)
+        // на нуле выходит молча, поэтому Томпсон в §4.22 висел 45 с, а лук
+        // отравляет мгновенно и навсегда.
+        uint64_t peh = 0;
+        if (io.read(cur + FPOBJECT_EVENT_HANDLER, peh)) look.peh_null = (peh == 0);
+        uint64_t back = 0;
+        if (!pointer(io, cur + FPOBJECT_PLAYER_BACKREF, back)) look.back = -1;
+        else if (back == player) look.back = 1;
+        else look.back = back ? 2 : 0;
+        klass_name_read(io, cur, look.klass, sizeof(look.klass));
         return true;
     }
 
@@ -911,6 +964,14 @@ public:
         info.item_state = item_state_;
         info.fp_build_resets = reset_count_;
         info.quarantine_skin = quarantine_skin_;
+        // §4.24: наблюдение за панцирём и беспанцирным застреванием — лог
+        // пишет периодические строки, меню показывает вердикт.
+        info.shell_watch = shell_ticks_ / 10;
+        info.shell_peh_null = shell_peh_null_;
+        info.shell_back = shell_ticks_ > 0 ? shell_back_ : -1;
+        info.stuck_seconds = stuck_ticks_ / 10;
+        std::snprintf(info.shell_class, sizeof(info.shell_class), "%s",
+                      shell_ticks_ > 0 ? shell_class_ : "");
         std::snprintf(info.local_head, sizeof(info.local_head), "%s", local_head_raw_);
         info.stage = stage_;
         info.status = status;
@@ -935,6 +996,10 @@ public:
         item_state_ = -1;
         local_head_raw_[0] = '\0';
         shell_ticks_ = 0;
+        stuck_ticks_ = 0;
+        shell_peh_null_ = false;
+        shell_back_ = -1;
+        shell_class_[0] = '\0';
         reset_armed_ = true;
         reset_count_ = 0;
         quarantine_id_ = -1;
@@ -1007,16 +1072,59 @@ public:
             // взводит его обратно только успешный резолв (вьюха собралась).
             if (has_state()) {
                 uint64_t fp = 0;
-                if (fp_build_shell(player, fp)) {
+                ShellLook look;
+                if (fp_build_shell(player, fp, look)) {
                     ++shell_ticks_;
-                    if (reset_armed_ && shell_ticks_ >= kShellWatchTicks &&
-                        reset_fp_build(fp))
+                    shell_peh_null_ = look.peh_null;
+                    shell_back_ = look.back;
+                    std::snprintf(shell_class_, sizeof(shell_class_), "%s", look.klass);
+                    // §4.24: два порога. Погашенный PlayerEventHandler —
+                    // отравление, доказанное структурой дампа (FPBow.FDN на нём
+                    // NRE; гейт зовёт FDN до очистки), а здоровая сборка держит
+                    // его погашенным лишь субмиллисекундное синхронное окно
+                    // между хранениями — 20 тиков застрахованы от случайного
+                    // попадания тика в середину сборки. Ссылка на игрока при
+                    // живом PEH — прежний медленный путь §4.22: здоровая ПЕРВАЯ
+                    // закачка ассета держит ту же сигнатуру до async-колбэка
+                    // On_Draw, поэтому вердикт только после 45 с наблюдения.
+                    // Чужая/нулевая ссылка при живом PEH — форма неизвестна:
+                    // наблюдаем и пишем в лог, но не пишем в память игры.
+                    const bool poison_now =
+                        look.peh_null && shell_ticks_ >= kShellPoisonTicks;
+                    const bool hung_long =
+                        !look.peh_null && look.back == 1 && shell_ticks_ >= kShellWatchTicks;
+                    if (reset_armed_ && (poison_now || hung_long) && reset_fp_build(fp))
                         quarantine_current(s.skin_index);
                 } else {
                     shell_ticks_ = 0;
+                    shell_peh_null_ = false;
+                    shell_back_ = -1;
+                    shell_class_[0] = '\0';
+                }
+                // §4.24: панциря нет, но piece «держится в руках» (Enabled=1),
+                // а FP-цепочка не резолвится на стадиях 7–9 — игра уронила
+                // сборку раньше хранения FPObject (инстанцирование/хвост):
+                // сбрасывать нечего, но лог обязан видеть форму, а не молчать.
+                if (shell_ticks_ > 0) {
+                    stuck_ticks_ = 0;   // панцирь учитывает shell_watch
+                } else if ((stage_ == 7 || stage_ == 8 || stage_ == 9) &&
+                           context_.weapon.object &&
+                           context_.weapon.life(io) == Life::Alive) {
+                    Piece held;
+                    if (read_piece(io, context_.piece, held) == PieceRead::Ok &&
+                        held.enabled == 1)
+                        ++stuck_ticks_;
+                    else
+                        stuck_ticks_ = 0;
+                } else {
+                    stuck_ticks_ = 0;
                 }
             } else {
                 shell_ticks_ = 0;
+                stuck_ticks_ = 0;
+                shell_peh_null_ = false;
+                shell_back_ = -1;
+                shell_class_[0] = '\0';
             }
             // §4.21: погашенную голову рабочей копии достраиваем и без рук —
             // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку
@@ -1196,6 +1304,10 @@ public:
         // здорова, счётчик наблюдения обнуляется, а сброс снова взводится
         // для следующего эпизода отравления.
         shell_ticks_ = 0;
+        stuck_ticks_ = 0;
+        shell_peh_null_ = false;
+        shell_back_ = -1;
+        shell_class_[0] = '\0';
         reset_armed_ = true;
         stage_ = 0;
         status = Status::Active;
@@ -1213,5 +1325,12 @@ private:
     // медленной закачке не опасно: лишний сброс — просто ещё одна пересборка,
     // а карантин снимается сменой индекса.
     static constexpr int kShellWatchTicks = 450;
+    // §4.24: порог быстрого пути — панцирь с погашенным PlayerEventHandler.
+    // Отравление доказано структурой (см. fp_build_shell): у FPBow.FDN на нуле
+    // NRE, гейт зовёт FDN до очистки _currentWeapon, каждый дроу любого ствола
+    // падает. Здоровая сборка держит PEH погашенным только синхронное окно
+    // между хранениями (0x68F00B0 -> 0x68F01E4, субмиллисекунды), поэтому
+    // 20 тиков × 100 мс = 2 с — с запасом, но в 22 раза быстрее медленного.
+    static constexpr int kShellPoisonTicks = 20;
 };
 }  // namespace skinchanger

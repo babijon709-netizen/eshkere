@@ -189,6 +189,11 @@ struct Fixture {
         io.object(fp_object, "FPHitscan", "Oxide");
         io.put<uint64_t>(fp + FPMANAGER_CURRENT_OBJECT, fp_object);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
+        // §4.24: PlayerEventHandler (+0xC8) жив — у здорового панциря (медленный
+        // путь §4.22) и ссылка, и обработчик на месте. Быстрый путь сброса
+        // срабатывает на ПОГАШЕННОМ обработчике: у FPBow.FDN на нуле NRE, а
+        // гейт CreateFPWeapon зовёт FDN до очистки _currentWeapon.
+        io.put<uint64_t>(fp_object + FPOBJECT_EVENT_HANDLER, 0x42000);
         io.put<uint64_t>(fp_object + FPOBJECT_ITEM, item);
         // Здоровый инвариант FPObject (§4.22): uhq==1 <=> Item!=null. Детектор
         // панциря ищет обратное — uhq==0 при Item==null десятки секунд.
@@ -1190,6 +1195,77 @@ void test_long_skin_array_is_not_no_skins() {
     std::printf("  long skinData: 30 resolves, >64 is stage 27 (not NoSkins), empty is 12\n");
 }
 
+// ---- 35. §4.24: панцирь с погашенным обработчиком — быстрый сброс (лук) ----
+void test_peh_null_shell_fast_reset() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().fp_build_resets == 0);
+    // Исключение в окне геттеров ASSEMBLY: _currentWeapon уже хранит новый
+    // FPObject (dump11966 0x68F00B0), ссылка на игрока уже наша (0x68F015C),
+    // а PlayerEventHandler ещё не поставлен (0x68F01E4). Для FPBow это
+    // отравление всех дроу: FPBow.FDN (0x68C4970) делает NRE на [this+0xC8]==0,
+    // а гейт зовёт FDN на _currentWeapon до очистки (0x68EFA0C).
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_EVENT_HANDLER, 0);
+    for (int i = 0; i < 19; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0);        // 19 тиков — ещё ждём
+    assert(f.c.ui().shell_peh_null);
+    assert(f.c.ui().shell_back == 1);
+    assert(f.c.ui().shell_watch == 1);            // ~2 с наблюдения в ui
+    f.tick(f.settings(true, 1));                  // 20-й тик: быстрый вердикт
+    assert(f.c.ui().fp_build_resets == 1);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    assert(f.c.ui().quarantine_skin == 1);
+    assert(f.live_skin() == f.original_skin);     // индекс возвращён к родному
+    std::printf("  PEH-null shell: fast reset at 20 ticks, quarantine set\n");
+}
+
+// ---- 36. §4.24: нулевая обратная ссылка — детектор больше не слепнет ------
+void test_backref_null_shell_is_seen() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    // Исключение МЕЖДУ хранениями: _currentWeapon уже новый FPObject, а ни
+    // Player (+0xC0), ни PlayerEventHandler (+0xC8) ещё не поставлены.
+    // Старый детектор (ссылка==игрок была частью сигнатуры) такую панцирь
+    // не видел вовсе — отравление молчало до ротации лога.
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_PLAYER_BACKREF, 0);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_EVENT_HANDLER, 0);
+    for (int i = 0; i < 19; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0);
+    assert(f.c.ui().shell_back == 0);             // нулевая ссылка видна в ui
+    assert(f.c.ui().shell_peh_null);
+    f.tick(f.settings(true, 1));                  // быстрый путь: PEH погашен
+    assert(f.c.ui().fp_build_resets == 1);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    std::printf("  backref-null shell: seen (fast path via PEH), no longer blind\n");
+}
+
+// ---- 37. §4.24: живой обработчик — быстрый путь не срабатывает ------------
+void test_peh_alive_keeps_slow_path() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    // Сигнатура Томпсона §4.22: панцирь с нашей ссылкой и ЖИВЫМ обработчиком —
+    // здоровая первая закачка ассета выглядит так же, поэтому вердикт только
+    // после долгого наблюдения (450 тиков), быстрый путь молчит.
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 100; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0);        // быстрый путь не fired
+    assert(!f.c.ui().shell_peh_null);
+    for (int i = 0; i < 349; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().fp_build_resets == 0);        // 449 тиков — ещё ждём
+    f.tick(f.settings(true, 1));                  // 450-й: медленный вердикт
+    assert(f.c.ui().fp_build_resets == 1);
+    assert(f.io.value<uint64_t>(fp + go_active::FPMANAGER_CURRENT_OBJECT) == 0);
+    std::printf("  PEH alive: fast path silent, slow 450-tick path unchanged\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1232,6 +1308,9 @@ int main() {
     test_quarantine_is_per_weapon_id();
     test_reset_is_not_slot_restore();
     test_long_skin_array_is_not_no_skins();
+    test_peh_null_shell_fast_reset();
+    test_backref_null_shell_is_seen();
+    test_peh_alive_keeps_slow_path();
     std::printf("OK\n");
     return 0;
 }

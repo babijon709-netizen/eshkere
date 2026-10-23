@@ -91,6 +91,12 @@ private:
     // «только что сбросили»). quarantine_ стартует с -2, чтобы первое же
     // «карантина нет» (-1) не напечатало «карантин снят».
     int  resets_ = -1, quarantine_ = -2;
+    // §4.24: наблюдение за панцирём и беспанцирным застреванием — строка на
+    // появление/смену деталей и каждые 10 с ожидания. Отравленный хвост
+    // больше не молчит: даже если игрок закроет игру до сброса, в логе
+    // останется форма отравления (класс панциря, ссылка, обработчик).
+    int  shell_bucket_ = -1, stuck_bucket_ = -1;
+    char shell_state_[64] = {};
     int  picked_index_ = -2, picked_ready_ = -2;
     char weapon_[48] = {};
     char head_[24] = {};   // последняя сообщённая голова рабочей копии (hex)
@@ -103,6 +109,8 @@ private:
         enabled_ = -1; skin_ = level_ = count_ = -2; known_ = -1; block_ = -1;
         stale_ = handle_ = -1; local_ = -2; item_ = -2; refill_ = -1;
         resets_ = -1; quarantine_ = -2;
+        shell_bucket_ = -1; stuck_bucket_ = -1;
+        shell_state_[0] = '\0';
         picked_index_ = picked_ready_ = -2;
         weapon_[0] = '\0';
         head_[0] = '\0';
@@ -265,11 +273,62 @@ inline void Writer::note(const Snapshot& s) {
     // только растёт, и именно эти моменты устройство должно прислать в логе:
     // по ним видно, на каком скине/стволе ломается сборка. Сам сброс вьюху не
     // пересобирает — пересборка событие игры (холстер/дроу), о чём и говорим.
+    // §4.24: наблюдение за панцирём — строка на появление (с деталями: класс,
+    // обратная ссылка, PlayerEventHandler) и каждые 10 с ожидания. Детали
+    // решают всё: погашенный обработчик у FPBow — блокада каждого дроу
+    // (FPBow.FDN делает на нём NRE ещё до очистки _currentWeapon), поэтому
+    // сброс прилетает через 2 с; живая ссылка на игрока при живом обработчике
+    // — здоровая первая докачка ассета либо отравление §4.22, порог 45 с.
+    if (s.ui.shell_watch > 0) {
+        char state[64];
+        std::snprintf(state, sizeof(state), "%s|%d|%d",
+                      s.ui.shell_class[0] ? s.ui.shell_class : "?",
+                      s.ui.shell_back, s.ui.shell_peh_null ? 1 : 0);
+        const int bucket = s.ui.shell_watch / 10;
+        if (std::strcmp(state, shell_state_) != 0) {
+            std::snprintf(shell_state_, sizeof(shell_state_), "%s", state);
+            shell_bucket_ = bucket;
+            say(s, "!! сборка вьюхи встала: полусобранный %s висит в _currentWeapon "
+                   "(ссылка игрока: %s, обработчик событий: %s, %d-я секунда) — "
+                   "здоровая докачка ассета дойдёт до On_Draw сама, отравление чит сбросит",
+                s.ui.shell_class[0] ? s.ui.shell_class : "FPObject",
+                s.ui.shell_back == 1  ? "наша"
+                : s.ui.shell_back == 0 ? "нулевая"
+                : s.ui.shell_back == 2 ? "чужая" : "не прочиталась",
+                s.ui.shell_peh_null ? "ПОГАШЕН" : "на месте",
+                s.ui.shell_watch);
+        } else if (bucket != shell_bucket_) {
+            shell_bucket_ = bucket;
+            say(s, "вьюха полусобрана уже ~%d с — игра не достраивает, чит наблюдает",
+                s.ui.shell_watch);
+        }
+    } else if (shell_state_[0]) {
+        shell_state_[0] = '\0';
+        shell_bucket_ = -1;
+    }
+
+    // §4.24: беспанцирное застревание — piece «держится в руках» (Enabled=1),
+    // FP-цепочка не резолвится (стадии 7–9), а панциря в _currentWeapon НЕТ:
+    // игра уронила сборку раньше создания FPObject. Сбрасывать нечего —
+    // строка каждые 10 с, чтобы форма попала в лог, а не в молчание дедупа.
+    if (s.ui.stuck_seconds >= 10) {
+        const int bucket = s.ui.stuck_seconds / 10;
+        if (bucket != stuck_bucket_) {
+            stuck_bucket_ = bucket;
+            say(s, "!! предмет в руках, а вьюха не собирается уже ~%d с (стадия %d): "
+                   "панциря в _currentWeapon нет — игра уронила сборку раньше создания "
+                   "FPObject, сбрасывать нечего (лечит перезайти на сервер)",
+                s.ui.stuck_seconds, s.ui.stage);
+        }
+    } else {
+        stuck_bucket_ = -1;
+    }
+
     if (resets_ < 0) {
         resets_ = s.ui.fp_build_resets;   // первое наблюдение — запоминаем молча
     } else if (s.ui.fp_build_resets > resets_) {
         resets_ = s.ui.fp_build_resets;
-        say(s, "!! игра уронила сборку FP-вьюхи: полусобранный ствол висел 45+ с — чит сбросил _currentWeapon (сброс №%d): убери и достань ствол, вьюха соберётся заново", resets_);
+        say(s, "!! игра уронила сборку FP-вьюхи: чит сбросил _currentWeapon (сброс №%d) — убери и достань ствол, вьюха соберётся заново", resets_);
     }
 
     // §4.22: карантин скина, уронившего сборку. Строка и на установку, и на

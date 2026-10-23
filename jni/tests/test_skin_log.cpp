@@ -642,6 +642,71 @@ void test_build_reset_and_quarantine_lines() {
     std::printf("  §4.22: reset/quarantine lines — once per event, dedup works\n");
 }
 
+// §4.24: строки наблюдения за панцирём и беспанцирным застреванием.
+// Отравленный хвост не смеет молчать: дедуп блока глотал его целиком (v16 —
+// лог обрывался на самом отравлении), поэтому прогресс сообщается на
+// появление/смену деталей и дальше каждые 10 с.
+void test_shell_watch_and_stuck_lines() {
+    fresh();
+    skinlog::Writer w;
+    skinlog::Snapshot s = make_snap(0.0);
+    w.note(s);                                  // здоров: сентинели сеются молча
+    assert(count_of(slurp(log_path()), "сборка вьюхи встала") == 0);
+
+    // Панцирь появился: FPBow, обратная ссылка наша, обработчик событий погашен
+    // (быстрый путь сброса: FPBow.FDN на нуле делает NRE ещё до очистки).
+    skinlog::Snapshot sh = s;
+    sh.now = 10.0;
+    sh.ui.stage = 9;
+    sh.ui.status = viewmodel::Status::Failed;
+    sh.ui.shell_watch = 1;
+    sh.ui.shell_peh_null = true;
+    sh.ui.shell_back = 1;
+    std::snprintf(sh.ui.shell_class, sizeof(sh.ui.shell_class), "FPBow");
+    w.note(sh);
+    std::string text = slurp(log_path());
+    assert(count_of(text, "!! сборка вьюхи встала: полусобранный FPBow") == 1);
+    assert(count_of(text, "ссылка игрока: наша") == 1);
+    assert(count_of(text, "обработчик событий: ПОГАШЕН") == 1);
+    // Тот же панцирь с теми же деталями — дедупликация.
+    sh.now = 10.1;
+    w.note(sh);
+    assert(count_of(slurp(log_path()), "сборка вьюхи встала") == 1);
+    // Новый 10-секундный бакет — строка прогресса.
+    sh.ui.shell_watch = 10;
+    sh.now = 19.0;
+    w.note(sh);
+    assert(count_of(slurp(log_path()), "вьюха полусобрана уже ~10 с") == 1);
+    // Сменились детали (другой панцирь) — новая строка появления.
+    sh.ui.shell_back = 0;
+    sh.now = 19.5;
+    w.note(sh);
+    assert(count_of(slurp(log_path()), "ссылка игрока: нулевая") == 1);
+
+    // Панцирь ушёл (сброс состоялся) — сентинели гаснут молча.
+    w.note(s);
+    s.now = 21.0;
+
+    // Беспанцирное застревание: piece в руках, стадии 7–9, _currentWeapon пуст —
+    // сбрасывать нечего, строка каждые 10 с.
+    skinlog::Snapshot st = s;
+    st.now = 40.0;
+    st.ui.stage = 7;
+    st.ui.status = viewmodel::Status::Failed;
+    st.ui.stuck_seconds = 10;
+    w.note(st);
+    assert(count_of(slurp(log_path()),
+                    "!! предмет в руках, а вьюха не собирается уже ~10 с (стадия 7)") == 1);
+    st.now = 40.1;
+    w.note(st);
+    assert(count_of(slurp(log_path()), "предмет в руках, а вьюха не собирается") == 1);
+    st.ui.stuck_seconds = 20;
+    st.now = 50.0;
+    w.note(st);
+    assert(count_of(slurp(log_path()), "~20 с (стадия 7)") == 1);
+    std::printf("  §4.24: shell-watch/stuck lines — onset, 10-s progress, dedup\n");
+}
+
 int main() {
     test_disabled_writes_nothing();
     test_unbound_writes_nothing();
@@ -664,6 +729,7 @@ int main() {
     test_build_stamp_in_header();
     test_unwritable_dir_is_survivable();
     test_build_reset_and_quarantine_lines();
+    test_shell_watch_and_stuck_lines();
     ::unlink(log_path().c_str());
     std::printf("OK\n");
     return 0;

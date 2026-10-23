@@ -53,6 +53,8 @@ static const LangPair kUiEn[] = {
     {"Выкл", "Off"},
     {"Выключено", "Off"},
     {"Вьюха", "Viewmodel"},
+    {"Вьюха не собирается — игра уронила сборку: подробности в skin.log", "The view won't build — the game broke the assembly: details in skin.log"},
+    {"Вьюха полусобрана — чит наблюдает: докачка достроит, отравление сбросит", "The view is half-built — the cheat is watching: a download finishes it, poison gets reset"},
     {"Вьюха собрана — ассет докачивается сам (нужен интернет)", "The view is built — the asset downloads itself (internet needed)"},
     {"Голова", "Head"},
     {"Готово", "Done"},

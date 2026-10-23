@@ -249,6 +249,20 @@ inline void PrintUi(metadump::Log& log, const viewmodel::SkinUiInfo& ui) {
         log.say("сборка   : игра роняла сборку FP-вьюхи — чит сбросил _currentWeapon, сбросов %d: убери и достань ствол", ui.fp_build_resets);
     if (ui.quarantine_skin >= 0)
         log.say("карантин : скин #%d уронил сборку вьюхи — индекс возвращён к родному, тот же скин на этом стволе не применится", ui.quarantine_skin);
+    // §4.24: наблюдение за застрявшей сборкой — состояние (пока держится),
+    // а не история. Панцирь с деталями: класс полусобранного объекта,
+    // обратная ссылка, обработчик событий (погашенный у FPBow — блокада
+    // каждого дроу, быстрый сброс на 2-й секунде).
+    if (ui.shell_watch > 0)
+        log.say("панцирь  : полусобранный %s в _currentWeapon ~%d с (ссылка игрока: %s, обработчик событий: %s) — чит наблюдает%s",
+                ui.shell_class[0] ? ui.shell_class : "FPObject", ui.shell_watch,
+                ui.shell_back == 1  ? "наша"
+                : ui.shell_back == 0 ? "нулевая"
+                : ui.shell_back == 2 ? "чужая" : "не прочиталась",
+                ui.shell_peh_null ? "ПОГАШЕН" : "на месте",
+                ui.shell_peh_null ? "; сброс прилетит сам" : "");
+    if (ui.stuck_seconds >= 10)
+        log.say("застревание: предмет в руках, а вьюха не собирается ~%d с (стадия %d) — панциря нет, игра уронила сборку раньше создания FPObject", ui.stuck_seconds, ui.stage);
     log.say("предмет  : Oxide.Item.skin %s",
             ui.item_state < 0 ? "не читается (третья копия не пишется)"
             : ui.item_state == 0 ? "держит наш индекс (дроп и сохранение несут его)"

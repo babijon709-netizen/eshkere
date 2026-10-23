@@ -121,6 +121,22 @@
 // объект игрока переживает переход, OnStartClient не перезапускается, и ноль
 // пересборок.
 //
+// ЧЕТВЁРТАЯ ТОЧКА ЗАПИСИ — ВТОРОЙ ЭКЗЕМПЛЯР тех же Oxide.Item.skin/skinLevel,
+// из кэша дроу PlayerWeapon+0x120 (RE 11978). Экип-дроу via(kJw) (Slot 32,
+// 0x7BB7540) сначала кэширует в +0x120 Item записи экипировки ([kJw+0x10],
+// 0x7BB77D8; при ротации экземпляра обнуляется int +0x11C), затем строит
+// SyncVar из ЭТОГО экземпляра — skin +0x30 (0x7BB7864), skinLevel +0x34,
+// mods +0x40 — и подаёт piece в FPManager.LTI. Чит резолвит Item по FP-цепи
+// (FPM.cur -> FPObject -> Item) и обычно получает тот же экземпляр, но
+// серверное обновление Item (ресинк инвентаря) ротирует экземпляр в kJw БЕЗ
+// пересборки FPM.cur: цепь чита устаревает, запись уходит в мёртвый
+// экземпляр, а каждый дроу читает новый — ствол навсегда с дефолтным скином.
+// Симптом устройства (11978): «на некоторых оружиях скины применяются только
+// если скидываю и подбираю оружие» — подбор пересобирает FPM.cur, цепи
+// сходятся. Лечение: пока кэш дроу отличается от FP-цепи, пишем в ОБА
+// экземпляра (страж — тот же ItemData: в окне перехода кэш хранит Item
+// ПРОШЛОГО ствола). Срез §4.26 печатает обе копии (item=/ditem=).
+//
 // АССЕТЫ КАЧАЮТСЯ САМИ — ручная докачка пользователем НЕ нужна (dump11966,
 // дизассемблер). Сборка визуала pXc -> hbB.VsH 0x6CDD3B8 -> VkM 0x6CD9418 ->
 // VkF 0x6CDAFA4: на каждую AssetReference зовётся hbG.Vqs(out
@@ -587,6 +603,22 @@ template<class IO> class Controller {
     // запись по расхождению -> readback -> возврат оригинала.
     Slot<int32_t> skin_item_;
     Slot<uint8_t> level_item_;
+    // Копия 4 — ВТОРОЙ экземпляр Oxide.Item из кэша дроу (pw+0x120):
+    // via(kJw) (Slot 32, 0x7BB7540) на каждом экип-дроу кэширует туда Item
+    // записи экипировки ([kJw+0x10]) и строит SyncVar из ЕГО skin(+0x30)/
+    // skinLevel(+0x34)/mods(+0x40). Обычно это тот же экземпляр, что в
+    // FP-цепи (копия 3), но серверное обновление Item ротирует экземпляр в
+    // kJw без пересборки FPM.cur: FP-цепь устаревает, запись уходит в мёртвый
+    // экземпляр, а дроу вечно читает новый — ствол навсегда с дефолтным
+    // скином, лечит только дроп+подбор (устройство 11978: «на некоторых
+    // оружиях скины применяются только если скидываю и подбираю»). Пишем в
+    // оба, пока они расходятся; страж по тому же ItemData не даёт писать в
+    // чужой ствол в окне перехода (кэш обновляется самим дроу ДО чтения
+    // skin). В operator== контекста НЕ входит по той же причине, что
+    // via_cache: ротация экземпляра — не смена ствола.
+    Identity draw_item_{};
+    Slot<int32_t> skin_item2_;
+    Slot<uint8_t> level_item2_;
 
     bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
     bool scan_request_ = false;    // одноразовый запрос перечитать список
@@ -810,6 +842,16 @@ template<class IO> class Controller {
         if (context_.item.object >= 0x10000 &&
             io.read(context_.item.object + go_active::ITEM_SKIN, item_skin))
             item_state_ = (piece && item_skin == (int32_t)piece->skin) ? 0 : 1;
+        // Копия 4: кэш дроу разошёлся и держит чужое значение — Item.skin
+        // ЦЕЛИКОМ «чужой»: экип-дроу строит SyncVar именно из этого
+        // экземпляра, и вердикт меню не должен врать «наш», пока дроу читает
+        // дефолт.
+        if (item_state_ == 0 && draw_item_.object) {
+            int32_t draw_skin = 0;
+            if (!io.read(draw_item_.object + go_active::ITEM_SKIN, draw_skin) ||
+                !piece || draw_skin != (int32_t)piece->skin)
+                item_state_ = 1;
+        }
         Piece work;
         // Проверка рабочей копии — щадящая, ровно как в tick(): иначе копия,
         // которую тик только что записал, показывала бы «не читается».
@@ -888,6 +930,13 @@ template<class IO> class Controller {
         } else {
             skin_item_ = {}; level_item_ = {};
         }
+        if (draw_item_.object && draw_item_.life(io) == Life::Alive) {
+            ok = level_item2_.restore(io) && ok;
+            ok = skin_item2_.restore(io) && ok;
+        } else {
+            skin_item2_ = {}; level_item2_ = {};
+        }
+        draw_item_ = {};
         return ok;
     }
 
@@ -1004,6 +1053,13 @@ template<class IO> class Controller {
         else
             std::snprintf(out, cap, "?");
     }
+    void dump_i32(uint64_t addr, char* out, size_t cap) {
+        int32_t v = 0;
+        if (addr >= 0x10000 && io.read(addr, v))
+            std::snprintf(out, cap, "%d", v);
+        else
+            std::snprintf(out, cap, "?");
+    }
 
     // §4.26: одна строка сырого FP-состояния — всё, из чего состоит конвейер
     // сборки вьюхи. cur с классом и инвариантом (Item/uhq/обратная ссылка/
@@ -1077,6 +1133,19 @@ template<class IO> class Controller {
         }
         ap(" gate="); dump_u32(pw ? pw + PLAYERWEAPON_DRAW_GATE : 0, v, sizeof(v)); ap(v);
         ap(" slot="); dump_u32(pw ? pw + PLAYERWEAPON_DRAW_SLOT : 0, v, sizeof(v)); ap(v);
+        // Копии Item.skin: FP-цепь (item=) и кэш дроу pw+0x120 (ditem=
+        // указатель:skin). Расхождение item=/ditem= — картина «скин только
+        // после дропа+подбора»: экип-дроу via(kJw) строит SyncVar из ditem.
+        ap(" item=");
+        dump_i32(context_.item.object ? context_.item.object + ITEM_SKIN : 0, v, sizeof(v)); ap(v);
+        uint64_t ditem = 0;
+        ap(" ditem=");
+        if (pw && pointer(io, pw + PLAYERWEAPON_DRAW_ITEM, ditem) && ditem >= 0x10000) {
+            dump_hex(pw + PLAYERWEAPON_DRAW_ITEM, v, sizeof(v)); ap(v); ap(":");
+            dump_i32(ditem + ITEM_SKIN, v, sizeof(v)); ap(v);
+        } else {
+            ap("0");
+        }
         ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
         ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
     }
@@ -1127,6 +1196,7 @@ public:
     bool has_state() const {
         return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||
                skin_item_.owned || level_item_.owned ||
+               skin_item2_.owned || level_item2_.owned ||
                head_lo_local_.owned || head_hi_local_.owned;
     }
     // Одноразовый запрос перезаписать обе копии piece, даже если значения уже
@@ -1183,6 +1253,7 @@ public:
         const bool ok = !restore_originals || restore_all();
         skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
         skin_item_ = {}; level_item_ = {};
+        skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
         head_lo_local_ = {}; head_hi_local_ = {};
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
@@ -1370,6 +1441,7 @@ public:
             if (!restore_all()) {
                 skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
                 skin_item_ = {}; level_item_ = {};
+                skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
                 head_lo_local_ = {}; head_hi_local_ = {};
             }
             context_ = next;
@@ -1459,6 +1531,38 @@ public:
             if (force_rewrite) { skin_item_.invalidate(); level_item_.invalidate(); }
             if (!skin_item_.put(io, (int32_t)want_skin)) { status = Status::Failed; stage_ = 22; return; }
             if (!level_item_.put(io, want_level)) { status = Status::Failed; stage_ = 23; return; }
+        }
+
+        // Копия 4 — экземпляр Item из кэша дроу pw+0x120 (см. объявление
+        // слотов). Резолв каждый тик: ротация экземпляра — норма (drawSV сам
+        // обновляет кэш перед чтением skin), цена — два чтения указателей.
+        // Страж — тот же ItemData, что у FP-цепи: в окне перехода кэш хранит
+        // Item ПРОШЛОГО ствола, и запись текущего выбора туда испортила бы
+        // чужой предмет. Стадии делят с копией 3 — то же поле, другой
+        // экземпляр.
+        uint64_t ditem = 0, ddata = 0;
+        if (pointer(io, context_.weapon.object + go_active::PLAYERWEAPON_DRAW_ITEM, ditem) &&
+            ditem >= 0x10000 && ditem != context_.item.object &&
+            pointer(io, ditem + go_active::ITEM_DATA, ddata) &&
+            ddata == context_.item_data.object) {
+            if (draw_item_.object != ditem) {
+                Identity probe{};
+                draw_item_ = probe.capture(io, ditem, false) ? probe : Identity{};
+            }
+        } else {
+            draw_item_ = {};
+        }
+        if (draw_item_.object) {
+            int32_t draw_skin = 0;
+            uint8_t draw_level = 0;
+            if (io.read(draw_item_.object + go_active::ITEM_SKIN, draw_skin) &&
+                io.read(draw_item_.object + go_active::ITEM_SKIN_LEVEL, draw_level)) {
+                skin_item2_.sample_value(draw_item_.object + go_active::ITEM_SKIN, draw_skin);
+                level_item2_.sample_value(draw_item_.object + go_active::ITEM_SKIN_LEVEL, draw_level);
+                if (force_rewrite) { skin_item2_.invalidate(); level_item2_.invalidate(); }
+                if (!skin_item2_.put(io, (int32_t)want_skin)) { status = Status::Failed; stage_ = 22; return; }
+                if (!level_item2_.put(io, want_level)) { status = Status::Failed; stage_ = 23; return; }
+            }
         }
 
         // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ подаёт piece в

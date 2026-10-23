@@ -1255,6 +1255,18 @@ inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE = 0xF0;
 // вооружает только ceC (piece-RPC; на устройстве не срабатывал всю сессию —
 // gate замер на 19), поэтому в срез §4.26 печатаются ОБА.
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT = 0x150; // int wDY
+// Кэш Item-источника дроу: via(kJw) (Slot 32, 0x7BB7540) на каждом экип-дроу
+// кладёт в +0x120 Item записи экипировки ([kJw+0x10]; `ldr x1,[x20,#0x10] ...
+// str x1,[x19,#0x120]` @0x7BB77D8, при ротации экземпляра обнуляется int
+// +0x11C) и ПОТОМ строит SyncVar из этого экземпляра: skin +0x30 (0x7BB7864),
+// skinLevel +0x34 (0x7BB7870), mods +0x40 — piece уходит в FPManager.LTI.
+// Наша FP-цепь (FPM.cur -> FPObject -> Item) обычно даёт тот же экземпляр, но
+// серверное обновление Item (ресинк инвентаря) ротирует экземпляр в kJw БЕЗ
+// пересборки FPM.cur: дроу читает новый, чит пишет мёртвый — ствол навсегда
+// с дефолтным скином, лечит только дроп+подбор (подбор пересобирает FPM.cur,
+// цепи сходятся). Поэтому кэш дроу — четвёртая точка записи, пока он отличается
+// от FP-цепи (см. skin_changer_memory.h).
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM = 0x120; // Item-кэш via(kJw)
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0x110;
 // PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
 //   kZy visual 0x20 (11966: dV), WeaponPiece piece 0x28, CancellationTokenSource

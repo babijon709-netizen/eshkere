@@ -409,6 +409,9 @@ int main() {
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
     assert(go_active::PLAYERWEAPON_DRAW_GATE == 0xF0);
     assert(go_active::PLAYERWEAPON_DRAW_SLOT == 0x150);
+    // Кэш Item-источника дроу: via(kJw) кладёт туда [kJw+0x10] и строит из
+    // НЕГО SyncVar (skin +0x30) — четвёртая точка записи скинченджера.
+    assert(go_active::PLAYERWEAPON_DRAW_ITEM == 0x120);
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x110);

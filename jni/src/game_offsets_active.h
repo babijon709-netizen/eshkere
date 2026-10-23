@@ -493,6 +493,7 @@ inline std::uint64_t PLAYERWEAPON_FP_VIEW     = game_offsets::PLAYERWEAPON_FP_VI
 inline std::uint64_t PLAYERWEAPON_SKIN_HANDLE = game_offsets::PLAYERWEAPON_SKIN_HANDLE;
 inline std::uint64_t PLAYERWEAPON_DRAW_GATE   = game_offsets::PLAYERWEAPON_DRAW_GATE;
 inline std::uint64_t PLAYERWEAPON_DRAW_SLOT   = game_offsets::PLAYERWEAPON_DRAW_SLOT;
+inline std::uint64_t PLAYERWEAPON_DRAW_ITEM   = game_offsets::PLAYERWEAPON_DRAW_ITEM;
 inline std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
 inline std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
 inline std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;
@@ -998,6 +999,7 @@ inline void Select(GameVersion version) {
         PLAYERWEAPON_SKIN_HANDLE = game_offsets_beta::PLAYERWEAPON_SKIN_HANDLE;
         PLAYERWEAPON_DRAW_GATE = game_offsets_beta::PLAYERWEAPON_DRAW_GATE;
         PLAYERWEAPON_DRAW_SLOT = game_offsets_beta::PLAYERWEAPON_DRAW_SLOT;
+        PLAYERWEAPON_DRAW_ITEM = game_offsets_beta::PLAYERWEAPON_DRAW_ITEM;
         PLAYERWEAPON_FP_MANAGER = game_offsets_beta::PLAYERWEAPON_FP_MANAGER;
         FPWEAPONVIEW_VISUAL = game_offsets_beta::FPWEAPONVIEW_VISUAL;
         FPWEAPONVIEW_PIECE = game_offsets_beta::FPWEAPONVIEW_PIECE;
@@ -1500,6 +1502,7 @@ inline void Select(GameVersion version) {
         PLAYERWEAPON_SKIN_HANDLE = game_offsets::PLAYERWEAPON_SKIN_HANDLE;
         PLAYERWEAPON_DRAW_GATE = game_offsets::PLAYERWEAPON_DRAW_GATE;
         PLAYERWEAPON_DRAW_SLOT = game_offsets::PLAYERWEAPON_DRAW_SLOT;
+        PLAYERWEAPON_DRAW_ITEM = game_offsets::PLAYERWEAPON_DRAW_ITEM;
         PLAYERWEAPON_FP_MANAGER = game_offsets::PLAYERWEAPON_FP_MANAGER;
         FPWEAPONVIEW_VISUAL = game_offsets::FPWEAPONVIEW_VISUAL;
         FPWEAPONVIEW_PIECE = game_offsets::FPWEAPONVIEW_PIECE;

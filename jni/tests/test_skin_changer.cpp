@@ -85,6 +85,7 @@ constexpr uint64_t skin2     = 0x3E000;     // WeaponRecolorSkinData
 constexpr uint64_t refs1     = 0x3F000;     // AssetReference[] у skin1
 constexpr uint64_t pw        = 0x40000;     // PlayerWeapon
 constexpr uint64_t fp_view   = 0x41000;     // PlayerFPWeaponView
+constexpr uint64_t item2     = 0x44000;     // второй экземпляр Item (ротация)
 constexpr uint64_t ref0      = 0x50000;     // AssetReference у skin0
 constexpr uint64_t ref1      = 0x50100;     // AssetReference у skin1
 constexpr uint64_t str_base  = 0x60000;
@@ -209,6 +210,9 @@ struct Fixture {
         io.put<uint8_t>(fp + FPMANAGER_UHF, 1);
         io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_GATE, 1);
         io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_SLOT, 5);
+        // Кэш дроу pw+0x120: у здорового ствола там ТОТ ЖЕ экземпляр Item,
+        // что в FP-цепи — копия 4 (skin_item2_) не активируется.
+        io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, item);
         io.put<uint64_t>(pw + PLAYERWEAPON_FP_MANAGER, fp);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
         // §4.24: PlayerEventHandler (+0xC8) жив — у здорового панциря (медленный
@@ -761,6 +765,7 @@ void test_beta_profile_layout() {
     assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x6);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
+    assert(go_active::PLAYERWEAPON_DRAW_ITEM == 0x120);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
     assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
@@ -775,6 +780,7 @@ void test_beta_profile_layout() {
     assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
+    assert(go_active::PLAYERWEAPON_DRAW_ITEM == 0x120);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
     assert(go_active::ITEM_SKIN == 0x30);
@@ -1379,6 +1385,54 @@ void test_fp_dump_watch() {
     std::printf("  fp dump: baseline, trigger+cooldown, heartbeat\n");
 }
 
+// ---- 41. Копия 4: экземпляр Item из кэша дроу pw+0x120 (RE 11978) ---------
+// via(kJw) (Slot 32) строит SyncVar из кэшированного Item, а не из того, что
+// в FP-цепи. Серверное обновление экземпляра разводит цепи: без копии 4 дроу
+// вечно читал бы дефолтный скин (симптом устройства 11978 — «на некоторых
+// оружиях скины применяются только если скидываю и подбираю оружие»).
+void test_draw_item_divergence_written_and_restored() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.live_item_skin() == 1);
+    // Сервер обновил экземпляр Item: в кэше дроу новый, в FP-цепи прежний.
+    f.io.plain(item2);
+    f.io.put<uint64_t>(item2 + go_active::ITEM_DATA, item_data);
+    f.io.put<int32_t>(item2 + go_active::ITEM_SKIN, -1);
+    f.io.put<uint8_t>(item2 + go_active::ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_DRAW_ITEM, item2);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == 1);
+    assert(f.io.value<uint8_t>(item2 + go_active::ITEM_SKIN_LEVEL) == 0);
+    assert(f.live_item_skin() == 1);   // прежний экземпляр тоже поддержан
+    // Сервер затёр новый экземпляр — следующий тик восстанавливает.
+    f.io.put<int32_t>(item2 + go_active::ITEM_SKIN, -1);
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == 1);
+    // Выключение: оригиналы возвращены в оба экземпляра (в новый -1, в прежний 0).
+    f.tick(f.settings(false, 1));
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == -1);
+    assert(f.live_item_skin() == f.original_skin);
+    std::printf("  draw-item divergence: both written, resync healed, restored\n");
+}
+
+// Чужой ствол в кэше дроу (иной ItemData) наш индекс получить не должен:
+// в окне перехода pw+0x120 хранит Item ПРОШЛОГО ствола.
+void test_draw_item_foreign_data_ignored() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    f.io.plain(item2);
+    f.io.put<uint64_t>(item2 + go_active::ITEM_DATA, 0x3A800);
+    f.io.put<int32_t>(item2 + go_active::ITEM_SKIN, -1);
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_DRAW_ITEM, item2);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == -1);
+    std::printf("  draw-item foreign ItemData: ignored\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1427,6 +1481,8 @@ int main() {
     test_zombie_resolve_via_cache();
     test_draw_stall_detector();
     test_fp_dump_watch();
+    test_draw_item_divergence_written_and_restored();
+    test_draw_item_foreign_data_ignored();
     std::printf("OK\n");
     return 0;
 }

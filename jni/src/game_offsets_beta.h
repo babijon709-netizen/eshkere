@@ -663,6 +663,9 @@ inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE   = game_offsets::PLAYERWE
 // Живой слот дроу (wDY @0x150): у беты та же раскладка PlayerWeapon, что и
 // у релиза 11978, поэтому алиас даёт точное значение.
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT   = game_offsets::PLAYERWEAPON_DRAW_SLOT;
+// Кэш Item-источника дроу (+0x120): у беты та же раскладка PlayerWeapon, что
+// и у релиза 11978, поэтому алиас даёт точное значение.
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM   = game_offsets::PLAYERWEAPON_DRAW_ITEM;
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
 inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
 inline constexpr std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;

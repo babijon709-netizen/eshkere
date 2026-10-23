@@ -198,15 +198,17 @@ struct Fixture {
         io.put<uint8_t>(fp + FPMANAGER_UZL + WEAPONPIECE_ENABLED, 1);
         io.put<int16_t>(fp + FPMANAGER_UZL + WEAPONPIECE_NUMBER, 114);
         io.put<int16_t>(fp + FPMANAGER_UZL + WEAPONPIECE_SKIN, original_skin);
-        // §4.26: поля среза — CTS/CTS2/UTCS (маркеры вызова Kxi), флаги
-        // uzj/uhF, гейт дроу и FPManager со стороны PW. Значения произвольны,
-        // но стабильны: срез в тестах обязан читаться целиком.
+        // §4.26: поля среза — CTS/CTS2/UTCS (маркеры вызова Kxi/LTI), флаги
+        // uzj/uhF, гейт дроу, живой слот дроу (11978: wDY @0x150 — его читает
+        // drawSV) и FPManager со стороны PW. Значения произвольны, но стабильны:
+        // срез в тестах обязан читаться целиком.
         io.put<uint64_t>(fp + FPMANAGER_CTS, 0xC750);
         io.put<uint64_t>(fp + FPMANAGER_CTS2, 0xC760);
         io.put<uint64_t>(fp + FPMANAGER_UTCS, 0xC7D0);
         io.put<uint8_t>(fp + FPMANAGER_UZJ, 0);
         io.put<uint8_t>(fp + FPMANAGER_UHF, 1);
         io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_GATE, 1);
+        io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_SLOT, 5);
         io.put<uint64_t>(pw + PLAYERWEAPON_FP_MANAGER, fp);
         io.put<uint64_t>(fp_object + FPOBJECT_PLAYER_BACKREF, player);
         // §4.24: PlayerEventHandler (+0xC8) жив — у здорового панциря (медленный
@@ -1352,7 +1354,7 @@ void test_fp_dump_watch() {
     assert(std::strstr(f.c.ui().dump_text, "SV=1/114/") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "CTS=c750/c760 UTCS=c7d0") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "uzj=0 uhF=1") != nullptr);
-    assert(std::strstr(f.c.ui().dump_text, "gate=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "gate=1 slot=5") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "hnd=abcd0") != nullptr);
     const int seq = f.c.ui().dump_seq;
     // Ничего не меняется — срезов нет до сердцебиения.

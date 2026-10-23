@@ -522,20 +522,38 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // field from there on moved (old 0x90/0xD8/0xE8/0x100). The SyncVar trio was
 // re-identified positionally against the _Mirror_SyncVarHookDelegate__loaded /
 // _weaponPiece / _weaponState tail, not by name (names are re-obfuscated).
-// NB: в PlayerWeapon лежат ДВЕ копии WeaponPiece: SyncVar (wDN, 11966: QVW)
-// и РАБОЧАЯ копия (wDT, 11966: QVN) — не SyncVar, но именно из неё игра
-// собирает визуал. Доказательство 11966 (RVA исторические): pMd(piece)
-// @0x767CF50 пишет piece в +0xC0/+0xC8, затем Ov.pXc -> EN.XLy(piece) ->
-// skinData[Skin] -> hbE.VkR строит skinVisualHandle (+0xB0); OnStartClient
-// @0x767F35C сеет pMd из SyncVar. Доказательство 11978 (свежий RE): обёртка
-// дроу @0x7BB7088 копирует 0x18 байт из +0xD0/+0xE0 (wDT) на стек и передаёт
-// ПО ССЫЛКЕ в @0x7BB70B4, который при bool +0xF4 != 0 берёт FPManager из
-// +0x110, гейт/slot из +0xF0 и вызывает FPManager.LTI @0x6D59828 (аналог
-// Kxi): тот пересоздаёт CTS +0x88 / UTCS +0x98 и запускает сборку FP-вьюхи.
-// SyncVar-копия сама по себе не питает ничего визуального (хук 11966 pFR —
-// голый `ret`), поэтому запись скина обязана попадать в ОБЕ копии; ни одна
-// запись не запускает пересборку сама — игра пересобирает по своим событиям
-// (дроу/холстер через интерфейс jH/kUA, моды, серверные piece-RPC, спавн).
+// NB: в PlayerWeapon лежат ДВЕ копии WeaponPiece: SyncVar (wDN @0x130) и
+// «рабочая копия» (wDT @0xD0). В релизе 11966 игра собирала визуал ИЗ РАБОЧЕЙ
+// копии (pMd сеял её на каждый RPC/спавн, pMj/pMZ несли её в Kxi). В 11978
+// живой путь дроу переехал на SyncVar — доказательство, свежий RE + лог v19
+// (сессия 48, сборка 70644c0, 54 среза):
+//   * via(kJw) -> drawSV (Slot 32, RVA 0x7BB7540): пишет принятую piece в
+//     SyncVar (vsu-путь 0x7BB74C0 -> 0x7BD5888), затем на обоих своих вызовах
+//     FPManager.LTI (0x7BB7A1C/0x7BB7C4C) передаёт piece ИЗ SYNCVAR
+//     (`ldr q0,[x19,#0x130]; ldr x8,[x19,#0x140]`) и slot `ldr w2,[x19,#0x150]`;
+//   * ceC(WeaponPiece,int) (RPC, RVA 0x7BB7D34): вооружает гейт —
+//     `strb #1,[pw,#0xF4]`, `str slot,[pw,#0xF0]`, гасит старый Action 0xE8 —
+//     и зовёт builder 0x7BB5084, который ЕДИНСТВЕННЫЙ пишет рабочую копию
+//     (`str q0,[x19,#0xD0]` @0x7BB50C0) и skinVisualHandle (`stp` @0x7BB5130,
+//     +0xC0); на устройстве за всю сессию не сработал ни разу — wk/gate/hnd
+//     замерли на значениях первого ствола (19/19/0) во всех 54 срезах;
+//   * интерфейсные слоты jH: 18 (0x7BBBA74) и 19 (vVu 0x7BB7088) по-прежнему
+//     читают РАБОЧУЮ копию (0xD0) и через vVb (0x7BB70B4: гейт `ldr w2,
+//     [x19,#0xF0]`, FPM `ldr x0,[x19,#0x110]`, выбор пути по bool +0xF4)
+//     зовут LTI — но в логе ни один дроу не принёс wk-значений (uzL всегда
+//     совпадал с SyncVar на момент дроу), т.е. на устройстве эти слоты спят;
+//   * LTI (RVA 0x6D59828, аналог Kxi) пересоздаёт CTS +0x88 / UTCS +0x98
+//     и запускает сборку; TAIL кладёт piece в uzL (FPM+0x68) — по ней срез
+//     видит, ИЗ ЧЕГО собиралась вьюха.
+// Вывод для скинченджера 11978: рабочая запись — SyncVar (+0x130); запись в
+// рабочую копию (+0xD0) оставлена как страховка для спящих интерфейсных
+// слотов (дешевле, чем доказывать их смерть на всех устройствах). Серверная
+// ресинхронизация piece (vsu/klQ/kau) ПЕРЕЗАПИСЫВАЕТ SyncVar своим значением
+// (skin=-1/оригинал) — в логе v19 поймано живьём (45->0, ->7): наша запись
+// локальная, и дроу, пришедшийся между ресинком и перезаписью, собирает
+// вьюху из серверного скина. skinVisualHandle (+0xC0) в 11978 наполняется
+// только спящим ceC-путём — вердикт «визуал не загружен» по hnd здесь
+// хронический и НЕ означает, что вьюха без скина (вьюха строится из SV).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // 11978: Yp playerWeaponViewReference (тип-интерфейс; реализация YU, декоратор kun); 11966: 0xE8
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar wDN; 11966: 0x110 (QVW)
 // wDT: рабочая копия WeaponPiece (см. NB выше). Пишется самой игрой только в
@@ -1231,6 +1249,12 @@ inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW = 0x108;
 // игрока (11966: 0xF8). ВНИМАНИЕ: 0xDC в 11978 — СЕРЕДИНА piece_local wDT
 // (0xD0..0xE8), старое значение читало бы мусор.
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE = 0xF0;
+// ЖИВОЙ слот дроу 11978: drawSV (via, Slot 32) читает `ldr w2,[x19,#0x150]`
+// на обоих своих вызовах LTI (0x7BB7A0C/0x7BB7C3C) — именно это значение
+// уходит slot-аргументом в сборку на каждом дроу от экипировки. wDr (0xF0)
+// вооружает только ceC (piece-RPC; на устройстве не срабатывал всю сессию —
+// gate замер на 19), поэтому в срез §4.26 печатаются ОБА.
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT = 0x150; // int wDY
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0x110;
 // PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
 //   kZy visual 0x20 (11966: dV), WeaponPiece piece 0x28, CancellationTokenSource

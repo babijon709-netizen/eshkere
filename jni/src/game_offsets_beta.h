@@ -660,6 +660,9 @@ inline constexpr std::uint64_t PLAYERWEAPON_SKIN_HANDLE = 0xC0;
 // (проверено сверкой полей PlayerWeapon в дампах 11966/11977: расхождение
 // только у FP_VIEW/SKIN_HANDLE). Диагностические, записей по ним нет.
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE   = game_offsets::PLAYERWEAPON_DRAW_GATE;
+// Живой слот дроу (wDY @0x150): у беты та же раскладка PlayerWeapon, что и
+// у релиза 11978, поэтому алиас даёт точное значение.
+inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT   = game_offsets::PLAYERWEAPON_DRAW_SLOT;
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
 inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
 inline constexpr std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;

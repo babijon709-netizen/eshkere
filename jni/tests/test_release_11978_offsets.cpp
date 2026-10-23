@@ -408,6 +408,7 @@ int main() {
     assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xC0);
     assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
     assert(go_active::PLAYERWEAPON_DRAW_GATE == 0xF0);
+    assert(go_active::PLAYERWEAPON_DRAW_SLOT == 0x150);
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
     assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
     assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x110);

@@ -1007,12 +1007,14 @@ template<class IO> class Controller {
 
     // §4.26: одна строка сырого FP-состояния — всё, из чего состоит конвейер
     // сборки вьюхи. cur с классом и инвариантом (Item/uhq/обратная ссылка/
-    // обработчик); CTS/CTS2/UTCS — Kxi пересоздаёт их на КАЖДЫЙ вызов
+    // обработчик); CTS/CTS2/UTCS — Kxi/LTI пересоздаёт их на КАЖДЫЙ вызов
     // (dump11966 0x68EE290/0x68EE2B4; 11978 LTI 0x6D598A8/0x6D598CC), поэтому
     // смена их указателей — доказательство, что дроу дошёл до Kxi; флаги
     // uzj/uhF; uzL — piece последней сборки, дошедшей до TAIL; все три копии
-    // piece (SyncVar/рабочая/вьюха); гейт дроу PW+0xF0 и FPManager от PW
-    // +0x110 (11978; 11966: 0xDC/0xF8; цепочка pMZ->pFz / jH->0x7BB70B4);
+    // piece (SyncVar/рабочая/вьюха); гейт дроу PW+0xF0 и ЖИВОЙ слот PW+0x150
+    // (11978: живой путь drawSV носит SyncVar и читает слот 0x150; гейт 0xF0
+    // вооружает только спящий ceC — по паре gate/slot видно, какой путь жив;
+    // 11966: 0xDC; цепочка pMZ->pFz / jH->vVb) и FPManager от PW +0x110;
     // ручка визуала. Срез не зависит от исхода резолва и полезнее
     // всего именно в молчаливых окнах.
     void build_fp_dump(uint64_t player) {
@@ -1074,6 +1076,7 @@ template<class IO> class Controller {
             ap("0");
         }
         ap(" gate="); dump_u32(pw ? pw + PLAYERWEAPON_DRAW_GATE : 0, v, sizeof(v)); ap(v);
+        ap(" slot="); dump_u32(pw ? pw + PLAYERWEAPON_DRAW_SLOT : 0, v, sizeof(v)); ap(v);
         ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
         ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
     }

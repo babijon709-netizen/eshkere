@@ -533,8 +533,8 @@ private:
             return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
         }
         static constexpr uint64_t kHotTypeInfoPairs[][2] = {
-            {0xDEA09F8ULL, 0xDE9BCB0ULL}, // Release 11966: PlayerManager, GameControllerBase
-            {0xDE9A108ULL, 0xDB4AE38ULL}, // Release 11966: PlayerLoopHelper, outer GOT
+            {0xE66DEE8ULL, 0xE669190ULL}, // Release 11978: PlayerManager, GameControllerBase
+            {0xE66DEB0ULL, 0xE66D238ULL}, // Release 11978: PlayerLoopHelper, NetworkClient
             {0xE647138ULL, 0xE640C70ULL}, // Beta 11977: PlayerManager, GameControllerBase
             {0xE647100ULL, 0xE646398ULL}, // Beta 11977: PlayerLoopHelper, NetworkClient
         };

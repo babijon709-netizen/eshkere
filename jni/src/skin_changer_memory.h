@@ -17,15 +17,20 @@
 //   17 циклов записи в SyncVar без единой пересборки вьюхи. Дизассемблер
 //   объяснил почему и назвал настоящую цель:
 //
-//   * РАБОЧАЯ КОПИЯ (+0xC0) — вот что уходит в сборку визуала. Интерфейс
-//     экипировки hbr (слоты pMj(int) 18 @0x768B988, pMZ(int,bool) 19
-//     @0x7671340) делает `ldp x1,x8,[x0,#0xC0]` и через pFz(WeaponPiece,bool)
-//     @0x7671350 зовёт FPManager.Kxi(piece,slot) @0x68EE210 -> CreateFPWeapon
+//   * РАБОЧАЯ КОПИЯ (+0xC0; в 11978 +0xD0, поле wDT) — вот что уходит в
+//     сборку визуала. Интерфейс экипировки hbr (слоты pMj(int) 18 @0x768B988,
+//     pMZ(int,bool) 19 @0x7671340; в 11978 jH/kUA) делает `ldp x1,x8,[x0,#0xC0]`
+//     и через pFz(WeaponPiece,bool) @0x7671350 зовёт FPManager.Kxi(piece,slot)
+//     @0x68EE210 -> CreateFPWeapon. Аналог в 11978 (свежий RE): обёртка
+//     0x7BB7088 копирует 0x18 байт из +0xD0/+0xE0 на стек, метод 0x7BB70B4
+//     (гейт `ldr w2,[x19,#0xF0]`, FPManager `ldr x0,[x19,#0x110]`, bool +0xF4)
+//     зовёт FPManager.LTI(piece&,slot) @0x6D59828 -> та же сборка
 //     (d__68/d__69 @0x68EF274/0x68EF65C) -> PlayerFPWeaponView.XZE/MjH
 //     (WeaponPiece,EV,Action). MjH @0x7C8DD7C кладёт ПРОШЛУЮ ПО ЗНАЧЕНИЮ piece
 //     в копию вьюхи (+0x28/+0x30) и возвращает ничего не сделав, если bit0
 //     (Enabled) переданной piece равен нулю.
-//   * SkinVisualHandle (+0xB0) собирается тоже из копии piece: pMd(WeaponPiece)
+//   * SkinVisualHandle (11966: +0xB0, 11978: +0xC0) собирается тоже из копии
+//     piece: pMd(WeaponPiece)
 //     @0x767CF50 пишет принятую piece в +0xC0/+0xC8 и зовёт Ov.pXc @0x76A3CC4
 //     -> EN.XLy -> skinData[Skin] -> hbE.VkR. На спавне pMd зовёт
 //     OnStartClient @0x767F35C (piece берётся из +0x110), по серверному RPC с
@@ -70,7 +75,7 @@
 // ptrace-слот занят собственным потомком, инъекции кода нет — mem_io.h,
 // stealth.h), поэтому вызвать функции игры он не может. Пересборку делает игра
 // на своих событиях: холстер/дроу (pMZ 0x7671340 читает piece из РАБОЧЕЙ
-// копии (+0xC0) и несёт в pFz -> FPManager.Kxi 0x68EE210 -> Kxj 0x68ED5A8 ->
+// копии (+0xC0, 11978: +0xD0) и несёт в pFz -> FPManager.Kxi 0x68EE210 -> Kxj 0x68ED5A8 ->
 // CreateFPWeapon d__69), RPC насадок/модов (phW читает SyncVar ЖИВЬЁМ ->
 // FPManager.Kxi) и спавн/подбор ствола (OnStartClient -> pMd). Дроп/подбор не
 // пересобирает (§4.18). Исход вызова pMZ решают два гейта CreateFPWeapon
@@ -137,9 +142,10 @@
 // означает «сборки ещё не было», а не «пользователь должен скачать».
 //
 // ДИАГНОСТИКА «пересобралось ли»: PlayerWeapon.playerFPWeaponView (релиз
-// +0xF0, бета +0x108) хранит piece, ИЗ КОТОРОЙ вьюха построена (+0x28). Пока
-// weaponPiece.Skin != fpView.piece.Skin — визуал старый (fp_stale в меню).
-// Рядом PlayerWeapon.skinVisualHandle (+0xB0/+0xC0): _model == 0 означает, что
+// 11978 и бета +0x108; 11966: +0xF0) хранит piece, ИЗ КОТОРОЙ вьюха построена
+// (+0x28). Пока weaponPiece.Skin != fpView.piece.Skin — визуал старый
+// (fp_stale в меню). Рядом PlayerWeapon.skinVisualHandle (11966: +0xB0,
+// 11978/бета: +0xC0): _model == 0 означает, что
 // визуал скина не загружен вовсе.
 //
 // СБОРКА МОЖЕТ УПАСТЬ (§4.22, «отравление Томпсоном»). CreateFPWeapon не
@@ -291,8 +297,8 @@ inline constexpr size_t kPieceHead = 8;
 // поля, из-за которой исправный билд выглядел как «поле не читается».
 template<class IO>
 // raw (если задан) получает байты головы как есть — для диагностики в логе.
-// relaxed — ослабленная валидация ДЛЯ РАБОЧЕЙ КОПИИ (+0xC0): собственный путь
-// дроу игры (pMZ читает piece из +0xC0 и несёт в pFz -> FPManager.Kxi ->
+// relaxed — ослабленная валидация ДЛЯ РАБОЧЕЙ КОПИИ (+0xC0; 11978: +0xD0):
+// собственный путь дроу игры (pMZ читает piece из +0xC0 и несёт в pFz -> FPManager.Kxi ->
 // CreateFPWeapon) решает исход по Enabled, а Loaded/Number в этой копии бывают
 // неканоническими. Ранее здесь утверждалось «CreateFPWeapon смотрит только
 // Enabled» — дизассемблер dump11966 это опроверг: Number bounds-check'ится
@@ -1002,11 +1008,12 @@ template<class IO> class Controller {
     // §4.26: одна строка сырого FP-состояния — всё, из чего состоит конвейер
     // сборки вьюхи. cur с классом и инвариантом (Item/uhq/обратная ссылка/
     // обработчик); CTS/CTS2/UTCS — Kxi пересоздаёт их на КАЖДЫЙ вызов
-    // (dump11966 0x68EE290/0x68EE2B4), поэтому смена их указателей —
-    // доказательство, что дроу дошёл до Kxi; флаги uzj/uhF; uzL — piece
-    // последней сборки, дошедшей до TAIL; все три копии piece (SyncVar/
-    // рабочая/вьюха); гейт дроу PW+0xDC и FPManager от PW +0xF8 (цепочка
-    // pMZ->pFz); ручка визуала. Срез не зависит от исхода резолва и полезнее
+    // (dump11966 0x68EE290/0x68EE2B4; 11978 LTI 0x6D598A8/0x6D598CC), поэтому
+    // смена их указателей — доказательство, что дроу дошёл до Kxi; флаги
+    // uzj/uhF; uzL — piece последней сборки, дошедшей до TAIL; все три копии
+    // piece (SyncVar/рабочая/вьюха); гейт дроу PW+0xF0 и FPManager от PW
+    // +0x110 (11978; 11966: 0xDC/0xF8; цепочка pMZ->pFz / jH->0x7BB70B4);
+    // ручка визуала. Срез не зависит от исхода резолва и полезнее
     // всего именно в молчаливых окнах.
     void build_fp_dump(uint64_t player) {
         using namespace go_active;
@@ -1339,7 +1346,7 @@ public:
                 shell_class_[0] = '\0';
             }
             // §4.21: погашенную голову рабочей копии достраиваем и без рук —
-            // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку
+            // на дроу hbr.pMZ читает её напрямую из PW +0xC0 (11978: +0xD0), минуя цепочку
             // FPObject, и погашенная голова превращает дроу в Release.
             if (has_state() && context_.weapon.object &&
                 context_.weapon.life(io) == Life::Alive) {

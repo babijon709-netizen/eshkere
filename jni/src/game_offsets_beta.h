@@ -10,6 +10,15 @@
 // The 11977 .data section spans [0xE3AFC20, 0xEA5A668). TOD_SCAN_RVA_* stays in
 // that section and covers candidate layer-mask class IWt (TypeDefIndex 6610,
 // TypeInfo slot 0xE6431D8) and TOD sky Gf (TypeDefIndex 706, slot 0xE640D88).
+//
+// ВНИМАНИЕ (2026-10-23): релизный профиль обновлён на build 11978, который
+// сошёлся с бетой 11977 почти по всем раскладкам (хвост PlayerManager +0x10,
+// AssetReference в FPManager, WeaponPiece 0x18, KCC, ragdoll, вьюхи, FPMotion,
+// Aim 0x2B0, gate 0xF0...). Комментарии ниже, говорящие о расхождении «бета
+// против релиза», описывают СТАРЫЙ релиз 11966; расхождения с релизом 11978
+// остались только в TypeInfo-слотах, FASTLOOT ALT-слотах, FPMOTION-именах
+// полей и мелочах вроде CANCELLATION/типов. Значения-алиасы game_offsets::
+// после обновления релиза стали совпадать с бета-значениями автоматически.
 
 namespace game_offsets_beta {
 inline constexpr std::uint64_t CAMERA_PROJECTION_MATRIX = game_offsets::CAMERA_PROJECTION_MATRIX;
@@ -171,9 +180,10 @@ inline constexpr std::uint8_t INPUT_ACTION_PHASE_STARTED = game_offsets::INPUT_A
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD = game_offsets::CAMERA_MANAGER_CAMERA_FIELD;
 
 // ---- Oxide.PlayerManager ---------------------------------------------------
-// В 11977 layout до animator (0x1B0) совпадает с релизом. После playerFlags
-// добавлены cnN (GameObject, 0x270) и cFH (hp, 0x278), поэтому хвост сдвинут
-// на +0x10. Сверка по читаемым полям:
+// В 11977 layout до animator (0x1B0) совпадал с релизом 11966. После
+// playerFlags добавлены cnN (GameObject, 0x270) и cFH (hp, 0x278), поэтому
+// хвост сдвинут на +0x10 (в релизе 11978 та же вставка: KSu 0x270, KSj 0x278 —
+// хвосты беты и релиза теперь identical). Сверка по читаемым полям 11966->11977:
 //   playerFlags     0x270 -> 0x280
 //   prime / kicked  0x274/0x275 -> 0x284/0x285
 //   userID          0x298 -> 0x2A8      teamName  0x2A0 -> 0x2B0
@@ -221,7 +231,8 @@ inline constexpr std::uint64_t EVENT_HANDLER_MANAGER_BACKREF = game_offsets::EVE
 // PlayerManager.playerEventHandler (IZq): Run 0x288, Crouch 0x290, Footstep 0x298,
 // StepLength 0x2A0, Jump 0x2A8, Aim 0x2B0. Перед Run вставлен SetVehicleLock
 // (0x280, +0x8), а между Crouch и Jump — Footstep и StepLength (+0x10),
-// поэтому Aim относительно релиза уехал на +0x18.
+// поэтому Aim относительно релиза 11966 уехал на +0x18. В релизе 11978 те же
+// вставки (Footstep kAe<bool> 0x298, Aim kAj 0x2B0) — значение совпало.
 inline constexpr std::uint64_t EVENT_HANDLER_AIM_ACTIVITY = 0x2B0;
 inline constexpr std::uint64_t EVENT_HANDLER_MOVEMENT_INPUT = game_offsets::EVENT_HANDLER_MOVEMENT_INPUT;
 inline constexpr std::uint64_t PLAYER_MANAGER_RESPAWNING = game_offsets::PLAYER_MANAGER_RESPAWNING;
@@ -251,16 +262,18 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_P
 // Между WeaponPiece и WeaponState расположен новый int attackType (0x148).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x100;            // hS playerWeaponViewReference
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x130;           // jUh (SyncVar weaponPiece)
-// Рабочая копия piece (релизный QVN 0xC0): та же роль — pMd пишет её и
-// отдаёт Ov.pXc, hbr.pMZ/pMj читают её для FP-пересборки. В бете сдвинута
-// на +0x10 вместе с skinVisualHandle (0xC0), то есть лежит сразу за ним.
+// Рабочая копия piece (в релизе 11966 QVN 0xC0, в релизе 11978 wDT 0xD0 —
+// то же значение): та же роль — pMd пишет её и отдаёт Ov.pXc, hbr.pMZ/pMj
+// читают её для FP-пересборки. Сдвинута на +0x10 вместе с skinVisualHandle
+// (0xC0), то есть лежит сразу за ним.
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE_LOCAL = 0xD0;
 inline constexpr std::uint64_t PLAYERWEAPON_STATE = 0x14C;           // jUs (SyncVar weaponState)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160;  // <player>k__BackingField
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER = game_offsets::WEAPONPIECE_NUMBER;
-// Вьюха третьего лица (класс nM, был Eg/ON): WeaponBase 0x50, WeaponPiece 0x58,
-// корневой Transform 0x70 — сдвиг +0x8 относительно релиза. Оборачивающий
+// Вьюха третьего лица (класс nM, был Eg/ON; в релизе 11978 — YU): WeaponBase
+// 0x50, WeaponPiece 0x58, корневой Transform 0x70 — сдвиг +0x8 относительно
+// релиза 11966 (релиз 11978 сошёлся с этими значениями). Оборачивающий
 // декоратор по-прежнему лежит в первом поле (+0x10).
 inline constexpr std::uint64_t WEAPONVIEW_WEAPON_BASE = 0x50;
 inline constexpr std::uint64_t WEAPONVIEW_PIECE = 0x58;
@@ -286,10 +299,10 @@ inline constexpr std::uint64_t FPMANAGER_UZL = game_offsets::FPMANAGER_UZL;
 inline constexpr std::uint64_t FPMANAGER_CTS = game_offsets::FPMANAGER_CTS;
 inline constexpr std::uint64_t FPMANAGER_CTS2 = game_offsets::FPMANAGER_CTS2;
 inline constexpr std::uint64_t FPMANAGER_UTCS = game_offsets::FPMANAGER_UTCS;
-// §4.26: два bool-поля идут по релизной раскладке: у беты FPManager
-// расходится с релизом где-то после 0x90 (AIM_BLEND 0xB8 против 0xA8), но
-// они попадают только в диагностический срез skin.log — записей по ним нет,
-// цена возможного бета-сдвига равна двум байтам правды в строке.
+// §4.26: два bool-поля идут по релизной раскладке. Релиз 11978 получил тот же
+// хвост FPManager (AssetReference 0x80, KLo 0xA0, <KHk> 0xC0), поэтому алиасы
+// теперь дают бете точные значения (сверено с dump11978: релиз и бета 11977
+// идентичны от 0x50 до 0xC1).
 inline constexpr std::uint64_t FPMANAGER_UZJ = game_offsets::FPMANAGER_UZJ;
 inline constexpr std::uint64_t FPMANAGER_UHF = game_offsets::FPMANAGER_UHF;
 // Хвост Oxide.FPManager: AssetReference на 0x80, поле cdf на 0xAC и
@@ -602,8 +615,10 @@ inline constexpr std::uint64_t WEAPONPIECE_LOADED      = game_offsets::WEAPONPIE
 inline constexpr std::uint64_t WEAPONPIECE_MODS        = game_offsets::WEAPONPIECE_MODS;
 // В 11977 у Oxide.WeaponPiece добавлен `bool EmptyHands; // 0x10`: структура
 // выросла с 0x10 до 0x18 байт. Следствие не косметическое — 0x18 > 16, значит
-// в бете WeaponPiece передаётся ПО ССЫЛКЕ, а не пакуется в один 64-битный
-// регистр, как в релизе (в EN.XLy релиза Skin доставался lsr x20,#0x20).
+// WeaponPiece передаётся ПО ССЫЛКЕ, а не пакуется в один 64-битный регистр,
+// как в релизе 11966 (в EN.XLy релиза Skin доставался lsr x20,#0x20; RE 11978
+// подтверждает передачу по ссылке: LTI читает q0=[piece], x8=[piece+0x10]).
+// Релиз 11978 получил то же поле — раскладки совпали.
 // На запись отдельных полей это не влияет: Skin 0x4 и SkinLevel 0x6 на месте.
 inline constexpr std::uint64_t WEAPONPIECE_SIZE        = 0x18;
 inline constexpr std::uint64_t WEAPONPIECE_EMPTY_HANDS = 0x10;

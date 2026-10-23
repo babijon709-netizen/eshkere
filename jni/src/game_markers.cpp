@@ -382,6 +382,11 @@ static bool marker_for_entity_type(int32_t type, MarkerLook& look) {
         case MineableEntityType::Chicken:  look = animal_look("Курица");   return true;
         case MineableEntityType::Fish:     look = animal_look("Рыба");     return true;
         case MineableEntityType::Cannibal: look = animal_look("Каннибал"); return true;
+        // Rat/Wolf получили собственные значения EntityType (25 в 11966, 26 в
+        // 11978) — точный путь раньше именного (именной ниже остаётся сеткой
+        // на случай пустого entityType).
+        case MineableEntityType::Rat:      look = animal_look("Крыса");    return true;
+        case MineableEntityType::Wolf:     look = animal_look("Волк");     return true;
         default: return false; // Ice is deliberately not drawn
     }
 }
@@ -431,9 +436,9 @@ static bool for_each_name_token(const char* raw, Visit&& visit) {
     return false;
 }
 
-// Wolves and rats have no EntityType of their own (the enum stops at the
-// analytics animals), so they are recognised by the prefab name of their
-// GameObject.
+// Safety net by prefab name: entityType бывает пустым/нулевым, а имя
+// GameObject всё ещё говорит «wolf»/«rat»/«bear». (Раньше Rat/Wolf вообще не
+// имели значений в EntityType — теперь имеют: 25/26, см. switch выше.)
 static bool animal_look_from_object_name(const char* raw, MarkerLook& look) {
     static const struct { const char* word; const char* ru; } kAnimals[] = {
         {"wolf", "Волк"},      {"wolfs", "Волк"},     {"wolves", "Волк"},

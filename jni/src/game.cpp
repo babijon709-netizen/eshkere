@@ -321,7 +321,8 @@ static void always_day_tick() {
     }
     // g_day_tod здесь — объект TOD_Sky (небесный менеджер ассета Time of
     // Day). Имя его класса обфусцировано и РОТИРУЕТ каждый билд: в дампе
-    // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq").
+    // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq"),
+    // в dump11966 — "lE", в dump11978 — "QA" (слот QA_TypeInfo 0xE66E548).
     // Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
     // метадата-слоты так и не инициализированы (лог day_log: нечётные токены)
     // — Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его
@@ -9662,9 +9663,11 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
     }
 }
 
-// Поиск статического класса hMj (TypeDefIndex: 6280, RVA 0xDEA6BD8 в Release 11966)
-// или hMD (TypeDefIndex: 6279, RVA 0xDEA6B98). В Beta 11977 слот указывает на
-// IWt (TypeDefIndex: 6610), его 25 LayerMask полей проверяются той же сигнатурой.
+// Поиск статического класса 25 LayerMask-масок: Release 11966 — hMj
+// (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11977 —
+// IWt (6610); Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
+// сигнатура 25 int32 сверена с dump.cs). Во всех сборках поля проверяются
+// одной сигнатурой.
 // Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
 // ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
@@ -9686,8 +9689,9 @@ static bool try_extract_wall_masks_from_klass(uint64_t klass,
     int32_t fields[25]{};
     if (rd_buf(statics, fields, sizeof(fields)) &&
         vis_check::extract_hmj_solid_wall_mask(fields, out_solid_mask, out_strip_mask)) {
-        // Очищаем также маску препятствий AimAssist (hMj + 0x34 = f[13], читаемую
-        // в hwR::ohb на 0x65003CC / 0x6500600) от слоёв Deployed (+0x10), Vehicle (+0x54),
+        // Очищаем также маску препятствий AimAssist (kiQ/hMj + 0x34 = f[13],
+        // читаемую в kwY/hwR::ohb — RVA 0x65003CC/0x6500600 исторические, 11966)
+        // от слоёв Deployed (+0x10), Vehicle (+0x54),
         // Water (+0x18) и FirstPerson (+0x24), оставляя только твёрдые стены
         // (Default | Construction | Terrain) и коллайдеры целей (ProxyEntity | Entity).
         const int32_t desired_hwr_mask = out_solid_mask | fields[7] | fields[8];

@@ -1,11 +1,12 @@
 // Хост-тест скинченджера (skin_changer_memory.h).
 //
 // Проверяет то, что на устройстве не увидеть: перечисление ItemData.skinData[],
-// запись индекса ТОЛЬКО по расхождению в ОБЕ копии WeaponPiece (SyncVar +0x110
-// и рабочую +0xC0 — из второй игра собирает FP-вьюху на дроу), возврат
+// запись индекса ТОЛЬКО по расхождению в ОБЕ копии WeaponPiece (SyncVar +0x130
+// и рабочую +0xD0 — из второй игра собирает FP-вьюху на дроу; релиз 11978,
+// в 11966 было +0x110/+0xC0), возврат
 // оригинала, поведение на пересинке SyncVar, смене ствола и смене сессии, и
 // работу с головой рабочей копии: Enabled в SyncVar не пишется НИКОГДА, а
-// погашенная игрой голова (+0xC0, Enabled=0) достраивается зеркалом из
+// погашенная игрой голова (+0xD0, Enabled=0) достраивается зеркалом из
 // SyncVar — погашенная голова превращает дроу в Release вьюхи вместо сборки
 // (KERNEL.md §4.21, заголовок skin_changer_memory.h).
 #include "skin_changer_memory.h"
@@ -175,8 +176,8 @@ struct Fixture {
         io.put<int16_t>(piece() + WEAPONPIECE_SKIN, original_skin);
         io.put<uint8_t>(piece() + WEAPONPIECE_SKIN_LEVEL, original_level);
         io.put<uint8_t>(piece() + WEAPONPIECE_LOADED, 1);
-        // Рабочая копия (QVN +0xC0): в игре её пишет pMd из той же piece,
-        // поэтому на старте обе копии совпадают.
+        // Рабочая копия (wDT +0xD0; 11966: QVN +0xC0): в игре её пишет pMd из
+        // той же piece, поэтому на старте обе копии совпадают.
         io.put<uint8_t>(piece_local() + WEAPONPIECE_ENABLED, 1);
         io.put<int16_t>(piece_local() + WEAPONPIECE_NUMBER, 114);
         io.put<int16_t>(piece_local() + WEAPONPIECE_SKIN, original_skin);
@@ -765,17 +766,19 @@ void test_beta_profile_layout() {
     assert(go_active::ITEM_SKIN_LEVEL == 0x34);
     assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE64B9E0);
     assert(go_active::EG_TYPEINFO_RVA == 0);   // в бете резолвится по имени
+    // Релиз 11978 сошёлся с бетой по раскладке WeaponPiece/PlayerWeapon —
+    // различаются только TypeInfo-слоты (dump11978 против dumpbeta11977).
     go_active::Select(go_active::GameVersion::Release);
-    assert(go_active::WEAPONPIECE_SIZE == 0x10);
-    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0);
-    assert(go_active::PLAYERWEAPON_PIECE == 0x110);
-    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
-    assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
-    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
+    assert(go_active::WEAPONPIECE_SIZE == 0x18);
+    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
+    assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
+    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
+    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
     assert(go_active::ITEM_SKIN == 0x30);
     assert(go_active::ITEM_SKIN_LEVEL == 0x34);
-    assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);
-    std::printf("  profiles: release 0x10 / beta 0x18, TypeInfo slots pinned\n");
+    assert(go_active::EG_TYPEINFO_RVA == 0xE673558);
+    std::printf("  profiles: release 0x18 == beta 0x18, TypeInfo slots pinned\n");
 }
 }  // namespace
 
@@ -1033,7 +1036,7 @@ void test_stage9_refills_blank_head() {
     Fixture f;
     f.tick(f.settings(true, 1));
     // Игрок временно пропал (нерезолв, «В руках пусто»), а голова погашена:
-    // на дроу hbr.pMZ читает её напрямую из PW +0xC0, минуя цепочку FPObject,
+    // на дроу hbr.pMZ читает её напрямую из PW +0xD0 (11966: +0xC0), минуя цепочку FPObject,
     // поэтому дострой обязан случиться и здесь — фоном, без смены статуса.
     const uint64_t blank_lo = 0x0000FFFFFFFF0000ull;
     f.io.put<uint64_t>(piece_local(), blank_lo);

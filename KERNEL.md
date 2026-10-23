@@ -661,6 +661,63 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
     включая SV — чит читает устаревший PW (проблема контекста, не игры);
     (в) срезов нет — тик/транспорт мертвы, искать в привязке процесса.
 
+27. **Release-профиль обновлён на build 11978 (dump11978.7z, 32402 типа).**
+    Пользователь: «обнови оффсеты на релиз версии игры. дамп на гугл диске
+    dump11978.7z». Методика: трёхсторонняя сверка 11966 -> beta 11977 ->
+    11978 (релиз сошёлся с бетой по всем спорным раскладкам) + свежий RE
+    дроу-пути. Изменилось: все 18 TypeInfo-слотов (PM 0xE66DEE8, PLH
+    0xE66DEB0 — Δ0x38 жив, GC 0xE669190, NC 0xE66D238, WSC 0xE672A10,
+    промисы 0xE67D4E8/E0 — Δ8 жив, hMj->kiQ 0xE674BE8, EG->YB 0xE673558,
+    пятерка скинов 0xE6727B0..D8 и тройка экипировки 0xE6684F8..508 с теми же
+    шагами); TOD-окно скана 0xDE90000..0xDEB0000 -> 0xE660000..0xE680000
+    (новая .data 0xE3D7800..0xEA3C4E0, file_off = RVA − 0xC000; окно накрывает
+    и QA_TypeInfo 0xE66E548 — TOD_Sky теперь «QA», и kiQ); хвост
+    PlayerManager +0x10 от вставки KSu/KSj (0x270/0x278): userID 0x2A8,
+    teamName 0x2B0, vehicle/seat 0x2B8/0x2BC, clan 0x2C0/0x2C8, zipline
+    0x2DC, VoicePlayerState 0x338, hit tracker 0x358 (lE KSn — НЕ путать с
+    lE 11966 = TOD_Sky); Aim в хендлере (kAu) 0x298->0x2B0 (вставка Footstep),
+    AttackContinuously 0x1F0 не сдвинут; KCC: Move 0x13C->0x1AC (у класса
+    теперь ДВА поля Move — 0xF0 новое и 0x1AC преемник RhW, стоит сразу за
+    PlayerInput 0x184), visibility 0x308, motorEnabled 0x30D, hasObserverMove
+    0x3C0; ragdoll m_Bones 0x88->0x90 (вставлен m_Interpolate); FPMotion
+    перестроен как в бете (позы 0x40..0x70, LADDER/JUMP отсутствуют — алиасы
+    на AIM, Object 0xD0, Player 0x120, active 0xE8); PlayerWeapon: skin handle
+    0xC0, piece_local wDT 0xD0, ГЕЙТ ДРОУ 0xDC->0xF0, view 0x100 (тип теперь
+    интерфейс Yp; реализация YU найдена по форме полей, декоратор kun),
+    fp_view 0x108, fp_manager 0x110 (читаемое имя fPManager), SyncVar piece
+    0x130, state 0x14C, backref 0x160; вьюха третьего лица 0x50/0x58/0x70;
+    WeaponPiece вырос до 0x18 (EmptyHands @0x10 — передача по ссылке, как в
+    бете); FPManager: вставлен AssetReference @0x80, хвост +0x10 (CTS 0x88,
+    CTS2 0x90, UTCS 0x98, uzj 0xA0, FOV 0xAC, aim blend 0xB8, uhF 0xC0);
+    FPWeaponView CTS 0x38->0x40. RE-доказательство гейта: FPManager.LTI
+    (WeaponPiece&, int slot) 0x6D59828 пересоздаёт CTS/UTCS (`str x,[x0,#0x88]!`
+    / `#0x98`), его вызывающий 0x7BB70B4 перед BL читает `ldr w2,[x19,#0xF0]`
+    (гейт = slot-аргумент LTI) и `ldr x0,[x19,#0x110]` (FPM), bool +0xF4
+    выбирает FP-путь против старого Action +0xE8; обёртка 0x7BB7088 копирует
+    0x18 байт piece_local из +0xD0/+0xE0. ВНИМАНИЕ для §4.26: старый гейт 0xDC
+    в 11978 — СЕРЕДИНА piece_local (0xD0..0xE8), старое значение читало бы
+    мусор; инструкция п.26 «реверс байта PW+0xDC» теперь про PW+0xF0. Без
+    изменений (сверено): FPObject/FPWeaponBase/FPHitscan и все оружейные
+    подклассы и конфиги, Item/ItemData, скин-цепочка полей (не слоты),
+    AssetReference, слой ввода целиком (включая InputActionState 0x60 через
+    UnmanagedMemory+0x20), Mirror/BCL/делегаты, маркерная цепочка целиком,
+    майнинг-цепочка, виталы/смерть/инвентарь, TOD_CycleParameters,
+    WorldStreaming-статики, промис-поля, PLH/LoopRunner. Попутно: enum
+    ServerPlayersAnalytics.EntityType получил Wolf=26 — добавлен в
+    MineableEntityType и в marker_for_entity_type (точный путь раньше
+    именного; Rat=25 тоже получил case — именной fallback оставлен сеткой на
+    пустой entityType). Карта ротации имён 11966->11978 — в шапке
+    game_offsets.h. Тесты: новый test_release_11978_offsets.cpp (пин всего
+    релизного профиля, инварианты Δ0x38/Δ8/шаги скин-слотов, гейт вне
+    piece_local, TOD-окно накрывает QA и kiQ), обновлены release-пины в
+    test_beta_11977_offsets.cpp, test_skin_changer.cpp (тест 18: релиз==бета
+    по раскладке, различаются только слоты), test_vis_check.cpp (hit tracker
+    0x358, beta==release), test_world_streaming_offsets.cpp; все 31 хост-тест
+    и menu-риг зелёные. Beta-профиль не менялся по значениям: его алиасы
+    game_offsets:: (UZL/CTS/CTS2/UTCS/UZJ/UHF/DRAW_GATE/FP_MANAGER) после
+    обновления релиза стали давать бете ТОЧНЫЕ значения (раскладка FPManager/
+    PlayerWeapon 11977 и 11978 идентична) — обновлены только комментарии.
+
 ## 5. Скрытие процесса (stealth.h) — что новый код обязан учитывать
 
 - Процесс маскируется: cmdline = «/system/bin/vold …», comm = vold,

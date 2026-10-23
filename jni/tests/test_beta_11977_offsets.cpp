@@ -1,7 +1,9 @@
 // Пин beta-профиля сборки 11977 (dumpbeta11977.7z).
 //
-// Закрепляет TypeInfo RVAs и отличающиеся от release offsets, сверенные с
-// script.json и dump.cs 11977; также проверяет, что release-профиль не меняется.
+// Закрепляет TypeInfo RVAs и offsets беты, сверенные с script.json и dump.cs
+// 11977. Релизный профиль с 2026-10-23 обновлён на build 11978 (dump11978.7z),
+// который сошёлся с бетой почти по всем раскладкам — стартовые и финальные
+// assert'ы ниже пинят релиз 11978 (детально — test_release_11978_offsets.cpp).
 #include "game_offsets_active.h"
 #include "maps_lookup.h"
 
@@ -10,14 +12,14 @@
 int main() {
     using go_active::GameVersion;
 
-    // --- Релизный профиль не должен пострадать ---
+    // --- Релизный профиль (11978) до переключения ---
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xDEA09F8);
-    assert(go_active::PLAYER_USER_ID == 0x298);
-    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x298);
-    assert(go_active::KCC_MOVE == 0x13C);
-    assert(go_active::FPMOTION_IDLE_OFFSET == 0x78);
-    assert(go_active::PLAYERWEAPON_VIEW == 0xE8);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE66DEE8);
+    assert(go_active::PLAYER_USER_ID == 0x2A8);
+    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x2B0);
+    assert(go_active::KCC_MOVE == 0x1AC);
+    assert(go_active::FPMOTION_IDLE_OFFSET == 0x40);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
 
     go_active::Select(GameVersion::Beta);
 
@@ -230,30 +232,30 @@ int main() {
     assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA -
                go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 8);
 
-    // --- Возврат в релизный профиль обязан восстановить всё ---
+    // --- Возврат в релизный профиль (11978) обязан восстановить всё ---
     go_active::Select(GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xDEA09F8);
-    assert(go_active::PLAYER_USER_ID == 0x298);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE66DEE8);
+    assert(go_active::PLAYER_USER_ID == 0x2A8);
     assert(go_active::PLAYER_UKX == 0x260);
     assert(go_active::UKX_MODEL_INFO == 0x10);
-    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x298);
+    assert(go_active::EVENT_HANDLER_AIM_ACTIVITY == 0x2B0);
     assert(go_active::EVENT_HANDLER_HEALTH == 0x98);
-    assert(go_active::KCC_MOVE == 0x13C);
-    assert(go_active::KCC_VISIBILITY == 0x298);
-    assert(go_active::KCC_MOTOR_ENABLED == 0x29D);
-    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x350);
+    assert(go_active::KCC_MOVE == 0x1AC);
+    assert(go_active::KCC_VISIBILITY == 0x308);
+    assert(go_active::KCC_MOTOR_ENABLED == 0x30D);
+    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C0);
     assert(go_active::VITALS_MIN_FALL_SPEED == 0xC0);
     assert(go_active::KCC_MOVE_BASE_VELOCITY_Y == 0x3C);
-    assert(go_active::FPMOTION_IDLE_OFFSET == 0x78);
-    assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0x9C);
-    assert(go_active::PLAYERWEAPON_VIEW == 0xE8);
-    assert(go_active::RAGDOLL_BONES_ARRAY == 0x88);
+    assert(go_active::FPMOTION_IDLE_OFFSET == 0x40);
+    assert(go_active::FPMANAGER_WORLD_FOV_TARGET == 0xAC);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
+    assert(go_active::RAGDOLL_BONES_ARRAY == 0x90);
 
-    // --- Скины в релизном профиле (dump11966 + script.json 11966) ---
-    // Oxide.WeaponPiece 9800: Skin 0x4 (short), SkinLevel 0x6 (byte),
-    // структура 0x10 байт, поля EmptyHands НЕТ.
-    assert(go_active::WEAPONPIECE_SIZE == 0x10);
-    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0);
+    // --- Скины в релизном профиле (dump11978 + script.json 11978) ---
+    // Oxide.WeaponPiece: Skin 0x4 (short), SkinLevel 0x6 (byte), EmptyHands
+    // 0x10 (bool) — структура 0x18 байт, как в бете 11977.
+    assert(go_active::WEAPONPIECE_SIZE == 0x18);
+    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
     assert(go_active::WEAPONPIECE_SKIN == 0x4);
     assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x6);
     assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
@@ -261,24 +263,24 @@ int main() {
     assert(go_active::WEAPONSKIN_RIGHT_HAND_REF == 0x48);
     assert(go_active::WEAPONSKIN_FP_REF == 0x58);
     assert(go_active::WEAPONSKIN_RECOLOR_MATERIAL == 0x48);
-    assert(go_active::PLAYERWEAPON_FP_VIEW == 0xF0);
-    assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xB0);
-    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xC0);
-    // §4.22 в релизе (dump11966): FPObject.uhq @0x38, ItemData.m_Id @0x58.
+    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
+    assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xC0);
+    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
+    // §4.22 в релизе: FPObject.<KHI> @0x38 (11966: uhq), ItemData.m_Id @0x58.
     assert(go_active::FPOBJECT_SHOWN == 0x38);
     assert(go_active::ITEMDATA_ID == 0x58);
     assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
-    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x38);
-    assert(go_active::EG_TYPEINFO_RVA == 0xDE9ACA0);
+    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
+    assert(go_active::EG_TYPEINFO_RVA == 0xE673558);
     assert(go_active::EN_TYPEINFO_RVA == 0);
-    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA == 0xDEA5300);
-    assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xDEA52D8);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0xDEA52F0);
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 0xDEA52E8);
-    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 0xDEA52E0);
-    assert(go_active::EQUIPSKINDATA_TYPEINFO_RVA == 0xDE9B080);
-    assert(go_active::EQUIPOBJECTSKIN_TYPEINFO_RVA == 0xDE9B078);
-    assert(go_active::EQUIPRECOLORSKIN_TYPEINFO_RVA == 0xDE9B088);
+    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA == 0xE6727D8);
+    assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE6727B0);
+    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0xE6727C8);
+    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 0xE6727C0);
+    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 0xE6727B8);
+    assert(go_active::EQUIPSKINDATA_TYPEINFO_RVA == 0xE668500);
+    assert(go_active::EQUIPOBJECTSKIN_TYPEINFO_RVA == 0xE6684F8);
+    assert(go_active::EQUIPRECOLORSKIN_TYPEINFO_RVA == 0xE668508);
     // Пределы индекса/уровня общие для обоих профилей.
     assert(go_active::SKIN_INDEX_MAX == 63);
     assert(go_active::SKIN_LEVEL_MAX == 7);

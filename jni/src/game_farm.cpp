@@ -114,7 +114,7 @@ constexpr int    kFarmScanBudget     = 200;  // мягкий бюджет, ед�
 constexpr int    kFarmScanBudgetFast = 600;  // пока рабочий список пуст
 constexpr int    kFarmScanCostCached = 1;    // сверка записи из кеша
 constexpr int    kFarmScanCostNew    = 12;   // классификация новой записи
-constexpr double kFarmScanPeriod   = 2.0;   // с между проходами, когда узлы есть
+constexpr double kFarmScanPeriod   = 0.25;  // быстрый рескан убирает уже добытые узлы из кэша
 constexpr double kFarmScanRetry    = 0.5;   // с, когда список пуст (мир грузится)
 constexpr size_t kFarmNegCacheMax  = 16384; // потолок кеша, записей
 
@@ -340,9 +340,8 @@ void esp_farm_blacklist(unsigned long long id, float seconds) {
     int frames = (int)(seconds * 60.0F);
     if (frames < 60) frames = 60;
     g_farm_blacklist[(uint64_t)id] = frames;
-    // Drop it from the cache right away and rescan soon: keeping a dead
-    // node around until the next 2 s rescan is what made the bot jerk the
-    // camera at garbage coordinates after finishing a tree.
+    // Drop it from the cache right away and rescan soon: stale target entries
+    // must not keep the bot steering at the harvested node.
     for (auto it = g_farm_entities.begin(); it != g_farm_entities.end(); ++it) {
         if (it->identity == (uint64_t)id) { g_farm_entities.erase(it); break; }
     }
@@ -842,7 +841,7 @@ bool esp_farm_get_target(FarmTarget& out) {
     // постройке, в которую упёрся. Класс компонента у живого MineableObject
     // не меняется никогда: смена класса или невалидный объект = узел умер.
     // С дебаунсом (единичный сбой чтения не выкидывает живой узел) и БЕЗ
-    // чёрного списка: ошиблись — следующий проход скана (2 с) вернёт узел.
+    // чёрного списка: ошиблись — следующий быстрый проход вернёт узел.
     {
         static uint64_t s_alive_id = 0;
         static int      s_alive_bad = 0;

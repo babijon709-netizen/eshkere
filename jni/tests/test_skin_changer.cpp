@@ -144,6 +144,10 @@ struct Fixture {
 
     explicit Fixture(bool full = true) {
         using namespace go_active;
+        // §4.39: механизмы прибиты kill-switches (production OFF); тесты их
+        // включают — поведение запинено, прод молчит.
+        c.set_kjw_adopt(true);
+        c.set_ditem_fill(true);
         io.object(player, "PlayerManager", "Oxide");
         io.object(net, "NetworkIdentity", "Mirror");
         io.object(fp, "FPManager", "Oxide");
@@ -2248,6 +2252,27 @@ void test_ditem_clears_on_fp_death() {
     std::printf("  ditem: clears cache on FP death\n");
 }
 
+// ---- §4.39: механизмы выключены по умолчанию ---------------------------------
+// kJw-adoption (qj=2 overwrite роняет игру: порча ItemData belt-Item при
+// совпадении ammo==slot, сессия 32) и ditem-fill (теория мертва: uzL=-1 при
+// залитом ditem, сессия 32) — kill-switches, production OFF. Фикстура выше
+// включает их (механизмы запинены), здесь — OFF = тишина: ни заливки ditem,
+// ни инъекции, qj=0 df=0 в срезе.
+void test_kill_switches_default_off() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);
+    f.c.set_kjw_adopt(false);
+    f.c.set_ditem_fill(false);
+    f.io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, 0);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == 0);
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == 0);
+    assert(std::strstr(f.c.ui().dump_text, "qj=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "df=0") != nullptr);
+    std::printf("  killswitch: adopt+fill off by default\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2328,6 +2353,7 @@ int main() {
     test_ditem_leaves_valid_foreign();
     test_ditem_overwrites_broken();
     test_ditem_clears_on_fp_death();
+    test_kill_switches_default_off();
     std::printf("OK\n");
     return 0;
 }

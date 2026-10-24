@@ -732,6 +732,13 @@ template<class IO> class Controller {
     // 3 запись не прошла).
     Slot<uint64_t> ditem_;
     int ditem_dbg_ = 0;
+    // §4.39: kill-switches. kjw-adoption (§4.34) роняет игру: qj=2 overwrite
+    // портит ItemData belt-Item при совпадении ammo==slot (сессия 32:
+    // yh=6e5030c8d0 стабилен, краш на #10 при активном втором клоббере).
+    // ditem-fill (§4.38) бесполезен: uzL=-1 при залитом ditem ×4 (#3/#6/#8/#9
+    // сессии 32 — via читает НЕ ditem). Оба OFF; тесты включают.
+    bool kjw_adopt_enabled_ = false;
+    bool ditem_fill_enabled_ = false;
     bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
@@ -1238,7 +1245,7 @@ template<class IO> class Controller {
                 cand = inv_dbg_za_;
             else if (inv_dbg_yh_ok_)
                 cand = inv_dbg_yh_;
-            if (cand >= 0x10000 && inv_dbg_kjw_ == 0 &&
+            if (kjw_adopt_enabled_ && cand >= 0x10000 && inv_dbg_kjw_ == 0 &&
                 kjw_live_item_ >= 0x10000 && cand != kjw_live_item_ &&
                 cand != context_.item_data.object &&
                 cand != draw_item_.object && cand != context_.weapon.object &&
@@ -1356,6 +1363,14 @@ template<class IO> class Controller {
         const uint64_t addr = pw + PLAYERWEAPON_DRAW_ITEM;
         uint64_t cur = 0;
         if (!pointer(io, addr, cur)) { ditem_dbg_ = 0; return; }
+        if (!ditem_fill_enabled_) {   // §4.39: теория мертва (сессия 32) — молчим
+            if (ditem_.owned) {
+                if (!ditem_.restore(io)) ditem_ = {};
+                if (!ditem_.owned) ditem_ = {};
+            }
+            ditem_dbg_ = 0;
+            return;
+        }
         if (live_item < 0x10000) {
             if (ditem_.owned) {
                 if (!ditem_.restore(io)) ditem_ = {};
@@ -2005,6 +2020,10 @@ template<class IO> class Controller {
 public:
     viewmodel::Status status = viewmodel::Status::Off;
     explicit Controller(IO& memory) : io(memory) {}
+    // §4.39: kill-switches — только для тестов (production OFF навсегда,
+    // пока не найден настоящий kJw с валидацией; не выносить в меню).
+    void set_kjw_adopt(bool on) { kjw_adopt_enabled_ = on; }
+    void set_ditem_fill(bool on) { ditem_fill_enabled_ = on; }
     int stage() const { return stage_; }
     bool has_state() const {
         return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||

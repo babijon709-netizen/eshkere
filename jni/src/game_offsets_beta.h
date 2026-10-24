@@ -666,6 +666,14 @@ inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT   = game_offsets::PLAYERWE
 // Кэш Item-источника дроу (+0x120): у беты та же раскладка PlayerWeapon, что
 // и у релиза 11978, поэтому алиас даёт точное значение.
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM   = game_offsets::PLAYERWEAPON_DRAW_ITEM;
+// §4.32: гейты via(kJw) и kJw-форма — раскладка беты совпадает с релизом.
+inline constexpr std::uint64_t PLAYERWEAPON_NUMBER_CACHE = game_offsets::PLAYERWEAPON_NUMBER_CACHE;
+inline constexpr std::uint64_t ITEMDATA_UNLOCK_GATE       = game_offsets::ITEMDATA_UNLOCK_GATE;
+inline constexpr std::uint64_t PLAYER_GATE_A              = game_offsets::PLAYER_GATE_A;
+inline constexpr std::uint64_t PLAYER_GATE_B              = game_offsets::PLAYER_GATE_B;
+inline constexpr std::uint64_t PLAYER_GATE_C              = game_offsets::PLAYER_GATE_C;
+inline constexpr std::uint64_t KJW_ITEM                   = game_offsets::KJW_ITEM;
+inline constexpr std::uint64_t KJW_SLOT                   = game_offsets::KJW_SLOT;
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
 inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
 inline constexpr std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;

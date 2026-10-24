@@ -1940,6 +1940,42 @@ void test_dump_carries_loaded_triplet() {
 // object() в полях Data/Client (два L2-пуша, один лишний почти-промах плюс
 // чужой ствол массива).
 // add_warr_only: warr длины 1 (w1), он же массив (a1), промахов нет.
+// ---- §4.32: kJw-форма + гейты via в срезе -----------------------------------
+// Живой kJw (Data+0x38 -> слот: +0x10 наш Item, +0x18 слот 25) и пустой
+// (Data+0x40 -> слот: +0x10 null, +0x18 слот 26), u93/flg/nc выставлены
+// руками. Срез обязан показать k1z1, ks=-1 (замер до усыновления), u93=1,
+// flg=7, nc=-1 и 4-й флаг inv= (pw жив).
+constexpr uint64_t kjw_slot = 0x54000;
+constexpr uint64_t kjw_null = 0x55000;
+constexpr uint64_t gate_a = 0x56000;
+constexpr uint64_t gate_b = 0x57000;
+void test_dump_carries_kjw_shape() {
+    Fixture f;
+    add_inventory(f);
+    using namespace go_active;
+    f.io.plain(kjw_slot);
+    f.io.put<uint64_t>(kjw_slot + KJW_ITEM, belt_item);
+    f.io.put<uint32_t>(kjw_slot + KJW_SLOT, 25);
+    f.io.put<uint64_t>(inv_data + 0x38, kjw_slot);
+    f.io.plain(kjw_null);
+    f.io.put<uint64_t>(kjw_null + KJW_ITEM, 0);
+    f.io.put<uint32_t>(kjw_null + KJW_SLOT, 26);
+    f.io.put<uint64_t>(inv_data + 0x40, kjw_null);
+    f.io.put<uint8_t>(item_data + ITEMDATA_UNLOCK_GATE, 1);
+    f.io.put<uint64_t>(player + PLAYER_GATE_A, gate_a);
+    f.io.put<uint64_t>(gate_a + PLAYER_GATE_B, gate_b);
+    f.io.put<uint8_t>(gate_b + PLAYER_GATE_C, 7);
+    f.io.put<int16_t>(pw + PLAYERWEAPON_NUMBER_CACHE, -1);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "inv=1:1:0:1:") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "k1z1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "ks=-1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "u93=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "flg=7") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "nc=-1") != nullptr);
+    std::printf("  dump: kjw shape k/z + ks/u93/flg/nc gate fields\n");
+}
+
 void test_dump_carries_probe_shape() {
     Fixture f;
     add_inventory(f);
@@ -2022,6 +2058,7 @@ int main() {
     test_loaded_restored_and_guarded();
     test_dump_carries_loaded_triplet();
     test_dump_carries_probe_shape();
+    test_dump_carries_kjw_shape();
     std::printf("OK\n");
     return 0;
 }

@@ -1268,6 +1268,22 @@ inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT = 0x150; // int wDY
 // от FP-цепи (см. skin_changer_memory.h).
 inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM = 0x120; // Item-кэш via(kJw)
 inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0x110;
+// §4.32: гейты via(kJw) (Slot 32, 0x7BB7540; KERNEL.md §29a). Провал любого —
+// пустая piece (skin -1, number из кэша +0x128) вместо сборки из Item записи.
+// Поле: ditem=0 всегда = пустая ветвь; здоровая s44: ditem закэширован, сборка
+// из Item. Диагностика: u93 (ItemData+0x93: проверять ли анлок Dg.ZpX),
+// flg (флаговый байт player+0x78 -> +0x1A0 -> +0x20), nc (кэш number +0x128:
+// -1 всегда = живой путь не срабатывал ни разу).
+inline constexpr std::uint64_t PLAYERWEAPON_NUMBER_CACHE = 0x128; // short, пишет vsg
+inline constexpr std::uint64_t ITEMDATA_UNLOCK_GATE = 0x93;       // bool ItemData
+inline constexpr std::uint64_t PLAYER_GATE_A = 0x78;              // -> +0x1A0
+inline constexpr std::uint64_t PLAYER_GATE_B = 0x1A0;             // -> +0x20
+inline constexpr std::uint64_t PLAYER_GATE_C = 0x20;              // флаговый байт
+// Запись экипировки kJw: Item @+0x10 (LzY: Item != null — гейт g4),
+// слот @+0x18 (vse пишет в +0x150). Проба ищет kJw-форму отдельно от Item:
+// validate смотрит P+0x20 (сам P — Item), kJw — это P+0x10 -> Item.
+inline constexpr std::uint64_t KJW_ITEM = 0x10;
+inline constexpr std::uint64_t KJW_SLOT = 0x18;
 // PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
 //   kZy visual 0x20 (11966: dV), WeaponPiece piece 0x28, CancellationTokenSource
 //   0x40 (11978, как в бете 11977; в 11966 был 0x38 — встроенный WeaponPiece

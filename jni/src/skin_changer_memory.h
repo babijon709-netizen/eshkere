@@ -692,6 +692,14 @@ template<class IO> class Controller {
     // держит Item'ы, но не нашего ствола). Ноль новых чтений — те же проходы.
     int inv_dbg_wlen_ = -1, inv_dbg_arrays_ = 0, inv_dbg_l2push_ = 0;
     int inv_dbg_miss_ = 0;
+    // §4.32: kJw-форма записи экипировки (P+0x10 -> Item ровно нашего
+    // ItemData): k — живых, z — с нулевым Item и слотом u32 <= 64 (пустая
+    // ветвь via голодает), ks — skin первого живого (ok — есть хоть один).
+    // pw — 4-й флаг inv=: PlayerWeapon отсканирован своим L1.
+    bool inv_dbg_pw_ = false;
+    int inv_dbg_kjw_ = 0, inv_dbg_kjw_null_ = 0;
+    int32_t inv_dbg_kjw_skin_ = 0;
+    bool inv_dbg_kjw_skin_ok_ = false;
     bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
@@ -1000,6 +1008,45 @@ template<class IO> class Controller {
         return io.read(obj + ITEM_SKIN, skin) && io.read(obj + ITEM_SKIN_LEVEL, level);
     }
 
+    // §4.32: тихая проверка «P+0x10 — наш Item» для kJw-формы: БЕЗ подсчёта
+    // промахов (m — только про Item-форму, иначе PW-мусор из piece/shorts
+    // утопит счётчик) и БЕЗ исключения FP-Item/кэша дроу: вопрос-то как раз
+    // в том, совпадает ли kJw-Item с FP-цепью («обычно один объект»).
+    bool kjw_item_is_ours(uint64_t it) {
+        using namespace go_active;
+        if (it < 0x10000 || !context_.item_data.object) return false;
+        uint64_t data = 0;
+        if (!pointer(io, it + ITEM_DATA, data)) return false;
+        return data == context_.item_data.object;
+    }
+
+    // §4.32: kJw-форма в точке P (KERNEL.md §29a: via читает [kJw+0x10]).
+    // Живая: P+0x10 -> наш Item (skin первого — в ks=). Пустая: P+0x10 null
+    // и слот u32 <= 64 — кандидат в голодающую запись (гейт g4 LzY роняет
+    // каждый дроу в пустую ветвь skin=-1). Только считает, не пишет.
+    void check_kjw_shape(uint64_t p) {
+        using namespace go_active;
+        if (p < 0x10000) return;
+        uint64_t it = 0;
+        if (!pointer(io, p + KJW_ITEM, it)) return;
+        if (it >= 0x10000) {
+            if (inv_dbg_kjw_ >= 999) return;
+            if (!kjw_item_is_ours(it)) return;
+            int32_t skin = 0;
+            if (!io.read(it + ITEM_SKIN, skin)) return;
+            ++inv_dbg_kjw_;
+            if (!inv_dbg_kjw_skin_ok_) {
+                inv_dbg_kjw_skin_ = skin;
+                inv_dbg_kjw_skin_ok_ = true;
+            }
+            return;
+        }
+        if (it != 0) return;
+        uint32_t slot = 0;
+        if (!io.read(p + KJW_SLOT, slot) || slot > 64) return;
+        if (inv_dbg_kjw_null_ < 999) ++inv_dbg_kjw_null_;
+    }
+
     // §4.28: один проход зонда. Три якоря: прямой массив пояса
     // player+0x1B8 («inventory/belt weapon objects», game.cpp route 4 имён
     // оружия — элементы читаются как Item) и PlayerInventoryData/Client
@@ -1016,6 +1063,9 @@ template<class IO> class Controller {
         inv_dbg_data_ = inv_dbg_client_ = inv_dbg_warr_ = false;
         inv_dbg_wlen_ = -1;
         inv_dbg_arrays_ = inv_dbg_l2push_ = inv_dbg_miss_ = 0;
+        inv_dbg_pw_ = false;
+        inv_dbg_kjw_ = inv_dbg_kjw_null_ = 0;
+        inv_dbg_kjw_skin_ok_ = false;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1026,6 +1076,20 @@ template<class IO> class Controller {
             int32_t wl = -1;
             if (io.read(warr + IL2CPP_ARRAY_LENGTH, wl)) inv_dbg_wlen_ = wl;
             scan_array_for_inv(warr);
+        }
+        // §4.32: PlayerWeapon — свой L1, только kJw-форма и только тихо:
+        // validate здесь утопил бы m мусором из piece/shorts/хэндлов.
+        const uint64_t pw = context_.weapon.object;
+        inv_dbg_pw_ = pw >= 0x10000;
+        if (inv_dbg_pw_) {
+            for (uint64_t off = 0x10; off <= 0x1F8; off += 8) {
+                uint64_t p = 0;
+                if (!pointer(io, pw + off, p) || p < 0x10000) continue;
+                if (p == context_.item.object || p == context_.item_data.object ||
+                    p == draw_item_.object)
+                    continue;
+                check_kjw_shape(p);
+            }
         }
         uint64_t inv = 0;
         if (!pointer(io, context_.player.object + PLAYER_INVENTORY, inv) || inv < 0x10000) {
@@ -1049,6 +1113,7 @@ template<class IO> class Controller {
             for (uint64_t off = 0x10; off <= 0xF8; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, base + off, p) || p < 0x10000) continue;
+                check_kjw_shape(p);   // §4.32: kJw-форма раньше Item-формы
                 if (validate_inv_item(p)) {
                     // Прямое Item — уже классификация: массив и контейнер
                     // не ищем (указатель на массив Item'ом не валидируется).
@@ -1073,6 +1138,7 @@ template<class IO> class Controller {
             for (uint64_t off = 0x10; off <= 0x80; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, l2[i] + off, p) || p < 0x10000) continue;
+                check_kjw_shape(p);   // §4.32
                 if (validate_inv_item(p)) {
                     if (inv_probe_n_ < cap) inv_probe_cands_[inv_probe_n_++] = l2[i] + off;
                     continue;
@@ -1514,18 +1580,22 @@ template<class IO> class Controller {
         }
         ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
         ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
-        // §4.28: зонд пояса — живость якорей data:client:warr, c — кандидатов
-        // в последнем проходе, t — ведётся. c=0 при живых якорях = пояс глубже
-        // двух уровней; t>0 без «инвентарного» срабатывания видно по item=.
-        std::snprintf(v, sizeof(v), " inv=%d:%d:%d:c%dt%d",
+        // §4.28: зонд пояса — живость якорей data:client:warr:pw (§4.32: 4-й —
+        // PlayerWeapon), c — кандидатов в последнем проходе, t — ведётся.
+        // c=0 при живых якорях = пояс глубже двух уровней; t>0 без
+        // «инвентарного» срабатывания видно по item=.
+        std::snprintf(v, sizeof(v), " inv=%d:%d:%d:%d:c%dt%d",
                       inv_dbg_data_ ? 1 : 0, inv_dbg_client_ ? 1 : 0,
-                      inv_dbg_warr_ ? 1 : 0, inv_probe_n_, inv_count_);
+                      inv_dbg_warr_ ? 1 : 0, inv_dbg_pw_ ? 1 : 0,
+                      inv_probe_n_, inv_count_);
         ap(v);
         // §4.31: форма прохода — длина warr, опознанных массивов, попыток L2
         // (o>32 — бюджет переполнен) и почти-попаданий (чужой ItemData).
+        // §4.32: +k (живых kJw) и +z (пустых kJw: Item null, слот <= 64).
         char pv[40];
-        std::snprintf(pv, sizeof(pv), "/w%da%do%dm%d", inv_dbg_wlen_,
-                      inv_dbg_arrays_, inv_dbg_l2push_, inv_dbg_miss_);
+        std::snprintf(pv, sizeof(pv), "/w%da%do%dm%dk%dz%d", inv_dbg_wlen_,
+                      inv_dbg_arrays_, inv_dbg_l2push_, inv_dbg_miss_,
+                      inv_dbg_kjw_, inv_dbg_kjw_null_);
         ap(pv);
         // §4.30: флаги Loaded SV/wk/vw одним триплетом (x — не читается).
         // Диагностика эксперимента со сбросом: запекает ли сборка 1.
@@ -1542,6 +1612,40 @@ template<class IO> class Controller {
             io.read(lvw + FPWEAPONVIEW_PIECE + WEAPONPIECE_LOADED, lv) && lv <= 1)
             lb[2] = (char)('0' + lv);
         std::snprintf(v, sizeof(v), " L=%c%c%c", lb[0], lb[1], lb[2]);
+        ap(v);
+        // §4.32: гейты via(kJw) (KERNEL.md §29a) — почему поле берёт пустую
+        // ветвь (ditem=0, сборка -1), а здоровая s44 живую. ks — skin живого
+        // kJw-Item (x — живых нет); u93 — ItemData+0x93 (гейт g5: проверять
+        // анлок Dg.ZpX); flg — флаговый байт гейта g2; nc — кэш number
+        // pw+0x128 (-1 всегда = живой путь не срабатывал ни разу).
+        if (inv_dbg_kjw_skin_ok_)
+            std::snprintf(v, sizeof(v), " ks=%d", (int)inv_dbg_kjw_skin_);
+        else
+            std::snprintf(v, sizeof(v), " ks=x");
+        ap(v);
+        uint8_t u93 = 0;
+        if (context_.item_data.object &&
+            io.read(context_.item_data.object + ITEMDATA_UNLOCK_GATE, u93))
+            std::snprintf(v, sizeof(v), " u93=%u", (unsigned)u93);
+        else
+            std::snprintf(v, sizeof(v), " u93=x");
+        ap(v);
+        uint8_t flg = 0;
+        uint64_t fga = 0, fgb = 0;
+        if (context_.player.object &&
+            pointer(io, context_.player.object + PLAYER_GATE_A, fga) &&
+            fga >= 0x10000 &&
+            pointer(io, fga + PLAYER_GATE_B, fgb) && fgb >= 0x10000 &&
+            io.read(fgb + PLAYER_GATE_C, flg))
+            std::snprintf(v, sizeof(v), " flg=%u", (unsigned)flg);
+        else
+            std::snprintf(v, sizeof(v), " flg=x");
+        ap(v);
+        int16_t nc = 0;
+        if (pw && io.read(pw + PLAYERWEAPON_NUMBER_CACHE, nc))
+            std::snprintf(v, sizeof(v), " nc=%d", (int)nc);
+        else
+            std::snprintf(v, sizeof(v), " nc=x");
         ap(v);
     }
 

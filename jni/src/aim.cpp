@@ -299,7 +299,7 @@ static bool AimBegin(float& dt, float& sw, float& sh, int* why = nullptr) {
     // Calibration owns the physical touch used to select a screen point.
     // Freecam owns the camera and cannot share its look controller with aim.
     bool active = g_state.aim_touch && g_esp_attached &&
-                  g_calibMode == 0 && !g_state.freecam_on;
+                  g_calibMode == 0 && !g_state.freecam_on && !esp_thirdperson_active();
 
     // "Только с прицелом": only steer while the local player is ADS.
     if (g_state.aim_scope_only && g_esp_attached) {
@@ -333,7 +333,7 @@ static bool AimBegin(float& dt, float& sw, float& sh, int* why = nullptr) {
             if (!g_state.aim_touch)                  *why = 1;
             else if (!g_esp_attached)                *why = 2;
             else if (g_calibMode != 0)               *why = 4;
-            else if (g_state.freecam_on)             *why = 6;
+            else if (g_state.freecam_on || esp_thirdperson_active()) *why = 6;
             else if (!s_fireGateAllow)               *why = 9;
             else                                     *why = 7;
         }
@@ -582,7 +582,7 @@ static void UpdateAimTouch(float dt) {
 
     const bool menuOpen = g_sheet.visible || (g_pop.visible && !g_pop.closing);
     bool active = g_state.aim_touch && g_esp_attached && !menuOpen &&
-                  g_calibMode == 0 && !g_state.freecam_on;
+                  g_calibMode == 0 && !g_state.freecam_on && !esp_thirdperson_active();
     if (active && g_state.aim_scope_only && !esp_local_player_is_aiming())
         active = false;
     if (active && !s_fireGateAllow)   // «Только при стрельбе» (см. AimFireGateUpdate)
@@ -918,10 +918,23 @@ static void UpdateAimSilent(float dt) {
 
 // Сюда управление приходит после меню и фрикама. Если в середине кадра режим
 // сменился, новый кадр не оставит writer с последним направлением до lease timeout.
+static void UpdateNetworkAA();
+
 void AimEndFrame() {
     const bool keep = g_state.aim_touch && g_state.aim_mode == AIM_MODE_SILENT &&
-                      g_aimActive && !g_state.freecam_on;
+                      g_aimActive && !g_state.freecam_on && !esp_thirdperson_active();
     if (!keep) silent_aim::clear();
+    UpdateNetworkAA();
+}
+
+// External only: modify the data snapshot, never execute code inside the game.
+static void UpdateNetworkAA() {
+    const bool allowed = g_state.spin_enabled && g_esp_attached &&
+        !menu_open && !g_sheet.visible && !(g_pop.visible && !g_pop.closing) &&
+        g_calibMode == 0 && !g_state.freecam_on && !g_state.farm_on && !g_aimActive &&
+        !esp_local_player_is_aiming();
+    esp_external_aa_update(allowed, g_state.spin_speed, g_state.spin_reverse,
+        g_state.spin_yaw_mode, g_state.spin_pitch_mode);
 }
 
 // Диспетчер: какой режим ведёт камеру в этом кадре.
@@ -945,6 +958,7 @@ void UpdateAim(float dt) {
     if (mode == AIM_MODE_MEMORY) UpdateAimMemory(dt);
     else if (mode == AIM_MODE_SILENT) UpdateAimSilent(dt);
     else                              UpdateAimTouch(dt);
+    UpdateNetworkAA();
 }
 
 // ============================ Автофарм =============================

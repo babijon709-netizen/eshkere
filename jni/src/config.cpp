@@ -9,6 +9,8 @@
 #include "lang.h"
 #include "game.h"
 #include "cfg_pick.h"
+#include "network_aa.h"
+#include "third_person.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -574,6 +576,21 @@ static void ConfigSaveToPath(const std::string& path) {
         WriteUiTrailer(f);
         WriteExt2Trailer(f);
         WriteSkinTrailer(f);
+        netaa::Profile spin;
+        spin.flags = (g_state.spin_enabled ? 1u : 0u) | (g_state.spin_reverse ? 2u : 0u) |
+            (uint32_t(g_state.spin_yaw_mode >= 0 && g_state.spin_yaw_mode <= 2 ? g_state.spin_yaw_mode : 0) << 2) |
+            (uint32_t(g_state.spin_pitch_mode >= 0 && g_state.spin_pitch_mode <= 2 ? g_state.spin_pitch_mode : 0) << 4);
+        spin.degrees_per_second = netaa::speed(g_state.spin_speed);
+        uint8_t spin_buf[sizeof(spin)];
+        memcpy(spin_buf, &spin, sizeof(spin));
+        XorBuf(spin_buf, sizeof(spin_buf));
+        f.write((char*)spin_buf, sizeof(spin_buf));
+        thirdperson::Profile tp;
+        tp.flags=g_state.thirdperson_on ? 1u : 0u;
+        tp.back=thirdperson::distance(g_state.thirdperson_distance);
+        tp.side=thirdperson::shoulder(g_state.thirdperson_shoulder);
+        uint8_t tp_buf[sizeof(tp)]; memcpy(tp_buf,&tp,sizeof(tp));
+        XorBuf(tp_buf,sizeof(tp_buf)); f.write((char*)tp_buf,sizeof(tp_buf));
         f.close();
         if (f.fail()) remove(tmp.c_str());
         else rename(tmp.c_str(), path.c_str());
@@ -622,6 +639,27 @@ static void LoadCfgByName(const char* name, bool announce) {
     const bool hasExt2 = hasUi && ReadExt2Trailer(f, ext2);
     CfgSkinTrailer skin{};
     const bool hasSkin = hasExt2 && ReadSkinTrailer(f, skin);
+    netaa::Profile spin;
+    uint8_t spin_buf[sizeof(spin)];
+    bool hasSpin = false;
+    if (hasSkin) {
+        f.read((char*)spin_buf, sizeof(spin_buf));
+        if ((size_t)f.gcount() == sizeof(spin_buf)) {
+            XorBuf(spin_buf, sizeof(spin_buf));
+            memcpy(&spin, spin_buf, sizeof(spin));
+            hasSpin = netaa::valid(spin);
+        }
+    }
+    thirdperson::Profile tp;
+    bool hasTp=false;
+    if (hasSpin) {
+        uint8_t tp_buf[sizeof(tp)];
+        f.read((char*)tp_buf,sizeof(tp_buf));
+        if ((size_t)f.gcount()==sizeof(tp_buf)) {
+            XorBuf(tp_buf,sizeof(tp_buf)); memcpy(&tp,tp_buf,sizeof(tp));
+            hasTp=thirdperson::valid(tp);
+        }
+    }
     f.close();
     if (got != sizeof(buf)) { if (announce) ShowToast(XS("Несовместимый конфиг")); return; }
     XorBuf(buf, sizeof(s));
@@ -647,6 +685,17 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.viewmodel.skin_level = viewmodel::bounded((int)skin.level, 0,
                                                           go_active::SKIN_LEVEL_MAX, 0);
     }
+    // A saved toggle may be restored by explicit profile load, never startup.
+    g_state.spin_enabled = hasSpin && announce && (spin.flags & 1u) != 0;
+    g_state.spin_reverse = hasSpin && (spin.flags & 2u) != 0;
+    g_state.spin_yaw_mode = hasSpin ? int((spin.flags >> 2) & 3u) : 0;
+    g_state.spin_pitch_mode = hasSpin ? int((spin.flags >> 4) & 3u) : 0;
+    g_state.spin_speed = hasSpin ? spin.degrees_per_second : netaa::kDefaultSpeed;
+    g_state.sl_spin_speed = {};
+    g_state.thirdperson_on=hasTp && announce && (tp.flags & 1u)!=0;
+    g_state.thirdperson_distance=hasTp ? tp.back : 2.5f;
+    g_state.thirdperson_shoulder=hasTp ? tp.side : .4f;
+    g_state.sl_thirdperson_distance={}; g_state.sl_thirdperson_shoulder={};
     g_state.sl_skin_level = {};
     g_state.esp_turrets = g_state.esp_backpacks = g_state.esp_sleepers = false;
     g_state.esp_cupboards = false;

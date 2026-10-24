@@ -788,6 +788,16 @@ float TabContent(int tab, float dt, float cW) {
         }
 
 
+        if (SettingsHeader("##misc_thirdperson", XS("Третье лицо"), XS("Дистанция и плечо"),
+                           false, &g_state.thirdperson_on, g_state.a_thirdperson)) {
+            CardBg(Layout::SliderH * 2.f + Layout::RowH);
+            SliderRow("##tp_distance", XS("Дистанция"), &g_state.thirdperson_distance,
+                      1.f, 6.f, XS("%.1f м"), false, false, g_state.sl_thirdperson_distance, dt);
+            SliderRow("##tp_shoulder", XS("Смещение плеча"), &g_state.thirdperson_shoulder,
+                      -1.5f, 1.5f, XS("%.1f м"), false, false, g_state.sl_thirdperson_shoulder, dt);
+            ImGui::TextDisabled("%s", esp_thirdperson_active() ? XS("Камера за спиной") : XS("Ожидание камеры"));
+        }
+
         if (SettingsHeader("##misc_freecam", XS("Фрикам"), XS("Скорость, зоны и кнопка"),
                            false, &g_state.freecam_on, g_state.a_freecam_on)) {
             CardBg(Layout::RowH * 4.f + Layout::SliderH * 3.f);
@@ -955,6 +965,29 @@ float TabContent(int tab, float dt, float cW) {
             ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, false, true);
             ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, false);
             ToggleRow("##instantloot", XS("Быстрый подбор"), &vm.fast_loot, g_state.a_fast_loot, true);
+        }
+        const int aa_state = esp_external_aa_state();
+        const char* aa_summary = aa_state == 2 ? XS("Запись · без подтверждения отправки") :
+            aa_state == 3 ? XS("Ввод обновился — пропуск") :
+            aa_state == 4 ? XS("Ошибка чтения") :
+            aa_state == 5 ? XS("Ошибка записи") :
+            aa_state == 6 ? XS("Другая сборка игры") : XS("External · best effort");
+        if (SettingsHeader("##misc_spin", XS("Антиаим · External"), aa_summary,
+                           false, &g_state.spin_enabled, g_state.a_spin)) {
+            const char* const yaw_modes[] = {XS("Вращение"), XS("Джиттер"), XS("Назад")};
+            const char* const pitch_modes[] = {XS("Как камера"), XS("Вверх"), XS("Вниз")};
+            SHdr(XS("Yaw"), 4.f);
+            ChoiceRow("##aa_yaw_mode", &g_state.spin_yaw_mode, yaw_modes, 3);
+            SHdr(XS("Pitch"), 4.f);
+            ChoiceRow("##aa_pitch_mode", &g_state.spin_pitch_mode, pitch_modes, 3);
+            CardBg(Layout::SliderH + Layout::RowH);
+            SliderRow("##spin_speed", XS("Скорость вращения"), &g_state.spin_speed,
+                      30.f, 1440.f, XS("%.0f°/с"), false, true, g_state.sl_spin_speed, dt);
+            ToggleRow("##spin_reverse", XS("Обратное вращение"), &g_state.spin_reverse,
+                      g_state.a_spin_reverse, true);
+            unsigned writes=0, restores=0, races=0;
+            esp_external_aa_counts(writes, restores, races);
+            ImGui::TextDisabled("W: %u  R: %u  race: %u", writes, restores, races);
         }
         SHdr(XS("Сеть и FPS"));
         if (SettingsHeader("##misc_fakelag", XS("FakeLag"), XS("Интенсивность и кнопка"),
@@ -1587,6 +1620,8 @@ void RenderMenu() {
     CfgWatchTick();
     cfg::aim::vis_check = g_state.aim_pos;
     Tick(g_themeT, g_darkTheme, dt, 6.f);
+    Tick(g_state.a_spin, g_state.spin_enabled, dt);
+    Tick(g_state.a_spin_reverse, g_state.spin_reverse, dt);
     Tick(g_state.a_aim_touch,  g_state.aim_touch,          dt);
     Tick(g_state.a_aim_pos,    g_state.aim_pos,            dt);
     Tick(g_state.a_esp_vis,    cfg::esp::vis_check,        dt);
@@ -1654,6 +1689,7 @@ void RenderMenu() {
     Tick(g_state.a_fps_rst, g_state.viewmodel.fps_limit == 0,   dt);
     Tick(g_state.a_xray_on,     g_state.xray_on,     dt);
     Tick(g_state.a_xray_btn_show, g_state.xray_btn_show, dt);
+    Tick(g_state.a_thirdperson, g_state.thirdperson_on, dt);
     Tick(g_state.a_freecam_on,  g_state.freecam_on,  dt);
     Tick(g_state.a_freecam_btn_show, g_state.freecam_btn_show, dt);
     Tick(g_state.a_fakelag_btn_show, g_state.fakelag_btn_show, dt);

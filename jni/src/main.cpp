@@ -542,6 +542,8 @@ int main(int argc, char* argv[]) {
     // Start the deadline before EGL teardown as well: the compositor itself
     // may be the blocked component holding the last overlay frame on screen.
     ArmShutdownDeadline();
+    esp_thirdperson_stop();
+    esp_external_aa_update(false, 360.f, false, 0, 0);
     g_fakeLag.destroy();
     Blur::Free();
     shutdown();

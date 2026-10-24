@@ -8,3 +8,5 @@
 #include "imgui_internal.h"
 struct HostDisplayInfo { uint32_t orientation = 0, width = 1920, height = 1080; };
 extern HostDisplayInfo displayInfo;
+
+extern int native_window_screen_x, native_window_screen_y;

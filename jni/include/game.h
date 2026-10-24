@@ -165,6 +165,10 @@ pid_t         esp_target_pid();
 bool          esp_silent_read(uint64_t addr, void* out, size_t len);
 bool          esp_silent_write(uint64_t addr, const void* in, size_t len);
 // Привязка ещё читается? (одно чтение; ловит перезапуск процесса и отобранный доступ)
+// Best-effort external input spoof. No code patches/injection or packet hooks.
+void esp_external_aa_update(bool enabled, float speed, bool reverse, int yaw_mode, int pitch_mode);
+int esp_external_aa_state();
+void esp_external_aa_counts(unsigned& writes, unsigned& restores, unsigned& races);
 bool          esp_alive_check();
 unsigned long long esp_mem_reads_total();
 unsigned long long esp_mem_read_fails_total();
@@ -628,6 +632,9 @@ bool esp_silent_wants_no_spread();
 // её на место (и по выходу из чита это делается само).
 bool esp_freecam_set(bool on);
 bool esp_freecam_active();
+// Chase camera reuses the external freecam writer, but keeps normal look input.
+bool esp_thirdperson_active();
+void esp_thirdperson_stop();
 // Почему фрикам не включился (для меню): 0 порядок, 1 нет камеры,
 // 2 нет трансформа, 3 массивы Transform не читаются, 4 мировая позиция
 // разошлась с той, что знает ESP (расхождение в метрах — во втором аргументе).

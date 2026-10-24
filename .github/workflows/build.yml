@@ -70,3 +70,10 @@ jobs:
           path: libs/arm64-v8a/benzware.sh
           if-no-files-found: error
           
+
+      - name: Test external AA data guards
+        run: tools/tests/run_network_aa.sh
+
+
+      - name: Test third-person geometry and profile
+        run: tools/tests/run_third_person.sh

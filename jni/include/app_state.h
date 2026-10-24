@@ -26,6 +26,12 @@ struct AppState {
     // (запись ввода взгляда в игру), 2 сайлент (запись оси выстрела).
     // Значения — enum AimMode в aim.h.
     int   aim_mode = 0;
+    // Best-effort external PlayerInput spoof; not a serializer hook.
+    bool spin_enabled = false, spin_reverse = false;
+    float spin_speed = 360.f;
+    int spin_yaw_mode = 0, spin_pitch_mode = 0;
+    float a_spin = 0.f, a_spin_reverse = 0.f;
+    SliderAnim sl_spin_speed;
     // Точка, из которой аимбот водит палец (доли экрана). Выбирается тапом по
     // экрану, как зоны автофарма; -1 = не задана (прежняя позиция 72%/48%).
     float aim_tx = -1.f, aim_ty = -1.f;
@@ -103,6 +109,10 @@ struct AppState {
     bool  xray_btn_show = true;
     // Фрикам: камера отделяется от тела и летает сквозь стены — обзор базы
     // перед рейдом. Скорость в м/с; пока включён, аим молчит (см. AimBegin).
+    bool thirdperson_on = false;
+    float thirdperson_distance = 2.5f, thirdperson_shoulder = .4f;
+    float a_thirdperson = 0.f;
+    SliderAnim sl_thirdperson_distance, sl_thirdperson_shoulder;
     bool  freecam_on = false;
     float freecam_speed = 12.f;
     float freecam_joy_x = -1.f, freecam_joy_y = -1.f;

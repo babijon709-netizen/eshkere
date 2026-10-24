@@ -31,6 +31,9 @@ int g_configCount = 0, g_configToDelete = -1, g_cfgLoadedIdx = -1;
 char g_loadedConfigName[64] = {};
 float g_cfgLoadAnim[kMaxConfigs] = {};
 static int loads = 0, saves = 0, updates = 0, applies = 0;
+bool esp_thirdperson_active() { return false; }
+int esp_external_aa_state() { return 0; }
+void esp_external_aa_counts(unsigned& w, unsigned& r, unsigned& c) { w=r=c=0; }
 void ShowToast(const char*) {}
 void PlaySound(SoundId) {}
 void ConfigSave() { ++saves; }
@@ -226,7 +229,21 @@ static void espTests() {
 }
 
 static void miscTests() {
-    fresh("misc"); assert(frame(tab(3)) < 1300.f);
+    fresh("misc"); assert(frame(tab(3)) < 1500.f); // spin + third-person collapsed rows
+    assert(!g_state.spin_enabled && !items.count(id("##spin_speed")));
+    tap(tab(3), groupId("##misc_spin", "enable"));
+    assert(g_state.spin_enabled && !items.count(id("##spin_speed")));
+    expand(3, "##misc_spin");
+    assert(items.count(id("##spin_speed")) && items.count(id("##spin_reverse")));
+    tap(tab(3), id("##spin_reverse")); assert(g_state.spin_reverse);
+    tap(tab(3), choiceId("##aa_yaw_mode", 1)); assert(g_state.spin_yaw_mode == 1);
+    tap(tab(3), choiceId("##aa_pitch_mode", 2)); assert(g_state.spin_pitch_mode == 2);
+    tap(tab(3), groupId("##misc_spin", "enable")); assert(!g_state.spin_enabled);
+    assert(!g_state.thirdperson_on && !items.count(id("##tp_distance")));
+    expand(3, "##misc_thirdperson");
+    assert(!g_state.thirdperson_on && items.count(id("##tp_distance")) && items.count(id("##tp_shoulder")));
+    tap(tab(3), groupId("##misc_thirdperson", "enable")); assert(g_state.thirdperson_on);
+    tap(tab(3), groupId("##misc_thirdperson", "enable")); assert(!g_state.thirdperson_on);
     const char* const groups[] = {"##misc_fov", "##misc_hands", "##misc_freecam", "##misc_xray",
         "##misc_weapon", "##misc_farm", "##misc_world", "##misc_fakelag", "##misc_fps"};
     for (auto group : groups) expand(3, group);

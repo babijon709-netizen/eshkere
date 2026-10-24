@@ -8,6 +8,8 @@
 #include "viewmodel.h"
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
+#include "network_aa_external.h"
+#include "third_person.h"
 #include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
 #include "kernel_io.h"             // кернел-транспорт (сокет ядерного драйвера)
@@ -1244,6 +1246,10 @@ bool read_transform_hierarchy_layout(uint64_t native_transform, const TransformH
 // Держим позицию в мировых координатах, а перед записью пересчитываем в
 // локальные относительно родителя камеры.
 static bool     g_freecam_on = false;
+static bool     g_thirdperson_owns_camera = false;
+static thirdperson::Pose g_thirdperson_pose;
+static pid_t g_thirdperson_pid = -1;
+static uint64_t g_thirdperson_player = 0, g_thirdperson_camera = 0;
 static bool     g_freecam_saved_ok = false;
 static Vec3     g_freecam_saved{};        // локальная позиция камеры до включения
 static Matrix34 g_freecam_saved_mat{};    // целая матрица до включения
@@ -1588,7 +1594,8 @@ static bool transform_world_to_local(uint64_t matrices, uint64_t indices, int32_
 }
 
 
-bool esp_freecam_active() { return g_freecam_on; }
+bool esp_freecam_active() { return g_freecam_on && !g_thirdperson_owns_camera; }
+bool esp_thirdperson_active() { return g_freecam_on && g_thirdperson_owns_camera; }
 
 void esp_freecam_diag(int& code, float& dist) {
     code = g_freecam_fail;
@@ -2231,7 +2238,7 @@ bool esp_freecam_set(bool on) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         g_fc_last_m = g_fc_last_n = 0; g_fc_last_i = -1;
-        if (g_freecam_saved_ok && g_freecam_matrices && g_freecam_index >= 0)
+        if (!g_thirdperson_owns_camera && g_freecam_saved_ok && g_freecam_matrices && g_freecam_index >= 0)
             wr_buf(g_freecam_matrices + (uint64_t)g_freecam_index * sizeof(Matrix34),
                    &g_freecam_saved_mat, sizeof(Matrix34));
         // Восстанавливаем вид: ставим dirty=1 чтобы игра пересчитала view из восстановленного трансформа
@@ -2240,6 +2247,7 @@ bool esp_freecam_set(bool on) {
             wr_buf(g_native_camera + CAMERA_VIEW_DIRTY, &one, 1);
         }
         g_freecam_on = false;
+        g_thirdperson_owns_camera = false;
         g_freecam_saved_ok = false;
         g_freecam_has_yawpitch = false;
         return false;
@@ -2434,10 +2442,11 @@ static bool freecam_write() {
             }
         }
     }
+    // Third person is view-only: leave the live camera/eye Transform alone.
     // Трансформы слотов пишем всегда (и в снимок, и сразу): если игра всё же
     // пересчитает вид из трансформа, он возьмётся уже из цели, а не из тела.
     // Это же закрывает «двигаются только визуалы, а от первого лица стою».
-    {
+    if (!g_thirdperson_owns_camera) {
         bool first_gap = true;
         for (int sl = 0; sl < g_fc_own_n && pub.tn < kFcMaxSlots; ++sl) {
             const FcSlot& S = g_fc_own[sl];
@@ -3670,6 +3679,79 @@ bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
     return ok;
 }
 
+namespace {
+netaa::External g_external_aa;
+struct ExternalAaSession {
+    pid_t pid = -1;
+    uint64_t base = 0, player = 0, handler = 0;
+} g_external_aa_session;
+}
+
+int esp_external_aa_state() { return static_cast<int>(g_external_aa.state); }
+void esp_external_aa_counts(unsigned& writes, unsigned& restores, unsigned& races) {
+    writes = g_external_aa.writes(); restores = g_external_aa.restores(); races = g_external_aa.races();
+}
+void esp_external_aa_update(bool enabled, float speed, bool reverse, int yaw_mode, int pitch_mode) {
+    std::lock_guard<std::recursive_mutex> lock(viewmodel_session_mutex());
+    if (!enabled && !g_external_aa.pending()) { g_external_aa.state = netaa::ExternalState::Off; return; }
+    auto forget = [] { g_external_aa.forget(); g_external_aa_session = {}; };
+    if (!g_mem.bound() || g_pid <= 0 || g_mem.pid() != g_pid || !g_il2cpp_base) { forget(); return; }
+    // Read-only build guard. Never patch this signature or any executable page.
+    uint8_t signature[sizeof(netaa::off::kPrologue)]{};
+    if (go_active::selected_version != go_active::GameVersion::Release ||
+        !g_mem.read_quiet(g_il2cpp_base + netaa::off::kPlayerInputWriter, signature, sizeof(signature)) ||
+        memcmp(signature, netaa::off::kPrologue, sizeof(signature)) != 0) {
+        forget(); g_external_aa.state = netaa::ExternalState::WrongBuild; return;
+    }
+    uint64_t klass=0, fields=0, handler=0, player=0, owner=0, handler_class=0;
+    auto ptr = [](uint64_t address, uint64_t& out) {
+        uint64_t raw=0;
+        if (!rd_fresh(address, raw)) return false;
+        out = memio::untag(raw); return valid_obj(out);
+    };
+    if (!ptr(g_il2cpp_base + GAME_CONTROLLER_TYPEINFO_RVA, klass) ||
+        !ptr(klass + IL2CPP_CLASS_STATIC_FIELDS_OFFSET, fields) ||
+        !ptr(fields + GAME_CONTROLLER_LOCAL_PLAYER_FIELD, player) ||
+        !ptr(fields + GAME_CONTROLLER_INPUT_HANDLER_FIELD, handler) ||
+        !ptr(handler + PLAYER_INPUT_HANDLER_OWNER_BACKREF, owner) || owner != player ||
+        !ptr(handler, handler_class) || class_identity(handler_class, "PlayerInputHandler", "Oxide") != 1) {
+        forget(); g_external_aa.state = netaa::ExternalState::Waiting; return;
+    }
+    if (g_external_aa_session.pid != g_pid || g_external_aa_session.base != g_il2cpp_base ||
+        g_external_aa_session.player != player || g_external_aa_session.handler != handler) {
+        g_external_aa.forget();
+        g_external_aa_session = {g_pid, g_il2cpp_base, player, handler};
+    }
+    uint8_t held=0, respawning=0;
+    const bool safe = rd_fresh(handler + PLAYER_INPUT_HANDLER_ATTACK_HELD, held) && held == 0 &&
+        rd_fresh(player + PLAYER_MANAGER_RESPAWNING, respawning) && respawning == 0;
+    netaa::Command config;
+    config.flags = 1u | (reverse ? 2u : 0u);
+    config.speed = netaa::speed(speed);
+    config.yaw_mode = static_cast<netaa::YawMode>(yaw_mode >= 0 && yaw_mode <= 2 ? yaw_mode : 0);
+    config.pitch_mode = static_cast<netaa::PitchMode>(pitch_mode >= 0 && pitch_mode <= 2 ? pitch_mode : 0);
+    struct Memory {
+        uint64_t handler, owner, klass, fields;
+        bool applying;
+        bool read(uint64_t a, void* p, size_t n) { return g_mem.read_quiet(a, p, n); }
+        bool write(uint64_t a, const void* p, size_t n) {
+            uint64_t h=0, o=0, k=0, local=0;
+            if (!rd_fresh(fields + GAME_CONTROLLER_INPUT_HANDLER_FIELD, h) || memio::untag(h) != handler ||
+                !rd_fresh(fields + GAME_CONTROLLER_LOCAL_PLAYER_FIELD, local) || memio::untag(local) != owner ||
+                !rd_fresh(handler + PLAYER_INPUT_HANDLER_OWNER_BACKREF, o) || memio::untag(o) != owner ||
+                !rd_fresh(handler, k) || memio::untag(k) != klass) return false;
+            if (applying) {
+                uint8_t held=0, respawn=0;
+                if (!rd_fresh(handler + PLAYER_INPUT_HANDLER_ATTACK_HELD, held) || held != 0 ||
+                    !rd_fresh(owner + PLAYER_MANAGER_RESPAWNING, respawn) || respawn != 0) return false;
+            }
+            return g_mem.write(a, p, n);
+        }
+    } memory{handler, player, handler_class, fields, enabled && safe};
+    const uint64_t now = static_cast<uint64_t>(memio::now_seconds() * 1000.0);
+    g_external_aa.update(memory, handler + PLAYER_INPUT_MOVEMENT_INPUT, enabled && safe, config, now);
+}
+
 // Ось выстрела: PlayerManager.playerEventHandler (+0x78, класс Gum) ->
 // LookDirection (+0x140) -> значение Vector3 (+0x20, обёртка синхронизации).
 // MouseLook.Update каждый кадр пишет сюда forward камеры (ZJo, RVA 0x64e35a4:
@@ -4201,7 +4283,13 @@ static bool read_native_camera_matrices(uint64_t native_cam, float screen_aspect
     const bool cache_fresh = dirty_known && !cache_stale && !g_freecam_on;
     bool have_live_view = false;
     uint64_t native_transform = camera_transform_of(native_cam);
-    if (native_transform && have_ref) {
+    if (g_thirdperson_owns_camera) {
+        // Live eye Transform stays first-person in view-only chase mode. ESP
+        // must project with the same displaced view as the camera writer.
+        view=thirdperson::view(g_thirdperson_pose);
+        have_live_view=matrix_is_finite(view);
+    }
+    if (!g_thirdperson_owns_camera && native_transform && have_ref) {
         Vec3 cam_pos{};
         Vec4 cam_rot{};
         const PoseCheckResult check =
@@ -8824,6 +8912,86 @@ static bool player_kcc_position(const PlayerAux& aux, Vec3& out, bool gate_origi
     return true;
 }
 
+// Session loss must not restore the old camera matrix into a recycled object.
+static void thirdperson_abandon() {
+    if (!g_thirdperson_owns_camera) return;
+    g_fc_writer_running.store(false);
+    g_fc_writer_gen.fetch_add(1);
+    freecam_payload_clear();
+    g_freecam_on = false; g_freecam_saved_ok = false;
+    g_thirdperson_owns_camera = false;
+    g_thirdperson_pid = -1; g_thirdperson_player = g_thirdperson_camera = 0;
+}
+void esp_thirdperson_stop() {
+    std::lock_guard<std::recursive_mutex> lock(viewmodel_session_mutex());
+    if (!g_thirdperson_owns_camera) return;
+    if (g_pid != g_thirdperson_pid || g_local_player != g_thirdperson_player ||
+        g_native_camera != g_thirdperson_camera || !g_mem.bound()) { thirdperson_abandon(); return; }
+    // This owner writes view matrices only; no initial Transform to restore.
+    g_freecam_saved_ok=false;
+    esp_freecam_set(false);
+}
+static void thirdperson_tick() {
+    std::lock_guard<std::recursive_mutex> lock(viewmodel_session_mutex());
+    if (!g_state.thirdperson_on || g_state.freecam_on || g_state.farm_on) {
+        esp_thirdperson_stop(); return;
+    }
+    const uint64_t player = resolve_local_player();
+    if (g_thirdperson_owns_camera &&
+        (g_pid != g_thirdperson_pid || player != g_thirdperson_player ||
+         g_native_camera != g_thirdperson_camera || !g_mem.bound() ||
+         camera_transform() != g_freecam_transform)) thirdperson_abandon();
+    // Freecam/farm/ADS have priority; normal first-person fire must not inherit
+    // the displaced chase-camera origin. No shot/camera-root direction writes.
+    uint64_t fields=0, handler=0, local=0, owner=0;
+    uint8_t held=0;
+    auto ptr=[](uint64_t address,uint64_t& out) {
+        uint64_t raw=0;
+        if (!rd_fresh(address,raw)) return false;
+        out=memio::untag(raw); return valid_obj(out);
+    };
+    const bool attack_known = player && g_game_controller_class &&
+        ptr(g_game_controller_class+IL2CPP_CLASS_STATIC_FIELDS_OFFSET,fields) &&
+        ptr(fields+GAME_CONTROLLER_LOCAL_PLAYER_FIELD,local) && local==player &&
+        ptr(fields+GAME_CONTROLLER_INPUT_HANDLER_FIELD,handler) &&
+        ptr(handler+PLAYER_INPUT_HANDLER_OWNER_BACKREF,owner) && owner==player &&
+        rd_fresh(handler+PLAYER_INPUT_HANDLER_ATTACK_HELD,held);
+    if (!attack_known || held || esp_local_player_is_aiming()) {
+        esp_thirdperson_stop(); return;
+    }
+    if (!player || g_pid<=0 || !g_mem.bound() || go_active::selected_version != go_active::GameVersion::Release) {
+        esp_thirdperson_stop(); return;
+    }
+    uint8_t respawning=0;
+    if (!rd_fresh(player+PLAYER_MANAGER_RESPAWNING, respawning) || respawning) { esp_thirdperson_stop(); return; }
+    const PlayerAux& aux=player_aux(player);
+    Vec3 feet{};
+    float acc_pitch=0.f, yaw=0.f;
+    if (!player_kcc_position(aux,feet) || !esp_mem_aim_read_angles(acc_pitch,yaw)) {
+        esp_thirdperson_stop(); return;
+    }
+    float height=player_is_crouched(aux) ? aux.crouch_height : aux.normal_height;
+    float offset=0.f;
+    if (!rd_fresh(aux.kcc+KCC_LOOK_HEIGHT_OFFSET,offset) || !thirdperson::finite(offset) || fabsf(offset)>1.f) offset=0.f;
+    Vec3 eye{feet.x,feet.y+height+offset,feet.z};
+    thirdperson::Pose pose;
+    if (!thirdperson::pose(eye,yaw,-acc_pitch,g_state.thirdperson_distance,g_state.thirdperson_shoulder,pose)) {
+        esp_thirdperson_stop(); return;
+    }
+    if (!g_thirdperson_owns_camera) {
+        if (g_freecam_on || !esp_freecam_set(true)) return;
+        g_thirdperson_owns_camera=true;
+        g_thirdperson_pid=g_pid; g_thirdperson_player=player; g_thirdperson_camera=g_native_camera;
+    }
+    g_thirdperson_pose=pose;
+    g_freecam_pos=pose.position;
+    g_freecam_yaw=yaw; g_freecam_pitch=-acc_pitch; g_freecam_has_yawpitch=true;
+    g_cam_forward=pose.forward; g_cam_right=pose.right; g_cam_up=pose.up;
+    g_cam_pose_valid=true;
+    // Existing freecam_tick writes/publishes this target through its guarded
+    // transport/writer. Do not start a second camera thread.
+}
+
 // Local firing reference: LookDirection from the event handler plus the eye
 // point the hitscan ray starts from. Falls back to the camera when unavailable
 // or implausible (must stay within ~20 deg of the camera forward).
@@ -9105,6 +9273,7 @@ static void reset_world_caches() {
 void esp_reset() {
     std::lock_guard<std::recursive_mutex> viewmodel_guard(viewmodel_session_mutex());
     silent_aim::clear();
+    thirdperson_abandon();
     esp_viewmodel_reset(false); // process lost: never restore to a reused address
     g_mem.unbind();
     g_attach_state = ESP_ATTACH_OK;
@@ -11055,6 +11224,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     // пустой местности (раньше тик стоял за выходом «нет игроков» и там не
     // бежал вовсе — остаточные мерцания было нечем смотреть), а сами
     // early-out'ы тику не помеха (у него свои проверки живости трансформа).
+    thirdperson_tick();
     freecam_tick();
 
     uint64_t native_cam = 0;

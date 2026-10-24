@@ -780,7 +780,7 @@ template<class IO> class Controller {
     // доказательство живости тика: нет строк среза в окне отравления = умер
     // чит/транспорт, а не игра.
     int  dump_seq_ = 0;          // монотонный номер среза (не сбрасывается)
-    char dump_text_[384] = {};
+    char dump_text_[512] = {};   // §4.36: 384->512 (fm/cw-поля охоты за kJw)
     int  dump_ticks_ = 0;        // тики с последнего среза (сердцебиение)
     int  dump_cooldown_ = 0;     // минимальный интервал между срезами
     uint32_t last_sv_head_ = 0xFFFFFFFFu;  // Enabled|Number SyncVar последнего среза
@@ -1209,6 +1209,9 @@ template<class IO> class Controller {
         // (stale-overwrite). Только если живой kJw нет (k==0 — чинить нечего)
         // и FP-Item жив (вливать нечего — нечего). Известные объекты
         // исключены: FP-Item с совпадением +0x18 — не запись экипировки.
+        // §4.36: za/yh доказано декоем (сессия 39 #6->#7: дроу под пином qj=1
+        // построил -1 — настоящий kJw (x20) elsewhere). Инжект оставлен как
+        // живой зонд (стабильность zh + прогрев пути записи для настоящего).
         {
             uint64_t cand = 0;
             if (inv_dbg_zh_ok_)
@@ -1832,6 +1835,49 @@ template<class IO> class Controller {
         ap(v);
         const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
         std::snprintf(v, sizeof(v), " qj=%d", qj);
+        ap(v);
+        // §4.36: настоящий kJw (аргумент via, x20) — НЕ za-декой: сессия 39
+        // #6->#7 — дроу под пином qj=1 построил -1, запись игрой не читается.
+        // x19 (PW) и x20 (kJw) — разные регистры кэша дроу: kJw не PW.
+        // Кандидаты: сам FPManager (+0x10 Item?, +0x18 слот?) и FPWeaponBase
+        // (FPM+0x58). null + слот==gate = кандидат в настоящий kJw.
+        uint64_t fpm = 0;
+        if (pw) pointer(io, pw + PLAYERWEAPON_FP_MANAGER, fpm);
+        uint64_t fm10v = 0;
+        const bool fm10_ok =
+            fpm >= 0x10000 && pointer(io, fpm + KJW_ITEM, fm10v);
+        if (!fm10_ok)
+            std::snprintf(v, sizeof(v), " fm10=x");
+        else if (fm10v == 0)
+            std::snprintf(v, sizeof(v), " fm10=null");
+        else
+            std::snprintf(v, sizeof(v), " fm10=%llx",
+                          (unsigned long long)fm10v);
+        ap(v);
+        uint32_t fm18v = 0;
+        if (fpm >= 0x10000 && io.read(fpm + KJW_SLOT, fm18v))
+            std::snprintf(v, sizeof(v), " fm18=%x", fm18v);
+        else
+            std::snprintf(v, sizeof(v), " fm18=x");
+        ap(v);
+        uint64_t cw = 0;
+        if (fpm >= 0x10000) pointer(io, fpm + FPMANAGER_CURRENT_WEAPON, cw);
+        uint64_t cw10v = 0;
+        const bool cw10_ok =
+            cw >= 0x10000 && pointer(io, cw + KJW_ITEM, cw10v);
+        if (!cw10_ok)
+            std::snprintf(v, sizeof(v), " cw10=x");
+        else if (cw10v == 0)
+            std::snprintf(v, sizeof(v), " cw10=null");
+        else
+            std::snprintf(v, sizeof(v), " cw10=%llx",
+                          (unsigned long long)cw10v);
+        ap(v);
+        uint32_t cw18v = 0;
+        if (cw >= 0x10000 && io.read(cw + KJW_SLOT, cw18v))
+            std::snprintf(v, sizeof(v), " cw18=%x", cw18v);
+        else
+            std::snprintf(v, sizeof(v), " cw18=x");
         ap(v);
     }
 

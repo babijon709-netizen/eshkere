@@ -363,7 +363,7 @@ struct SkinUiInfo {
     // доказательством живости тика, а срезы на смену триггеров показывают
     // момент, когда сборка перестала двигаться.
     int  dump_seq = 0;
-    char dump_text[384] = {};
+    char dump_text[512] = {};   // §4.36: 384->512 (fm/cw-поля охоты за kJw)
     int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
     Status status = Status::Off;
     char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках

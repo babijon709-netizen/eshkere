@@ -2126,6 +2126,33 @@ void test_dump_carries_probe_shape() {
     std::printf("  dump: probe shape /w/a/o/m reflects pass stats\n");
 }
 
+// ---- §4.36: fm/cw-форма настоящего kJw в срезе -------------------------------
+// za-декой доказан (§4.35, сессия 39 #6->#7: дроу под пином построил -1).
+// Охота за настоящим kJw (аргумент via, x20): кандидаты — сам FPManager
+// (+0x10 Item?, +0x18 слот?) и FPWeaponBase (кэш FPM+0x58). Фикстура кладёт
+// null+слот=26 в оба: срез обязан показать fm10=null fm18=1a cw10=null cw18=1a.
+constexpr uint64_t cw_obj = 0x5C000;
+void test_dump_carries_fm_cw_shape() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // поясной Item: adoption дёргает inv_count = поздний срез
+    // fp+0x10 НЕ трогаем: там cachedPtr (capture unity=true роняет резолв на
+    // нуле — fail 6, срезов нет). fm10-ветвь проверяется hex-значением кэша.
+    f.io.plain(cw_obj);
+    f.io.put<uint64_t>(cw_obj + KJW_ITEM, 0);
+    f.io.put<uint32_t>(cw_obj + KJW_SLOT, 26);
+    f.io.put<uint64_t>(fp + FPMANAGER_CURRENT_WEAPON, cw_obj);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    // fp — Unity-объект: fm10 = cachedPtr (hex), fm18 не отображён (x).
+    // cw_obj — null+слот=26: cw10=null cw18=1a.
+    assert(std::strstr(f.c.ui().dump_text, "fm10=930000") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "fm10=null") == nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "fm18=x") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "cw10=null") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "cw18=1a") != nullptr);
+    std::printf("  dump: fm/cw kjw-shape fields\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2200,6 +2227,7 @@ int main() {
     test_kjw_pin_survives_holster();
     test_kjw_pin_repaints_resync();
     test_kjw_pin_drops_unreadable();
+    test_dump_carries_fm_cw_shape();
     std::printf("OK\n");
     return 0;
 }

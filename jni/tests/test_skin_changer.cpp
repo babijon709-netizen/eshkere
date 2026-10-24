@@ -1935,6 +1935,25 @@ void test_dump_carries_loaded_triplet() {
     std::printf("  dump: L= triplet reflects loaded flags\n");
 }
 
+// ---- 59. §4.31: срез несёт форму прохода зонда -------------------------------
+// add_inventory: warr нет (w-1), один L1-массив (a1); o2/m2 — метаданные
+// object() в полях Data/Client (два L2-пуша, один лишний почти-промах плюс
+// чужой ствол массива).
+// add_warr_only: warr длины 1 (w1), он же массив (a1), промахов нет.
+void test_dump_carries_probe_shape() {
+    Fixture f;
+    add_inventory(f);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);
+    assert(std::strstr(f.c.ui().dump_text, "c1t1/w-1a1o2m2") != nullptr);
+    Fixture g;
+    add_warr_only(g);
+    for (int i = 0; i < 25; ++i) g.tick(g.settings(true, 1));
+    assert(g.c.ui().inv_count == 1);
+    assert(std::strstr(g.c.ui().dump_text, "c1t1/w1a1o0m0") != nullptr);
+    std::printf("  dump: probe shape /w/a/o/m reflects pass stats\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2002,6 +2021,7 @@ int main() {
     test_loaded_cleared_while_handle_dead();
     test_loaded_restored_and_guarded();
     test_dump_carries_loaded_triplet();
+    test_dump_carries_probe_shape();
     std::printf("OK\n");
     return 0;
 }

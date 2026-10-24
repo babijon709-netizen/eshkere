@@ -686,6 +686,13 @@ template<class IO> class Controller {
     int inv_probe_tick_ = 0; // каденс зонда: проход каждый 5-й тик, пока пусто
     // §4.28: якоря последнего прохода зонда для среза (1 — жив, 0 — нет).
     bool inv_dbg_data_ = false, inv_dbg_client_ = false, inv_dbg_warr_ = false;
+    // §4.31: форма последнего прохода: длина warr-массива (-1 — не массив),
+    // L1-полей, опознанных массивами, попыток push в L2 (o>кап — переполнение
+    // бюджета) и «почти-попаданий» (читаемый +0x20, но чужой ItemData: пояс
+    // держит Item'ы, но не нашего ствола). Ноль новых чтений — те же проходы.
+    int inv_dbg_wlen_ = -1, inv_dbg_arrays_ = 0, inv_dbg_l2push_ = 0;
+    int inv_dbg_miss_ = 0;
+    bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
     bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
@@ -741,7 +748,7 @@ template<class IO> class Controller {
     // доказательство живости тика: нет строк среза в окне отравления = умер
     // чит/транспорт, а не игра.
     int  dump_seq_ = 0;          // монотонный номер среза (не сбрасывается)
-    char dump_text_[256] = {};
+    char dump_text_[384] = {};
     int  dump_ticks_ = 0;        // тики с последнего среза (сердцебиение)
     int  dump_cooldown_ = 0;     // минимальный интервал между срезами
     uint32_t last_sv_head_ = 0xFFFFFFFFu;  // Enabled|Number SyncVar последнего среза
@@ -978,8 +985,14 @@ template<class IO> class Controller {
         if (obj < 0x10000 || !context_.item_data.object) return false;
         if (obj == context_.item.object || obj == draw_item_.object) return false;
         uint64_t data = 0;
-        if (!pointer(io, obj + ITEM_DATA, data) || data != context_.item_data.object)
+        if (!pointer(io, obj + ITEM_DATA, data)) return false;
+        // §4.31: читаемый +0x20 с чужим ItemData — «почти-попадание» (пояс
+        // держит Item, но другого ствола). Считаем только внутри прохода:
+        // ведение и restore зовут validate вне зонда.
+        if (data != context_.item_data.object) {
+            if (inv_dbg_active_ && inv_dbg_miss_ < 999) ++inv_dbg_miss_;
             return false;
+        }
         uint64_t klass = 0;
         if (!pointer(io, obj, klass) || klass < 0x10000) return false;
         int32_t skin = 0;
@@ -1001,22 +1014,35 @@ template<class IO> class Controller {
         using namespace go_active;
         inv_probe_n_ = 0;
         inv_dbg_data_ = inv_dbg_client_ = inv_dbg_warr_ = false;
+        inv_dbg_wlen_ = -1;
+        inv_dbg_arrays_ = inv_dbg_l2push_ = inv_dbg_miss_ = 0;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
+        inv_dbg_active_ = true;
         uint64_t warr = 0;
         inv_dbg_warr_ = pointer(io, context_.player.object + PLAYER_WEAPONS_ARRAY, warr) &&
                         warr >= 0x10000;
-        if (inv_dbg_warr_) scan_array_for_inv(warr);
+        if (inv_dbg_warr_) {
+            int32_t wl = -1;
+            if (io.read(warr + IL2CPP_ARRAY_LENGTH, wl)) inv_dbg_wlen_ = wl;
+            scan_array_for_inv(warr);
+        }
         uint64_t inv = 0;
-        if (!pointer(io, context_.player.object + PLAYER_INVENTORY, inv) || inv < 0x10000)
+        if (!pointer(io, context_.player.object + PLAYER_INVENTORY, inv) || inv < 0x10000) {
+            inv_dbg_active_ = false;
             return;
+        }
         uint64_t anchors[2] = {};
         pointer(io, inv + INV_PLAYER_INVENTORY_DATA, anchors[0]);
         pointer(io, inv + INV_PLAYER_INVENTORY_CLIENT, anchors[1]);
         inv_dbg_data_ = anchors[0] >= 0x10000;
         inv_dbg_client_ = anchors[1] >= 0x10000;
-        uint64_t l2[16];
+        // §4.31: бюджет L2 16->32 (худший проход ~1.6k чтений — в пределах
+        // тика), дедуп повторов и пропуск уже известных адресов (якоря,
+        // FP-Item/ItemData/кэш дроу — их сканировать нечего).
+        uint64_t l2[32];
         int l2_n = 0;
+        const int l2_cap = (int)(sizeof(l2) / sizeof(l2[0]));
         for (int a = 0; a < 2; ++a) {
             const uint64_t base = anchors[a];
             if (base < 0x10000) continue;
@@ -1031,7 +1057,16 @@ template<class IO> class Controller {
                 }
                 if (scan_array_for_inv(p)) continue;
                 // Не Item и не массив — возможно контейнер: второй уровень.
-                if (l2_n < (int)(sizeof(l2) / sizeof(l2[0]))) l2[l2_n++] = p;
+                if (p == anchors[0] || p == anchors[1] || p == warr ||
+                    p == context_.item.object || p == context_.item_data.object ||
+                    p == draw_item_.object)
+                    continue;
+                bool dupe = false;
+                for (int i = 0; i < l2_n; ++i)
+                    if (l2[i] == p) { dupe = true; break; }
+                if (dupe) continue;
+                ++inv_dbg_l2push_;
+                if (l2_n < l2_cap) l2[l2_n++] = p;
             }
         }
         for (int i = 0; i < l2_n; ++i) {
@@ -1042,10 +1077,11 @@ template<class IO> class Controller {
                     if (inv_probe_n_ < cap) inv_probe_cands_[inv_probe_n_++] = l2[i] + off;
                     continue;
                 }
-                if (inv_probe_n_ >= cap) return;
+                if (inv_probe_n_ >= cap) { inv_dbg_active_ = false; return; }
                 scan_array_for_inv(p);
             }
         }
+        inv_dbg_active_ = false;
     }
 
     // §4.28: элементы массива — кандидаты, если это наш Item. Возвращает true,
@@ -1056,6 +1092,7 @@ template<class IO> class Controller {
         int32_t len = 0;
         if (!io.read(arr + IL2CPP_ARRAY_LENGTH, len) || len <= 0 || len > 32)
             return false;
+        ++inv_dbg_arrays_;
         for (int32_t i = 0; i < len; ++i) {
             const uint64_t slot =
                 arr + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8u;
@@ -1484,6 +1521,12 @@ template<class IO> class Controller {
                       inv_dbg_data_ ? 1 : 0, inv_dbg_client_ ? 1 : 0,
                       inv_dbg_warr_ ? 1 : 0, inv_probe_n_, inv_count_);
         ap(v);
+        // §4.31: форма прохода — длина warr, опознанных массивов, попыток L2
+        // (o>32 — бюджет переполнен) и почти-попаданий (чужой ItemData).
+        char pv[40];
+        std::snprintf(pv, sizeof(pv), "/w%da%do%dm%d", inv_dbg_wlen_,
+                      inv_dbg_arrays_, inv_dbg_l2push_, inv_dbg_miss_);
+        ap(pv);
         // §4.30: флаги Loaded SV/wk/vw одним триплетом (x — не читается).
         // Диагностика эксперимента со сбросом: запекает ли сборка 1.
         char lb[3] = {'x', 'x', 'x'};

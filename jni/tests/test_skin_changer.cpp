@@ -296,6 +296,9 @@ struct Fixture {
     uint8_t live_item_level() {
         return io.value<uint8_t>(item + go_active::ITEM_SKIN_LEVEL);
     }
+    int16_t live_view_skin() {
+        return io.value<int16_t>(view_piece() + go_active::WEAPONPIECE_SKIN);
+    }
     // Enabled в SyncVar не меняется никогда; в рабочей копии — только
     // зеркалом погашенной головы (§4.21): живую голову тик не трогает.
     bool enabled_untouched() const {
@@ -586,16 +589,16 @@ void test_rewrite_request() {
     const unsigned before = f.io.writes;
     f.tick(s);
     assert(f.io.writes == before);
-    // Запрос снимает «свежесть» слотов: следующий тик пишет все шесть полей
-    // (Skin/SkinLevel в обеих копиях piece + Oxide.Item.skin/skinLevel) и
-    // подтверждает каждую запись readback'ом.
+    // Запрос снимает «свежесть» слотов: следующий тик пишет все восемь полей
+    // (Skin/SkinLevel в обеих копиях piece + Oxide.Item.skin/skinLevel +
+    // Skin/SkinLevel piece вьюхи) и подтверждает каждую запись readback'ом.
     f.c.request_rebuild();
     f.tick(s);
-    assert(f.io.writes == before + 6);
+    assert(f.io.writes == before + 8);
     assert(f.live_skin() == 1 && f.live_skin_local() == 1 && f.live_item_skin() == 1);
     assert(f.c.status == viewmodel::Status::Active);
     assert(f.enabled_untouched());
-    std::printf("  rewrite request: 6 forced writes, Enabled untouched\n");
+    std::printf("  rewrite request: 8 forced writes, Enabled untouched\n");
 }
 
 // ---- 10б'. Oxide.Item.skin — третья точка записи (дроп и сейв несут её) ----
@@ -1666,7 +1669,7 @@ void test_inv_ignores_garbage_and_transients() {
     f.io.put<uint64_t>(inv_data + 0x48, 0x88888);   // прямое поле-мусор
     f.tick(f.settings(true, 1));
     const unsigned standard = f.io.writes;
-    assert(standard == 3);             // SV/рабочая/FP-Item, как без зонда
+    assert(standard == 4);             // SV/рабочая/FP-Item/вьюха, как без зонда
     for (int i = 0; i < 11; ++i) f.tick(f.settings(true, 1));   // два прохода
     assert(f.c.ui().inv_count == 0);
     assert(f.c.ui().inv_state == -1);
@@ -1791,6 +1794,82 @@ void test_inv_probe_finds_l2_container() {
     std::printf("  inv probe: L2 container belt adopted\n");
 }
 
+// ---- 53. §4.29: piece вьюхи красится и возвращается -------------------------
+// Краска — после read_live_state: первый тик видит собранное игрой
+// (fp_stale=true), красит; второй тик расхождения уже нет. Выключение
+// возвращает оригинал вьюхи.
+void test_view_piece_painted_and_restored() {
+    Fixture f;
+    f.tick(f.settings(true, 2));
+    assert(f.live_view_skin() == 2);
+    assert(f.c.ui().view_state == 1);   // красили поверх чужого оригинала
+    assert(f.c.ui().fp_stale);          // детектор видел собранное игрой
+    f.tick(f.settings(true, 2));
+    assert(f.c.ui().view_state == 0);
+    assert(!f.c.ui().fp_stale);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 2));
+    assert(f.io.writes == before);      // steady state: ноль записей
+    f.tick(f.settings(false));
+    assert(f.live_view_skin() == f.original_skin);
+    assert(!f.c.has_state());
+    std::printf("  view piece: painted after stale check, restored on disable\n");
+}
+
+// ---- 54. §4.29: страж Number — чужую вьюху не красим ------------------------
+// Вьюха показывает другой ствол (Number 999): ни записи, view_state -1.
+// Нулевой указатель вьюхи — то же, без падения.
+void test_view_piece_guard_number() {
+    Fixture f;
+    f.io.put<int16_t>(view_piece() + go_active::WEAPONPIECE_NUMBER, 999);
+    f.tick(f.settings(true, 2));
+    assert(f.live_view_skin() == f.original_skin);
+    assert(f.c.ui().view_state == -1);
+    assert(f.c.status == viewmodel::Status::Active);   // остальное работает
+    Fixture g;
+    g.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_FP_VIEW, 0);
+    g.tick(g.settings(true, 2));
+    assert(g.c.ui().view_state == -1);
+    assert(g.c.status == viewmodel::Status::Active);
+    std::printf("  view piece: foreign/empty view untouched\n");
+}
+
+// ---- 55. §4.29: пересборка вьюхи перекрашивается, руки не трогаем -----------
+// Игра запекла серверное (-1) в piece вьюхи нашего ствола: следующий тик
+// возвращает наш индекс, оригинал нового запекания — его -1. А погашенная
+// SyncVar (Number -1, руки) при вьюхе рук краску не получает.
+void test_view_piece_rebake_and_hands() {
+    Fixture f;
+    f.tick(f.settings(true, 2));
+    assert(f.live_view_skin() == 2);
+    // Пересборка: то же Number, запечённое серверное.
+    f.io.put<int16_t>(view_piece() + go_active::WEAPONPIECE_SKIN, -1);
+    f.tick(f.settings(true, 2));
+    assert(f.live_view_skin() == 2);
+    assert(f.c.ui().view_state == 1);   // строка борьбы видна в логе
+    f.tick(f.settings(true, 2));
+    assert(f.c.ui().view_state == 0);
+    // Оригинал нового запекания — его -1, не старый.
+    f.tick(f.settings(false));
+    assert(f.live_view_skin() == -1);
+    // Руки в блэкауте: SyncVar погашена (Number -1), вьюха рук — красить
+    // нечего, хотя Number'ы формально совпали (-1 == -1).
+    Fixture h;
+    h.tick(h.settings(true, 2));
+    assert(h.live_view_skin() == 2);
+    h.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);   // стадия 9
+    h.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    h.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED, 0);
+    h.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, -1);
+    h.io.put<int16_t>(view_piece() + go_active::WEAPONPIECE_NUMBER, -1);
+    h.io.put<int16_t>(view_piece() + go_active::WEAPONPIECE_SKIN, -1);
+    h.tick(h.settings(true, 2));
+    assert(h.c.status == viewmodel::Status::Waiting);
+    assert(h.live_view_skin() == -1);   // вьюху рук не красим
+    assert(h.c.ui().view_state == -1);
+    std::printf("  view piece: rebake repainted, hands view untouched\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1852,6 +1931,9 @@ int main() {
     test_inv_restored_on_switch();
     test_inv_probe_finds_warr_array();
     test_inv_probe_finds_l2_container();
+    test_view_piece_painted_and_restored();
+    test_view_piece_guard_number();
+    test_view_piece_rebake_and_hands();
     std::printf("OK\n");
     return 0;
 }

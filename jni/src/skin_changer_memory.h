@@ -629,6 +629,20 @@ template<class IO> class Controller {
     Identity draw_item_{};
     Slot<int32_t> skin_item2_;
     Slot<uint8_t> level_item2_;
+    // §4.29: ШЕСТАЯ точка — piece ВНУТРИ FPWeaponView (view+0x28). Сессия 41:
+    // SV/wk/Item держат наш индекс, иконка (живой читатель Item) показывает
+    // скин, а руки — нет; vw piece — ЕДИНСТВЕННАЯ видимая копия, мёрзлая на
+    // -1. Значит, сборка печёт -1 во все нисходящие копии, а рендер читает
+    // либо piece вьюхи, либо что-то невидимое (хэндл/модель). Если рендер
+    // читает piece вживую (recolor — материал, не модель), пост-сборочная
+    // запись чинит руки без гонки: вьюха стабильна (vw= const всю сессию),
+    // переписанное игрой на дроу Slot-семантика перезахватывает сама.
+    // Страж — Number вьюхи равен Number SyncVar и >= 0: красим ровно тот
+    // ствол, что резолвнули (руки с Number -1 при погашенной SyncVar под
+    // страж не проходят). Пишем ТОЛЬКО Skin/Level — Number/Enabled чужие.
+    Slot<int16_t> skin_view_;
+    Slot<uint8_t> level_view_;
+    int view_state_ = -1;    // piece вьюхи: -1 не ведём, 0 наш, 1 чужой
     // §4.28: ПЯТЫЙ источник — стабильный инвентарный Oxide.Item. Каждый дроу
     // на сервере строит вьюху из -1, хотя все четыре точки держат наш индекс:
     // via(kJw)->drawSV пишет серверную piece в SyncVar и тут же кормит её в
@@ -1113,6 +1127,34 @@ template<class IO> class Controller {
         inv_state_ = inv_count_ == 0 ? -1 : (any_foreign ? 1 : 0);
     }
 
+    // §4.29: ведение piece вьюхи. Зовётся ПОСЛЕ read_live_state: детектор
+    // «вьюха СТАРАЯ» обязан видеть собранное игрой, а не нашу краску, —
+    // иначе он никогда не сработает и тест 13 врёт. Best-effort и молча:
+    // неуспех виден строкой лога по view_state_, а не стадией.
+    void maintain_view(int16_t want_skin, uint8_t want_level, int16_t sv_number,
+                       bool force) {
+        using namespace go_active;
+        view_state_ = -1;
+        if (sv_number < 0) return;
+        const uint64_t pw = context_.weapon.object;
+        if (!pw) return;
+        uint64_t view = 0;
+        if (!pointer(io, pw + PLAYERWEAPON_FP_VIEW, view) || view < 0x10000) return;
+        int16_t vnum = 0;
+        if (!io.read(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_NUMBER, vnum)) return;
+        if (vnum != sv_number) return;   // вьюха показывает не наш ствол
+        int16_t vskin = 0;
+        uint8_t vlevel = 0;
+        if (!io.read(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN, vskin)) return;
+        io.read(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN_LEVEL, vlevel);
+        skin_view_.sample_value(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN, vskin);
+        level_view_.sample_value(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_SKIN_LEVEL, vlevel);
+        if (force) { skin_view_.invalidate(); level_view_.invalidate(); }
+        skin_view_.put(io, want_skin);
+        level_view_.put(io, want_level);
+        view_state_ = (vskin != want_skin) ? 1 : 0;
+    }
+
     bool restore_all() {
         // Все три точки равноправны: возвращаем оригиналы в каждую — но ТОЛЬКО
         // пока контекст жив. После смерти игрока/мира адреса слотов указывают
@@ -1133,10 +1175,17 @@ template<class IO> class Controller {
             ok = skin_local_.restore(io) && ok;
             ok = level_.restore(io) && ok;
             ok = skin_.restore(io) && ok;
+            // §4.29: вьюха умирает вместе с оружием — тот же класс владения,
+            // что piece-слоты. Смена ствола без пересборки вьюхи: current —
+            // наша краска прошлого ствола, last совпал — вернём оригинал.
+            ok = level_view_.restore(io) && ok;
+            ok = skin_view_.restore(io) && ok;
         } else {
             skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
             head_lo_local_ = {}; head_hi_local_ = {};
+            skin_view_ = {}; level_view_ = {};
         }
+        view_state_ = -1;
         if (context_.item.object && context_.item.life(io) == Life::Alive) {
             ok = level_item_.restore(io) && ok;
             ok = skin_item_.restore(io) && ok;
@@ -1437,6 +1486,7 @@ public:
         return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||
                skin_item_.owned || level_item_.owned ||
                skin_item2_.owned || level_item2_.owned ||
+               skin_view_.owned || level_view_.owned ||
                head_lo_local_.owned || head_hi_local_.owned ||
                inv_count_ > 0;
     }
@@ -1470,6 +1520,7 @@ public:
         info.item_state = item_state_;
         info.inv_state = inv_state_;
         info.inv_count = inv_count_;
+        info.view_state = view_state_;
         info.fp_build_resets = reset_count_;
         info.quarantine_skin = quarantine_skin_;
         // §4.24: наблюдение за панцирём и беспанцирным застреванием — лог
@@ -1497,6 +1548,8 @@ public:
         skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
         skin_item_ = {}; level_item_ = {};
         skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
+        skin_view_ = {}; level_view_ = {};
+        view_state_ = -1;
         head_lo_local_ = {}; head_hi_local_ = {};
         for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
         inv_count_ = 0;
@@ -1716,6 +1769,9 @@ public:
                         level_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN_LEVEL, sv.level);
                         skin_.put(io, want_skin);
                         level_.put(io, want_level);
+                        // §4.29: вьюха красится и в блэкауте — страж по
+                        // Number внутри (погашенная SyncVar не проходит).
+                        maintain_view(want_skin, want_level, sv.number, false);
                     }
                     Piece wk;
                     if (read_piece(io, context_.piece_local, wk, nullptr, true) == PieceRead::Ok) {
@@ -1791,6 +1847,7 @@ public:
                     skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
                     skin_item_ = {}; level_item_ = {};
                     skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
+                    skin_view_ = {}; level_view_ = {};
                     head_lo_local_ = {}; head_hi_local_ = {};
                 }
                 context_ = next;
@@ -1976,6 +2033,10 @@ public:
         piece.skin = want_skin;
         piece.level = want_level;
         read_live_state(&piece);
+        // §4.29: краска piece вьюхи — СТРОГО после read_live_state, чтобы
+        // детектор «вьюха СТАРАЯ» видел собранное игрой. piece.number здесь —
+        // живой Number SyncVar (голова прочитана выше), страж внутри.
+        maintain_view(want_skin, want_level, piece.number, force_rewrite);
 
         // Пересборки здесь НЕТ и быть не может: вьюху собирает игра на своих
         // событиях (холстер/дроу, RPC насадок/модов, спавн/подбор ствола —

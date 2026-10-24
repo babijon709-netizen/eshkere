@@ -1,4 +1,5 @@
 #include "farm.h"
+#include "farm_depletion.h"
 #include "farm_joy.h"          // память-джойстик: движение без тача
 #include "cfg.h"
 #include "main.h"
@@ -446,13 +447,13 @@ static void UpdateFarmInner(float dt) {
         if (hadNode) { releaseAll(); s_settle = kSettleTime; }
     }
 
-    // Уже добытый узел уходит в чёрный список на месте, а не обходится кругами:
-    // подборщик вернулся бы к нему, только когда в радиусе ничего нет, а танцы
-    // вокруг пустого пня никому не нужны. С дебаунсом: fraction — сырое чтение,
-    // и один мусорный кадр (значение посреди апдейта, сбой чтения) раньше
-    // бросал наполовину срубленное дерево — считается только устойчивое «пусто».
-    if (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac) {
-        if (++s_depletedFrames >= kDepletedFrames) {
+    // Уже добытый узел уходит из метки и цели на месте. fractionRemaining
+    // читается с задержкой на некоторых узлах, поэтому терминальное здоровье
+    // (тот же порог, при котором удары уже запрещены) снимает цель сразу;
+    // низкий fraction по-прежнему дебаунсится от одиночного мусорного чтения.
+    const bool nodeDying = farm_depletion::terminal_health(tgt.node_health, tgt.node_health_max);
+    if (nodeDying || (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac)) {
+        if (nodeDying || ++s_depletedFrames >= kDepletedFrames) {
             esp_farm_blacklist(tgt.id, 120.f);
             releaseAll();
             resetNode();
@@ -882,12 +883,8 @@ static void UpdateFarmInner(float dt) {
         // Узел при смерти: новый замах не начинаем. Последний удар мог уже
         // убить узел — его GameObject вот-вот освободится, и чтение крестика
         // (экстеншен/маркер) начнёт отдавать чужую память (аллокатор отдаёт
-        // адреса тут же, вплоть до объектов постройки). Дебаунс остатка
-        // (kDepletedFrames) сменит цель сам; наша задача — не махать вслепую
-        // по мёртвому узлу и не считать его крестик своим.
-        const bool nodeDying =
-            (tgt.node_health >= 0.f && tgt.node_health_max > 0.f &&
-             tgt.node_health <= 0.02f * tgt.node_health_max);
+        // адреса тут же, вплоть до объектов постройки). Цель с терминальным
+        // здоровьем уже снята выше, до чтения маркера.
         // Можно ли бить по лучу игры:
         //   ray_self — можно: игра сама подтверждает, что линия удара стоит
         //     в САМОМ узле (поддерево трансформов / коллайдер крестика);

@@ -48,6 +48,11 @@ int main() {
     assert(!strcmp(label_of("MBR7", false), "MBR7"));
     assert(!strcmp(label_of("MBR7", true), "MBR7"));
 
+    // -- Empty-hand model prefabs are shown as hands, not as a raw model name.
+    assert(!strcmp(label_of("MaleBody", false), "Руки"));
+    assert(!strcmp(label_of("01_DefaultMaleBody", false), "Руки"));
+    assert(!strcmp(label_of("MaleBody", true), "Hands"));
+
     // -- Неизвестное оружие остаётся как есть: пустая подпись хуже кривой.
     {
         char buf[32];

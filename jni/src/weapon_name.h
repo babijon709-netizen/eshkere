@@ -103,6 +103,7 @@ inline const Name kNames[] = {
     // Пустые руки игра называет головой модели («MaleHead»).
     {"malehead",              "Hand",                "Рука"},
     {"femalehead",            "Hand",                "Рука"},
+    {"malebody",              "Hands",               "Руки"},
     // ---- Tools ----
     {"stonehatchet",          "Stone Hatchet",   "Каменный топор"},
     {"hatchet",               "Hatchet",         "Топор"},

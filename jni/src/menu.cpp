@@ -939,101 +939,9 @@ static float RailTabsW() {
     return kRailPadL + kRailIcon + kRailGap + worst + kRailPadR;
 }
 
-// «Светофор» в левом верхнем углу меню и метрики левой панели.
-//
-// Кружок-аватарка убран: место под него (отступ + диаметр + отступ) пока
-// оставлено за панелью, чтобы ширина не менялась. Столбец вкладок стоит сразу
-// под светофором. В самом углу окна стоят три кнопки как в macOS (красная — закрыть меню, жёлтая —
-// свернуть в минимальный размер, зелёная — развернуть на весь экран и обратно).
-static const float kAvatarR    = 87.75f; // радиус кружка (диаметр 175.5)
-static const float kAvatarPad  = 20.f;   // отступ по бокам внутри панели
-static const float kAvatarPadT = 12.f;   // от верхнего края окна
-
-// «Светофор»: три кружка по 20 px с зазором 6.7 — та же пропорция, что в
-// macOS (12 px при системном шрифте 13), в 1.5 раза меньше прежних 30/10.
-static const float kTLD   = 20.f;        // диаметр кружка светофора
-static const float kTLGap = 6.7f;        // зазор между кружками
-static const float kTLPad = 12.f;        // отступ светофора от краёв окна
-static const int   kTLN   = 3;           // красный, жёлтый, зелёный
-
-// Ширина светофора целиком.
-static float TrafficLightW(float d, float gap) { return d * kTLN + gap * (kTLN - 1); }
-
-// Размер кружков светофора под ширину панели: в узком окне он ужимается вместе
-// с панелью, чтобы не вылезти на содержимое вкладок.
-static void TrafficLightMetrics(float railW, float& d, float& gap) {
-    d = kTLD; gap = kTLGap;
-    const float need = TrafficLightW(d, gap);
-    const float have = railW - kAvatarPad * 2.f;
-    if (need > 0.f && have > 0.f && need > have) {
-        const float k = have / need;
-        d *= k; gap *= k;
-    }
-}
-
-// Ширина панели вкладок: по прежнему кружку (175.5 px), но не меньше,
-// чем нужно светофору. На узком экране (меню сжимается под ширину дисплея)
-// панель не отдаём больше 45% окна: тогда кружок и светофор уменьшаются.
-static float AvatarRailW(float winW) {
-    const float forAvatar = (kAvatarR + kAvatarPad) * 2.f;   // отступ + диаметр + отступ
-    const float forLights = TrafficLightW(kTLD, kTLGap) + kAvatarPad * 2.f;
-    const float forTabs   = RailTabsW();                     // иконка + крупная подпись
-    return ImMin(ImMax(ImMax(forAvatar, forLights), forTabs), ImMax(120.f, winW * 0.45f));
-}
-
-
-// --- Светофор ===============================================================
-// Кружки: 0 — красная, 1 — жёлтая, 2 — зелёная. Это ДЕКОР (просьба игрока:
-// «он как декоративный дизайн»): тапов и действий у кружков нет, поэтому нет и
-// InvisibleButton'ов — окно за них таскается как за обычную шапку.
-enum TrafficLightId { TL_CLOSE = 0, TL_MIN, TL_ZOOM };
-
-// Прямоугольник i-й кнопки (квадрат со стороной d + 8 — палец толще кружка).
-static void TrafficLightRect(ImVec2 winPos, float d, float gap, int i, ImVec2& mn, ImVec2& mx) {
-    const float pitch = d + gap;
-    const float cx = winPos.x + kTLPad + i * pitch + d * 0.5f;
-    const float cy = winPos.y + kTLPad + d * 0.5f;
-    const float h  = d * 0.5f + 4.f;
-    mn = {cx - h, cy - h};
-    mx = {cx + h, cy + h};
-}
-
-// Цвета macOS: закрыть, свернуть, развернуть.
-static ImU32 TrafficLightColor(int i) {
-    switch (i) {
-        case TL_CLOSE: return IM_COL32(255,  95,  87, 255);
-        case TL_MIN:   return IM_COL32(254, 188,  46, 255);
-        default:       return IM_COL32( 40, 200,  64, 255);
-    }
-}
-
-// Полоса шапки контента. В раскладке с нижней панелью она раньше была втрое
-// выше — под кружок аватарки и светофор; кружка там больше нет, и полоса снова
-// обычной высоты (только под заголовок вкладки).
-static float MenuHeaderH(bool) { return Layout::HeaderH; }
-
-// Где стоит светофор: в САМОМ левом верхнем углу окна, в обеих раскладках.
-// (В раскладке с нижней панелью он стоял по центру полосы шапки — рядом с
-// кружком аватарки. Кружка там больше нет, и светофор переехал в угол.)
-static ImVec2 TrafficLightPos(ImVec2 winPos, bool) { return winPos; }
-
-// Нарисовать светофор. Тапы не обрабатываются: это декор, действия закрыть /
-// свернуть / развернуть убраны вместе с ним (меню открывается и закрывается
-// тапом по пилюле «Противники» сверху, окно таскается за шапку и растягивается
-// за правый нижний угол).
-static void TrafficLight(ImVec2 winPos, float railW) {
-    float d = 0.f, gap = 0.f;
-    TrafficLightMetrics(railW, d, gap);
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-
-    for (int i = 0; i < kTLN; ++i) {
-        ImVec2 mn, mx;
-        TrafficLightRect(winPos, d, gap, i, mn, mx);
-        const ImVec2 c{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
-        // Как в macOS: цветной кружок с чуть заметной тёмной кромкой.
-        fg->AddCircleFilled(c, d * 0.5f, TrafficLightColor(i), 32);
-        fg->AddCircle(c, d * 0.5f, IM_COL32(0, 0, 0, 45), 32, 1.5f);
-    }
+// Метрики левой панели вкладок.
+static float SidebarRailW(float winW) {
+    return ImMin(ImMax(RailTabsW(), 120.f), ImMax(120.f, winW * 0.45f));
 }
 
 // ====================== Фрикам: управление полётом ========================
@@ -1895,8 +1803,7 @@ void RenderMenu() {
 
         if (!g_win.dragging && io.MouseDown[0] && !(g_sheet.visible || (g_pop.visible && !g_pop.closing)) && !g_win.resizing && g_win.openAnim >= 1.f && !g_win.closing) {
             float tx = io.MouseClickedPos[0].x, ty = io.MouseClickedPos[0].y;
-            // Тащим окно за верхнюю шапку (по всей ширине). Кружки светофора
-            // больше не исключение: они декор и тапов не обрабатывают.
+            // Тащим окно за верхнюю шапку (по всей ширине).
             bool inHdr = tx >= g_win.pos.x && tx < g_win.pos.x + g_win.w
                       && ty >= g_win.pos.y && ty < g_win.pos.y + hH_;
             if (inHdr) {
@@ -2018,9 +1925,8 @@ void RenderMenu() {
     // центру) — выбирается в «Опциях». Контент занимает остальную площадь.
     const bool  panelLeft = g_state.ui_panel_left;
     const float botH = Layout::BottomH;
-    // Панель вкладок шире стандартной (128 px), если в ней стоит кружок: он
-    // должен целиком помещаться в панели, иначе накрывает содержимое вкладок.
-    const float railW = panelLeft ? AvatarRailW(g_win.w) : Layout::RailW;
+    // Левая панель расширяется под иконки и подписи вкладок.
+    const float railW = panelLeft ? SidebarRailW(g_win.w) : Layout::RailW;
     const float cH = panelLeft ? g_win.h : g_win.h - botH;
     const float cW = panelLeft ? g_win.w - railW : g_win.w;
     const float cX0 = panelLeft ? railW : 0.f;
@@ -2161,17 +2067,13 @@ void RenderMenu() {
         ldl->AddLine({lpPos.x + railW, lpPos.y + 12.f}, {lpPos.x + railW, lpPos.y + WH - 12.f},
                      C::UA(C::Sep(), 0.8f), 1.f);
 
-        // Светофор как в macOS — в самом углу окна.
-        TrafficLight(TrafficLightPos(g_win.pos, true), railW);
-
         // Размеры подписи и иконки в этой панели — из ширины панели.
         const RailCell railM = RailMetrics(railW);
 
-        // Столбец вкладок прижат к верху панели, сразу под светофором — там,
-        // где раньше был кружок. Если в минимальном окне (720 px) пяти ячейкам
-        // по 108 px места не хватает, высота ячейки поджимается, чтобы последняя
-        // вкладка не уехала за нижний край.
-        const float colTop = kTLPad + kTLD + kAvatarPadT;
+        // Столбец вкладок начинается с небольшого верхнего отступа. Если в
+        // минимальном окне пяти ячейкам по 108 px места не хватает, высота
+        // ячейки поджимается, чтобы последняя вкладка не уехала за нижний край.
+        const float colTop = 12.f;
         const float avail  = ImMax(64.f * kTabShown, WH - colTop - 6.f);
         const float tabH   = ImMin(Layout::TabHV, avail / (float)kTabShown);
         const float startY = colTop;
@@ -2290,13 +2192,7 @@ void RenderMenu() {
     ImGui::BeginChild("##cp", {cW, cH}, false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    // Когда панель вкладок не слева, кружок аватарки рисуется в шапке контента
-    // (там же, где заголовок): полосу шапки под него расширяем, иначе он налез
-    // бы на первый ряд вкладки.
-    // В раскладке с нижней панелью вкладок кружок и светофор стоят в шапке
-    // контента: светофор у самого угла окна, кружок сразу справа от него, оба
-    // по центру полосы. Полосу под них расширяем, чтобы не налезли на первый ряд.
-    const float hdrH = MenuHeaderH(panelLeft);
+    const float hdrH = Layout::HeaderH;
 
     {
         // Шапка: заголовок вкладки по центру.
@@ -2308,11 +2204,6 @@ void RenderMenu() {
         auto tsz = ImGui::GetFont()->CalcTextSizeA(titleFS, FLT_MAX, 0, headerText);
         cdl->AddText(ImGui::GetFont(), titleFS,
             {hp.x + (cW - tsz.x) * 0.5f, hp.y + (hH - tsz.y) * 0.5f}, C::U(C::Txt()), headerText);
-        if (!panelLeft) {
-            // Светофор — в самом левом верхнем углу окна. Кружка аватарки в
-            // этой раскладке нет (просьба игрока: с нижней панелью он мешает).
-            TrafficLight(TrafficLightPos(g_win.pos, false), cW);
-        }
         ImGui::Dummy({cW, hH});
     }
 

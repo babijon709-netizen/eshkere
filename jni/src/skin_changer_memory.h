@@ -709,6 +709,9 @@ template<class IO> class Controller {
     uint32_t inv_dbg_zh_ = 0;
     int inv_dbg_zhm_ = 0;
     uint64_t inv_dbg_za_ = 0;
+    // §4.37: rej — кандидаты zh, отклонённые как массивы (bounds=null +
+    // length=N совпадают с kJw-формой null+слот; класс кончается на "]").
+    int inv_dbg_rej_ = 0;
     // §4.34: yh — запись СВОЕГО живого слота с НЕ-нулевым Item (stale/чужой:
     // гейт LzY может ронять и такой — валидация глубже null-чека), yhm —
     // сколько таких. zh (null-fill) предпочтительнее yh (overwrite).
@@ -1082,12 +1085,23 @@ template<class IO> class Controller {
         if (!io.read(p + KJW_SLOT, slot) || slot > 64) return;
         if (inv_dbg_kjw_null_ < 999) ++inv_dbg_kjw_null_;
         // §4.33: пустой слот живого слота дроу — кандидат на инъекцию Item.
+        // §4.37: массивы (bounds=null, length=N) совпадают с kJw-формой —
+        // настоящий kJw прячется среди z. Кандидата проверяем по классу
+        // (только совпавшие со слотом — единицы за проход, дёшево): имя на
+        // "]" = массив, отклонить в rej= (z-ряд не трогаем — непрерывность).
         if (inv_live_slot_ >= 0 && slot == (uint32_t)inv_live_slot_) {
-            if (inv_dbg_zhm_ < 999) ++inv_dbg_zhm_;
-            if (!inv_dbg_zh_ok_) {
-                inv_dbg_zh_ok_ = true;
-                inv_dbg_zh_ = slot;
-                inv_dbg_za_ = p;
+            char cls[24] = {};
+            klass_name_read(io, p, cls, sizeof(cls));
+            const size_t nl = std::strlen(cls);
+            if (nl > 0 && cls[nl - 1] == ']') {
+                if (inv_dbg_rej_ < 999) ++inv_dbg_rej_;
+            } else {
+                if (inv_dbg_zhm_ < 999) ++inv_dbg_zhm_;
+                if (!inv_dbg_zh_ok_) {
+                    inv_dbg_zh_ok_ = true;
+                    inv_dbg_zh_ = slot;
+                    inv_dbg_za_ = p;
+                }
             }
         }
     }
@@ -1115,6 +1129,7 @@ template<class IO> class Controller {
         inv_dbg_zh_ok_ = false;
         inv_dbg_zhm_ = 0;
         inv_dbg_za_ = 0;
+        inv_dbg_rej_ = 0;
         inv_dbg_yh_ok_ = false;
         inv_dbg_yh_ = 0;
         inv_dbg_yhm_ = 0;
@@ -1816,6 +1831,8 @@ template<class IO> class Controller {
             std::snprintf(v, sizeof(v), " zh=x");
         ap(v);
         std::snprintf(v, sizeof(v), " zhm=%d", inv_dbg_zhm_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " rej=%d", inv_dbg_rej_);   // §4.37
         ap(v);
         if (inv_dbg_zh_ok_)
             std::snprintf(v, sizeof(v), " za=%llx",

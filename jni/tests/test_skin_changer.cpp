@@ -2153,6 +2153,29 @@ void test_dump_carries_fm_cw_shape() {
     std::printf("  dump: fm/cw kjw-shape fields\n");
 }
 
+// ---- §4.37: массивы не кандидаты в kJw --------------------------------------
+// Массив длины N (bounds=null, length=N) совпадает с kJw-формой null+слот —
+// зонд считал их за zh и вливал Item в bounds (безвредный, но декой). Теперь
+// кандидат живого слота проверяется по классу: имя на "]" = массив —
+// отклонить (rej=1), не усыновлять (qj=0, bounds untouched).
+constexpr uint64_t kjw_arr = 0x5D000;
+void test_kjw_array_rejected() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // пояс-триггер среза + гейт 26; декой перезапишем
+    f.io.plain(kjw_arr);
+    put_klass_name(f.io, kjw_arr, "Item[]");
+    f.io.put<uint64_t>(kjw_arr + KJW_ITEM, 0);       // bounds = null
+    f.io.put<uint32_t>(kjw_arr + KJW_SLOT, 26);      // length = живой слот
+    f.io.put<uint64_t>(inv_data + 0x40, kjw_arr);    // вместо записи — массив
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "rej=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "zh=x") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=0") != nullptr);
+    assert(f.io.value<uint64_t>(kjw_arr + KJW_ITEM) == 0);   // bounds цел
+    std::printf("  kjw: array-shaped candidate rejected, not adopted\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2228,6 +2251,7 @@ int main() {
     test_kjw_pin_repaints_resync();
     test_kjw_pin_drops_unreadable();
     test_dump_carries_fm_cw_shape();
+    test_kjw_array_rejected();
     std::printf("OK\n");
     return 0;
 }

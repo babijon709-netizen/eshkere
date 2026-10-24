@@ -2328,6 +2328,33 @@ void test_probe_reports_yh_any() {
     std::printf("  probe: yh-any surfaces non-live record, read-only\n");
 }
 
+constexpr uint64_t yhn_rec = 0x69000, yhn_item = 0x6A000, yhn_fdata = 0x6B000;
+
+void test_probe_reports_foreign_x() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // живой слот 26 + пояс-триггер
+    f.io.plain(yhn_fdata);  // чужой ItemData (адрес для сравнения дефа)
+    f.io.plain(yhn_item);
+    f.io.put<uint64_t>(yhn_item + ITEM_DATA, yhn_fdata);
+    f.io.put<int32_t>(yhn_item + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(yhn_item + ITEM_SKIN_LEVEL, 0);
+    put_klass_name(f.io, yhn_item, "Item");
+    f.io.plain(yhn_rec);
+    f.io.put<uint64_t>(yhn_rec + KJW_ITEM, yhn_item);
+    f.io.put<uint32_t>(yhn_rec + KJW_SLOT, 9);
+    f.io.put<uint64_t>(fp + 0x20, yhn_rec);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "yhn=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhx=69000") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhxs=9") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhxc=Item") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhan=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=1") != nullptr);
+    assert(f.io.value<int32_t>(yhn_item + ITEM_SKIN) == -1);
+    std::printf("  probe: foreign-X surfaces stale-kjw record, read-only\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2411,6 +2438,7 @@ int main() {
     test_kill_switches_default_off();
     test_dump_carries_flag_chain();
     test_probe_reports_yh_any();
+    test_probe_reports_foreign_x();
     std::printf("OK\n");
     return 0;
 }

@@ -726,6 +726,16 @@ template<class IO> class Controller {
     uint64_t inv_dbg_yha_ = 0;
     uint32_t inv_dbg_yhas_ = 0;
     int inv_dbg_yhan_ = 0;
+    // §4.41: yhn — ЧУЖИЕ (X, слот<=64): X не валидируется нашим дефом и не
+    // наш, но klass читается (настоящий объект, не мусор). kJw мог протухнуть
+    // в Item прошлого ствола (чужой деф, скин -1 — validate слеп, yh-any
+    // молчит) — via печёт его -1 каждый дроу. Имя класса первой (Item =
+    // протухший kJw, остальное = шум). Только чтение.
+    bool inv_dbg_yhx_ok_ = false;
+    uint64_t inv_dbg_yhx_ = 0;
+    uint32_t inv_dbg_yhxs_ = 0;
+    int inv_dbg_yhn_ = 0;
+    char inv_dbg_yhxc_[12] = {};
     // §4.34: инъекция FP-Item в запись экипировки. Slot несёт адрес
     // (cand+0x10), оригинал (null/stale — возврат) и last (бой с затиранием).
     // prev — подтверждение адреса двумя проходами (как кандидаты зонда);
@@ -1071,7 +1081,7 @@ template<class IO> class Controller {
     // Живая: P+0x10 -> наш Item (skin первого — в ks=). Пустая: P+0x10 null
     // и слот u32 <= 64 — кандидат в голодающую запись (гейт g4 LzY роняет
     // каждый дроу в пустую ветвь skin=-1). Только считает, не пишет.
-    void check_kjw_shape(uint64_t p) {
+    void check_kjw_shape(uint64_t p, bool l2 = false) {
         using namespace go_active;
         if (p < 0x10000) return;
         uint64_t it = 0;
@@ -1083,13 +1093,38 @@ template<class IO> class Controller {
             // Item нашего дефа (урок сессии 32) — массивы/Item'ы/мусор про
             // +0x10=ItemData отсекаются сами. Только чтение.
             uint32_t aslot = 0;
-            if (io.read(p + KJW_SLOT, aslot) && aslot <= 64 &&
-                validate_inv_item(it)) {
+            const bool sok = io.read(p + KJW_SLOT, aslot);
+            if (sok && aslot <= 64 && validate_inv_item(it)) {
                 if (inv_dbg_yhan_ < 999) ++inv_dbg_yhan_;
                 if (!inv_dbg_yha_ok_) {
                     inv_dbg_yha_ok_ = true;
                     inv_dbg_yha_ = p;
                     inv_dbg_yhas_ = aslot;
+                }
+            } else if (sok && aslot <= 64 && !kjw_item_is_ours(it)) {
+                // §4.41: чужой X (не наш деф, не наш Item — validate и k
+                // молчат), но klass ровно "Item": настоящий Item прошлого
+                // ствола (класс один на все дефы), не net/fp/моторный шум
+                // со случайным мелким +0x18. FP-Item сюда не падает
+                // (kjw_item_is_ours — дефовый). Имя только для первой
+                // (дорого — строка), счёт — всем.
+                // §4.41: только L1 (прямые поля баз). L2 пересекает L1 (fp в
+                // контейнерах — та же запись считалась бы дважды), а вложен
+                // ный чужак — не kJw (экип-запись прямая по построению).
+                // k-ветка ниже — общая (ранний return убил бы L2-k).
+                if (!l2) {
+                    char fcls[12] = {};
+                    klass_name_read(io, it, fcls, sizeof(fcls));
+                    if (std::strcmp(fcls, "Item") == 0) {
+                        if (inv_dbg_yhn_ < 999) ++inv_dbg_yhn_;
+                        if (!inv_dbg_yhx_ok_) {
+                            inv_dbg_yhx_ok_ = true;
+                            inv_dbg_yhx_ = p;
+                            inv_dbg_yhxs_ = aslot;
+                            std::snprintf(inv_dbg_yhxc_, sizeof(inv_dbg_yhxc_),
+                                          "%s", fcls);
+                        }
+                    }
                 }
             }
             if (inv_dbg_kjw_ < 999 && kjw_item_is_ours(it)) {
@@ -1171,6 +1206,11 @@ template<class IO> class Controller {
         inv_dbg_yha_ = 0;
         inv_dbg_yhas_ = 0;
         inv_dbg_yhan_ = 0;
+        inv_dbg_yhx_ok_ = false;
+        inv_dbg_yhx_ = 0;
+        inv_dbg_yhxs_ = 0;
+        inv_dbg_yhn_ = 0;
+        inv_dbg_yhxc_[0] = '\0';
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1274,7 +1314,7 @@ template<class IO> class Controller {
             for (uint64_t off = 0x10; off <= 0x80; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, l2[i] + off, p) || p < 0x10000) continue;
-                check_kjw_shape(p);   // §4.32
+                check_kjw_shape(p, true);   // §4.32 (§4.41: L2 — без yhn)
                 if (validate_inv_item(p)) {
                     if (inv_probe_n_ < cap) inv_probe_cands_[inv_probe_n_++] = l2[i] + off;
                     continue;
@@ -2010,6 +2050,25 @@ template<class IO> class Controller {
             std::snprintf(v, sizeof(v), " yhas=x");
         ap(v);
         std::snprintf(v, sizeof(v), " yhan=%d", inv_dbg_yhan_);
+        ap(v);
+        // §4.41: чужой X — счёт, первая (адрес/x), её слот (hex/x), класс.
+        std::snprintf(v, sizeof(v), " yhn=%d", inv_dbg_yhn_);
+        ap(v);
+        if (inv_dbg_yhx_ok_)
+            std::snprintf(v, sizeof(v), " yhx=%llx",
+                          (unsigned long long)inv_dbg_yhx_);
+        else
+            std::snprintf(v, sizeof(v), " yhx=x");
+        ap(v);
+        if (inv_dbg_yhx_ok_)
+            std::snprintf(v, sizeof(v), " yhxs=%x", inv_dbg_yhxs_);
+        else
+            std::snprintf(v, sizeof(v), " yhxs=x");
+        ap(v);
+        if (inv_dbg_yhx_ok_)
+            std::snprintf(v, sizeof(v), " yhxc=%s", inv_dbg_yhxc_);
+        else
+            std::snprintf(v, sizeof(v), " yhxc=-");
         ap(v);
         const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
         std::snprintf(v, sizeof(v), " qj=%d", qj);

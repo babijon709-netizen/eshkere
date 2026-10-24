@@ -718,6 +718,14 @@ template<class IO> class Controller {
     bool inv_dbg_yh_ok_ = false;
     uint64_t inv_dbg_yh_ = 0;
     int inv_dbg_yhm_ = 0;
+    // §4.40: yh-any — первая ВАЛИДНАЯ (Item нашего дефа, слот<=64) запись
+    // БЕЗ привязки к живому слоту (адрес/hex/x), её слот и счётчик. kJw
+    // может жить в другом слотовом пространстве — yh молчит не потому,
+    // что записей нет, а потому, что слот чужой. Только чтение.
+    bool inv_dbg_yha_ok_ = false;
+    uint64_t inv_dbg_yha_ = 0;
+    uint32_t inv_dbg_yhas_ = 0;
+    int inv_dbg_yhan_ = 0;
     // §4.34: инъекция FP-Item в запись экипировки. Slot несёт адрес
     // (cand+0x10), оригинал (null/stale — возврат) и last (бой с затиранием).
     // prev — подтверждение адреса двумя проходами (как кандидаты зонда);
@@ -1069,6 +1077,21 @@ template<class IO> class Controller {
         uint64_t it = 0;
         if (!pointer(io, p + KJW_ITEM, it)) return;
         if (it >= 0x10000) {
+            // §4.40: yh-any ПЕРВЫМ — все валидные (Item, слот<=64), любой
+            // слот, включая наши (k — подмножество: kjw_item_is_ours тоже
+            // дефовый, иначе yh-any недостижим). X обязан валидироваться
+            // Item нашего дефа (урок сессии 32) — массивы/Item'ы/мусор про
+            // +0x10=ItemData отсекаются сами. Только чтение.
+            uint32_t aslot = 0;
+            if (io.read(p + KJW_SLOT, aslot) && aslot <= 64 &&
+                validate_inv_item(it)) {
+                if (inv_dbg_yhan_ < 999) ++inv_dbg_yhan_;
+                if (!inv_dbg_yha_ok_) {
+                    inv_dbg_yha_ok_ = true;
+                    inv_dbg_yha_ = p;
+                    inv_dbg_yhas_ = aslot;
+                }
+            }
             if (inv_dbg_kjw_ < 999 && kjw_item_is_ours(it)) {
                 int32_t skin = 0;
                 if (!io.read(it + ITEM_SKIN, skin)) return;
@@ -1079,8 +1102,7 @@ template<class IO> class Controller {
                 }
                 return;
             }
-            // §4.34: не-наш Item на СВОЁМ живом слоте — yh (stale-запись:
-            // кандидат на overwrite, когда zh (null-fill) нет).
+            // §4.34: не-наш Item на СВОЁМ живом слоте — yh (stale-запись).
             uint32_t slot = 0;
             if (inv_live_slot_ >= 0 && io.read(p + KJW_SLOT, slot) &&
                 slot == (uint32_t)inv_live_slot_) {
@@ -1145,6 +1167,10 @@ template<class IO> class Controller {
         inv_dbg_yh_ok_ = false;
         inv_dbg_yh_ = 0;
         inv_dbg_yhm_ = 0;
+        inv_dbg_yha_ok_ = false;
+        inv_dbg_yha_ = 0;
+        inv_dbg_yhas_ = 0;
+        inv_dbg_yhan_ = 0;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1183,18 +1209,44 @@ template<class IO> class Controller {
         pointer(io, inv + INV_PLAYER_INVENTORY_CLIENT, anchors[1]);
         inv_dbg_data_ = anchors[0] >= 0x10000;
         inv_dbg_client_ = anchors[1] >= 0x10000;
+        // §4.40: kJw нет в PW/Data/Client-L1 (yh молчит везде) — сканируем
+        // поля FPManager (+0x20..; +0x10/+0x18 известны — cachedPtr/0),
+        // PlayerInventory (свой L1 — раньше читали только якоря!), игрока
+        // и дальние поля PW. Только check_kjw_shape (без validate — как
+        // PW-L1); validate решает сам (X обязан быть Item нашего дефа).
+        {
+            const uint64_t bases[4] = {context_.fp.object, inv,
+                                       context_.player.object, pw};
+            const uint64_t from[4] = {0x20, 0x10, 0x10, 0x200};
+            const uint64_t till[4] = {0xF8, 0xF8, 0x1F8, 0x2F8};
+            for (int b = 0; b < 4; ++b) {
+                const uint64_t base = bases[b];
+                if (base < 0x10000) continue;
+                for (uint64_t off = from[b]; off <= till[b]; off += 8) {
+                    uint64_t p = 0;
+                    if (!pointer(io, base + off, p) || p < 0x10000) continue;
+                    if (p == context_.item.object ||
+                        p == context_.item_data.object ||
+                        p == draw_item_.object)
+                        continue;
+                    check_kjw_shape(p);
+                }
+            }
+        }
         // §4.31: бюджет L2 16->32 (худший проход ~1.6k чтений — в пределах
         // тика), дедуп повторов и пропуск уже известных адресов (якоря,
         // FP-Item/ItemData/кэш дроу — их сканировать нечего).
         // §4.33: 32->48 — сессия 47 давит o33 (переполнение на единицу,
         // последний контейнер не сканируется — k=0 может врать).
-        uint64_t l2[48];
+        // §4.40: 48->64 — Data/Client-L1 расширен до 0x1F8 (рюкзак глубже),
+        // запас под новые контейнеры.
+        uint64_t l2[64];
         int l2_n = 0;
         const int l2_cap = (int)(sizeof(l2) / sizeof(l2[0]));
         for (int a = 0; a < 2; ++a) {
             const uint64_t base = anchors[a];
             if (base < 0x10000) continue;
-            for (uint64_t off = 0x10; off <= 0xF8; off += 8) {
+            for (uint64_t off = 0x10; off <= 0x1F8; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, base + off, p) || p < 0x10000) continue;
                 check_kjw_shape(p);   // §4.32: kJw-форма раньше Item-формы
@@ -1892,6 +1944,24 @@ template<class IO> class Controller {
         else
             std::snprintf(v, sizeof(v), " flg=x");
         ap(v);
+        // §4.40: гейт 2 via (KERNEL §29a): флаговый байт player+0x78->+0x1A0
+        // ->+0x20. ditem пуст => живая ветвь via не бежит => дроу душит гейт,
+        // а не шторм; значение при отказе vs песочнице решает, этот ли.
+        // x1/x2/x3 — на каком хопе цепочка оборвалась.
+        {
+            uint64_t f1 = 0, f2 = 0;
+            uint8_t fb = 0;
+            const uint64_t pl = context_.player.object;
+            if (!pl || !pointer(io, pl + 0x78, f1) || f1 < 0x10000)
+                std::snprintf(v, sizeof(v), " fch=x1");
+            else if (!pointer(io, f1 + 0x1A0, f2) || f2 < 0x10000)
+                std::snprintf(v, sizeof(v), " fch=x2");
+            else if (!io.read(f2 + 0x20, fb))
+                std::snprintf(v, sizeof(v), " fch=x3");
+            else
+                std::snprintf(v, sizeof(v), " fch=%x", fb);
+            ap(v);
+        }
         int16_t nc = 0;
         if (pw && io.read(pw + PLAYERWEAPON_NUMBER_CACHE, nc))
             std::snprintf(v, sizeof(v), " nc=%d", (int)nc);
@@ -1925,6 +1995,21 @@ template<class IO> class Controller {
             std::snprintf(v, sizeof(v), " yh=x");
         ap(v);
         std::snprintf(v, sizeof(v), " yhm=%d", inv_dbg_yhm_);
+        ap(v);
+        // §4.40: yh-any — первая валидная (Item, слот)-запись без привязки
+        // к живому слоту (адрес/x), её слот (hex/x) и счётчик.
+        if (inv_dbg_yha_ok_)
+            std::snprintf(v, sizeof(v), " yha=%llx",
+                          (unsigned long long)inv_dbg_yha_);
+        else
+            std::snprintf(v, sizeof(v), " yha=x");
+        ap(v);
+        if (inv_dbg_yha_ok_)
+            std::snprintf(v, sizeof(v), " yhas=%x", inv_dbg_yhas_);
+        else
+            std::snprintf(v, sizeof(v), " yhas=x");
+        ap(v);
+        std::snprintf(v, sizeof(v), " yhan=%d", inv_dbg_yhan_);
         ap(v);
         const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
         std::snprintf(v, sizeof(v), " qj=%d", qj);

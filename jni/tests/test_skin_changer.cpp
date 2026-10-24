@@ -2144,16 +2144,18 @@ void test_dump_carries_fm_cw_shape() {
     // нуле — fail 6, срезов нет). fm10-ветвь проверяется hex-значением кэша.
     f.io.plain(cw_obj);
     f.io.put<uint64_t>(cw_obj + KJW_ITEM, 0);
-    f.io.put<uint32_t>(cw_obj + KJW_SLOT, 26);
+    // §4.40: слот НЕ живой (7): FPM-L1 видит null+live и усыновил бы.
+    f.io.put<uint32_t>(cw_obj + KJW_SLOT, 7);
     f.io.put<uint64_t>(fp + FPMANAGER_CURRENT_WEAPON, cw_obj);
     for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
     // fp — Unity-объект: fm10 = cachedPtr (hex), fm18 не отображён (x).
-    // cw_obj — null+слот=26: cw10=null cw18=1a.
+    // cw_obj — null+слот=7: cw10=null cw18=7, без усыновления.
     assert(std::strstr(f.c.ui().dump_text, "fm10=930000") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "fm10=null") == nullptr);
     assert(std::strstr(f.c.ui().dump_text, "fm18=x") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "cw10=null") != nullptr);
-    assert(std::strstr(f.c.ui().dump_text, "cw18=1a") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "cw18=7") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=1") != nullptr);
     std::printf("  dump: fm/cw kjw-shape fields\n");
 }
 
@@ -2273,6 +2275,59 @@ void test_kill_switches_default_off() {
     std::printf("  killswitch: adopt+fill off by default\n");
 }
 
+// ---- §4.40: гейт-2 via + yh-any ------------------------------------------------
+// Гейт 2 via (KERNEL §29a) — флаговый байт player+0x78->+0x1A0->+0x20: срез
+// читает значение (fch=hex) или хоп обрыва (fch=x1/x2/x3). Семантика значения
+// (что = пропуск) неизвестна — решает diff населённый/песочница.
+constexpr uint64_t fch_a = 0x65000, fch_b = 0x66000;
+void test_dump_carries_flag_chain() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // пояс-триггер позднего среза
+    f.io.plain(fch_a);
+    f.io.plain(fch_b);
+    f.io.put<uint64_t>(player + 0x78, fch_a);
+    f.io.put<uint64_t>(fch_a + 0x1A0, fch_b);
+    f.io.put<uint8_t>(fch_b + 0x20, 1);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "fch=1") != nullptr);
+    Fixture g;
+    add_kjw_null_only(g);
+    g.io.plain(fch_a);
+    g.io.put<uint64_t>(player + 0x78, fch_a);
+    // fch_a+0x1A0 не отображён — обрыв на втором хопе.
+    for (int i = 0; i < 25; ++i) g.tick(g.settings(true, 1));
+    assert(std::strstr(g.c.ui().dump_text, "fch=x2") != nullptr);
+    std::printf("  dump: via gate-2 flag chain value/hop-fail\n");
+}
+
+// yh-any: (Item нашего дефа, слот 7 (НЕ живой)) в поле FPM+0x20 — новый L1
+// видит её (yha/yhas/yhan); X untouched (FPM-L1 — чистый check: ни validate,
+// ни L2-push, inv-целью X не становится). qj=0: X дефовый — идёт и в k,
+// а гейт adoption (k==0) широк (не только живой слот) — kjw_inj заблокирован.
+// В проде неважно (adoption OFF), здесь запинено как есть.
+constexpr uint64_t yha_rec = 0x67000, yha_item = 0x68000;
+void test_probe_reports_yh_any() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // живой слот 26 + пояс-триггер
+    f.io.plain(yha_item);
+    f.io.put<uint64_t>(yha_item + ITEM_DATA, item_data);
+    f.io.put<int32_t>(yha_item + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(yha_item + ITEM_SKIN_LEVEL, 0);   // validate читает и его
+    f.io.plain(yha_rec);
+    f.io.put<uint64_t>(yha_rec + KJW_ITEM, yha_item);
+    f.io.put<uint32_t>(yha_rec + KJW_SLOT, 7);
+    f.io.put<uint64_t>(fp + 0x20, yha_rec);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "yha=67000") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhas=7") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhan=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=0") != nullptr);
+    assert(f.io.value<int32_t>(yha_item + ITEM_SKIN) == -1);
+    std::printf("  probe: yh-any surfaces non-live record, read-only\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2354,6 +2409,8 @@ int main() {
     test_ditem_overwrites_broken();
     test_ditem_clears_on_fp_death();
     test_kill_switches_default_off();
+    test_dump_carries_flag_chain();
+    test_probe_reports_yh_any();
     std::printf("OK\n");
     return 0;
 }

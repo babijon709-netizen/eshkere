@@ -5,6 +5,7 @@
 #include "game_internal.h"
 #include "game_offsets_active.h"   // оффсеты (go_active)
 #include "manes_aim_source.h"
+#include "marker_range.h"
 #include "lang.h"
 #include <algorithm>
 #include <cstring>
@@ -225,6 +226,7 @@ struct MarkerEntity {
     char     text[40] = {};
     bool     has_color = false;
     bool     rainbow = false;
+    bool     map_wide = false;
     unsigned char color_rgb[3] = {255, 255, 255};
 };
 static std::vector<MarkerEntity> g_marker_entities;
@@ -298,6 +300,7 @@ struct MarkerLook {
     // Тип руды: 0 камень, 1 железо, 2 сера, -1 = не руда. Нужен, чтобы общий
     // тумблер «Руда» можно было разделить по типам (см. ore_type_enabled).
     int ore_type = -1;
+    bool map_wide = false; // airdrops ignore the normal marker-distance cap
 };
 
 static const MarkerLook kOreStone  {ESP_MARKER_ORE, "Камень", true, false, {190, 190, 190}, 0};
@@ -320,6 +323,7 @@ static void apply_ore_cfg(MarkerLook& look, int which) {
 // they can be recognised. They belong to the loot toggle all the same.
 static const MarkerLook kBarrel    {ESP_MARKER_SCRAP, "Бочка",  true,  false, {80, 200, 255}};
 static const MarkerLook kSmashBox  {ESP_MARKER_LOOT, "Ящик",   false, false, {255, 255, 255}};
+static const MarkerLook kAirdrop   {ESP_MARKER_LOOT, "Аирдроп", false, false, {255, 255, 255}, -1, true};
 // Дорожный знак — та же дробимая семья, что бочки и ящики: висит на тумблере
 // «Ящики», но подпись у него своя (раньше тонул в общей «Ящик»).
 static const MarkerLook kRoadSign  {ESP_MARKER_SCRAP, "Дорожный знак", false, false, {255, 255, 255}};
@@ -369,7 +373,7 @@ static bool marker_for_entity_type(int32_t type, MarkerLook& look) {
         case MineableEntityType::Sulfur:   look = kOreSulfur; apply_ore_cfg(look, 2); return true;
         case MineableEntityType::Barrel:   look = kBarrel;    return true;
         case MineableEntityType::Lootbox:  look = kSmashBox;  return true;
-        // Air-drop balloon crates, new in this game build.
+        // Balloon-attached lootboxes are ordinary crates, not a supply drop.
         case MineableEntityType::LootboxBaloon:
         case MineableEntityType::LootboxBaloonBig: look = kSmashBox; return true;
         case MineableEntityType::RoadSign: look = kRoadSign;  return true;
@@ -792,6 +796,7 @@ struct LootNameInfo {
     const char* label = nullptr;
     int  rank = 0;
     bool rainbow = false;
+    bool airdrop = false;
     bool player_box = false;
     // Бочка: слово «barrel» в любом имени побеждает любые «loot/crate» — раньше
     // ранги сравнивались поровну (оба 2), и «loot» из «LootBarrel» забирал
@@ -805,6 +810,10 @@ struct LootNameInfo {
 };
 
 static void scan_loot_name(const char* raw, LootNameInfo& info) {
+    if (marker_range::is_airdrop_name(raw)) {
+        info.airdrop = true;
+        if (info.rank < 3) { info.rank = 3; info.label = "Аирдроп"; }
+    }
     // Containers a player deploys — never interesting, always hidden. The
     // concatenated spellings matter because `panelName` is one lower-case word
     // ("largewoodbox") and never splits into tokens.
@@ -846,7 +855,11 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
         {"legendary",    "Элитный ящик",     4, true},
         {"rare",         "Редкий ящик",      4, false},
         {"airdrop",    "Аирдроп",            3, false},
+        {"airdrops",   "Аирдроп",            3, false},
+        {"airdropcrate", "Аирдроп",          3, false},
         {"supply",     "Аирдроп",            3, false},
+        {"supplydrop", "Аирдроп",            3, false},
+        {"supplycrate", "Аирдроп",           3, false},
         {"medical",    "Мед. ящик",          3, false},
         {"medkit",     "Мед. ящик",          3, false},
         {"ammo",       "Ящик патронов",      3, false},
@@ -968,9 +981,10 @@ static bool loot_marker(uint64_t component, const char* object_name, const char*
     if (info.rank <= 0 || !info.label) return false;
 
     look.kind = info.scrap ? ESP_MARKER_SCRAP : ESP_MARKER_LOOT;
-    look.label = info.label;
+    look.label = info.airdrop ? "Аирдроп" : info.label;
     look.rainbow = info.rainbow;
     look.has_color = false;
+    look.map_wide = info.airdrop;
     return true;
 }
 
@@ -1749,6 +1763,14 @@ static MarkerScanResult rebuild_marker_entities() {
                 if (!known && ((object_name[0] && skip_object_name(object_name)) ||
                                (root_name[0] && skip_object_name(root_name))))
                     continue;
+                if (!known && object_name[0] && marker_range::is_airdrop_name(object_name)) {
+                    look = kAirdrop;
+                    known = true;
+                }
+                if (!known && root_name[0] && marker_range::is_airdrop_name(root_name)) {
+                    look = kAirdrop;
+                    known = true;
+                }
                 if (!known && object_name[0]) known = recovered_ore_look(object_name, look);
                 if (!known && root_name[0]) known = recovered_ore_look(root_name, look);
                 if (!known) {
@@ -1797,6 +1819,7 @@ static MarkerScanResult rebuild_marker_entities() {
             entity.id = component;
             entity.kind = look.kind;
             entity.ore_type = look.ore_type;
+            entity.map_wide = look.map_wide;
             if (entity.kind == ESP_MARKER_PUMPKIN) id_emitted_pumpkin = true;
             if (entity.kind == ESP_MARKER_BOT) {
                 // The death handler is a sibling behaviour, not the Mineable
@@ -2381,7 +2404,7 @@ std::vector<EspMarker> esp_get_markers() {
         float dy = tracked_position.y - g_frame_local_pos.y;
         float dz = tracked_position.z - g_frame_local_pos.z;
         float distance = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (!std::isfinite(distance) || distance > max_distance) {
+        if (!marker_range::within_limit(distance, max_distance, entity.map_wide)) {
             marker_watch_observe(entity, false, "DISTANCE", distance, 0.0F, 0.0F);
             continue;
         }

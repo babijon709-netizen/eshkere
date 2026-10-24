@@ -189,8 +189,8 @@ void        esp_set_aim_lead(float seconds);
 void        esp_set_always_day(bool enabled);
 // «Без травы»: отключает GrassEnabled и TreesEnabled (рендерер кустов).
 void        esp_set_no_grass(bool enabled);
-// Markers further away than this (metres) are dropped. Keeps the screen clean
-// on open terrain, where the registry easily holds hundreds of nodes.
+// Ordinary markers further away than this (metres) are dropped. Airdrops
+// remain visible across the map regardless of this range.
 void        esp_set_marker_max_distance(float metres);// Markers for the current frame, nearest first. Call after esp_get_boxes():
 // it reuses the camera/projection state that call established.
 std::vector<EspMarker> esp_get_markers();

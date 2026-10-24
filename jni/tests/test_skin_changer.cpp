@@ -1433,6 +1433,122 @@ void test_draw_item_foreign_data_ignored() {
     std::printf("  draw-item foreign ItemData: ignored\n");
 }
 
+// ---- 42. §4.27: блэкаут дроу — серверная переписка лечится до чтения TAIL --
+// Холстер роняет резолв (стадия 9, It=0), а подъём переписывает SyncVar и
+// рабочую копию серверной правдой (-1) до чтения головой сборки. Без записей
+// в блэкауте вьюха строится из -1, а тик после подъёма переписывает уже
+// построенное (skin.log: SV/wk -1 пойманы на uhq=1, вьюха мёрзлая).
+void test_blackout_rewrite_heals_server_wipe() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1 && f.live_item_skin() == 1);
+    // Холстер: It=0 (стадия 9), сервер переписал обе копии в -1 с живой головой.
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, -1);
+    f.io.put<int16_t>(piece_local() + go_active::WEAPONPIECE_SKIN, -1);
+    f.io.put<int32_t>(item + go_active::ITEM_SKIN, -1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Waiting);   // резолв всё ещё пуст
+    assert(f.c.stage() == 9);                           // стадия резолва не тронута
+    assert(f.live_skin() == 1);                         // переписка залечена
+    assert(f.live_skin_local() == 1);
+    assert(f.live_item_skin() == 1);
+    // Погашенная холстером голова — не повод молчать: байты скина пишутся и в неё.
+    f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED, 0);
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, -1);
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, -1);
+    f.io.put<uint8_t>(piece_local() + go_active::WEAPONPIECE_ENABLED, 0);
+    f.io.put<int16_t>(piece_local() + go_active::WEAPONPIECE_NUMBER, -1);
+    f.io.put<int16_t>(piece_local() + go_active::WEAPONPIECE_SKIN, -1);
+    f.tick(f.settings(true, 1));
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    assert(f.live_enabled() == 0 && f.live_enabled_local() == 0);  // голову не чиним
+    // Кэш дроу разошёлся (ресинк без пересборки) — четвёртая точка тоже держится.
+    f.io.plain(item2);
+    f.io.put<uint64_t>(item2 + go_active::ITEM_DATA, item_data);
+    f.io.put<int32_t>(item2 + go_active::ITEM_SKIN, -1);
+    f.io.put<uint8_t>(item2 + go_active::ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_DRAW_ITEM, item2);
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == 1);
+    // Подъём: цепочка сошлась, вьюха строилась бы из нашего индекса.
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, item);
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 1);
+    f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_ENABLED, 1);
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_NUMBER, 114);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);
+    std::printf("  blackout: server wipe healed pre-TAIL, head untouched, copy 4 held\n");
+}
+
+// ---- 43. §4.27: блэкаут молчит на мёртвом стволе и ранних стадиях ----------
+// Писать можно только в кэш подтверждённого свежим резолвом ствола (стадии
+// 7–9 — цепь ПОСЛЕ ствола). Ранние стадии (игрок/мир) и мёртвый PW — чужое.
+void test_blackout_skips_dead_weapon_and_early_stages() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);   // стадия 9...
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    f.io.put<uint64_t>(pw, 0xDEAD);                                // ...но PW мёртв
+    f.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, -1);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 1));
+    assert(f.io.writes == before);               // ни одной записи по мёртвому PW
+    assert(f.io.value<int16_t>(piece() + go_active::WEAPONPIECE_SKIN) == -1);
+    // Ранняя стадия (игрок не локален, стадия 4): переписка НЕ лечится.
+    Fixture g;
+    g.tick(g.settings(true, 1));
+    g.io.put<uint8_t>(net + go_active::NETWORK_IDENTITY_IS_LOCAL_PLAYER, 0);
+    g.io.put<int16_t>(piece() + go_active::WEAPONPIECE_SKIN, -1);
+    const unsigned gbefore = g.io.writes;
+    g.tick(g.settings(true, 1));
+    assert(g.c.stage() == 4);
+    assert(g.io.writes == gbefore);
+    assert(g.io.value<int16_t>(piece() + go_active::WEAPONPIECE_SKIN) == -1);
+    std::printf("  blackout: silent on dead PW and early stages\n");
+}
+
+// ---- 44. §4.27: ротация Item — тот же ствол, без restore и рескана ---------
+// Дроу линкует свежий экземпляр Item того же ствола (тот же ItemData, тот же
+// skinData). Это не смена ствола: список и оригиналы те же, слот Item просто
+// пересэмпливается на новый адрес. Старый экземпляр отвязан игрой — запись в
+// нём остаётся (безвредно), оригинал нового — его серверное значение.
+void test_rotation_keeps_list_without_restore() {
+    Fixture f;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().count == 3);
+    // Дроу: свежий экземпляр Item с серверным -1, тот же ItemData.
+    f.io.plain(item2);
+    f.io.put<uint64_t>(item2 + go_active::ITEM_DATA, item_data);
+    f.io.put<int32_t>(item2 + go_active::ITEM_SKIN, -1);
+    f.io.put<uint8_t>(item2 + go_active::ITEM_SKIN_LEVEL, 5);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, item2);
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_DRAW_ITEM, item2);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    // Ровно две записи — skin/level нового экземпляра. Полный путь смены
+    // контекста дал бы restore_all (моргание оригиналом в SyncVar) + rewrite.
+    assert(f.io.writes == before + 2);
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == 1);
+    assert(f.live_skin() == 1 && f.live_skin_local() == 1);   // SyncVar не моргал
+    assert(f.live_item_skin() == 1);   // прежний экземпляр: запись осталась
+    assert(f.c.ui().count == 3);       // список не перечитывался зря
+    // Выключение: оригиналы — серверные значения каждого экземпляра.
+    f.tick(f.settings(false));
+    assert(f.live_skin() == f.original_skin);
+    assert(f.io.value<int32_t>(item2 + go_active::ITEM_SKIN) == -1);
+    // Другой ствол (иной ItemData) — по-прежнему полный путь с ресканом.
+    switch_to_spear(f);
+    f.tick(f.settings(true, 2));
+    assert(f.c.stage() == 13);         // список перечитан, индекс 2 чужой
+    std::printf("  rotation: same gun, no restore/rescan, new instance owned\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1483,6 +1599,9 @@ int main() {
     test_fp_dump_watch();
     test_draw_item_divergence_written_and_restored();
     test_draw_item_foreign_data_ignored();
+    test_blackout_rewrite_heals_server_wipe();
+    test_blackout_skips_dead_weapon_and_early_stages();
+    test_rotation_keeps_list_without_restore();
     std::printf("OK\n");
     return 0;
 }

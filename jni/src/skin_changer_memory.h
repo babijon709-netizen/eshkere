@@ -385,6 +385,16 @@ struct Context {
                fp_view == b.fp_view && piece == b.piece &&
                piece_local == b.piece_local;
     }
+    // §4.27: тот же ствол с точностью до пересозданных игрой экземпляров.
+    // Каждый дроу линкует свежий Item (skin.log: It вращается на каждом цикле
+    // uhq 0->1, а PW/ItemData/skinData/обе piece стоят) — это НЕ смена ствола:
+    // список скинов тот же (он висит на ItemData, не на Item), оригиналы те же.
+    bool same_gun(const Context& b) const {
+        return player == b.player && weapon == b.weapon && fp == b.fp &&
+               item_data == b.item_data && skins == b.skins &&
+               fp_view == b.fp_view && piece == b.piece &&
+               piece_local == b.piece_local;
+    }
 };
 
 // il2cpp System.String: длина (int32) в +0x10, символы UTF-16 в +0x14.
@@ -1431,22 +1441,122 @@ public:
                     work.enabled == 0)
                     refill_local_head(nullptr);   // фон: статус Waiting, стадии не трогаем
             }
+            // §4.27: записи сквозь блэкаут дроу. На сервере дроу бьёт дважды:
+            // холстер роняет резолв (стадия 9, It=0 — слоты молчат весь тик),
+            // а подъём переписывает SyncVar и рабочую копию серверной правдой
+            // (-1) ДО чтения головой сборки — вьюха строится из -1, и тик
+            // после подъёма переписывает уже построенное (skin.log: SV/wk -1
+            // пойманы на uhq=1, вьюха мёрзлая; в песочнице переписи нет,
+            // поэтому там работает). Пока кэшированный ствол жив, держим наш
+            // индекс во всех четырёх точках каждый тик блэкаута: переписка
+            // одноразовая в начале окна, TAIL — в конце (видны uhq=0 с живой
+            // головой), и на чтении стоит последняя запись. Стадии 7–9 — цепь
+            // ПОСЛЕ ствола (FPObject/Item): ствол подтверждён свежим резолвом,
+            // адреса кэша — его же; piece лежат внутри PW инлайном, поэтому
+            // life(weapon)==Alive доказывает и их. Оригинал не портится:
+            // переписка несёт серверную правду, она же была оригиналом.
+            // Best-effort и молча: статус Waiting и стадию резолва не трогаем.
+            if (has_state() && context_.weapon.object &&
+                context_.weapon.life(io) == Life::Alive &&
+                (stage_ == 7 || stage_ == 8 || stage_ == 9)) {
+                int levels = 1;
+                bool index_known = false;
+                for (int i = 0; i < entry_count_; ++i) {
+                    if (entries_[i].index == s.skin_index) {
+                        index_known = true;
+                        levels = entries_[i].levels > 0 ? entries_[i].levels : 1;
+                        break;
+                    }
+                }
+                if (index_known) {
+                    const int16_t want_skin = (int16_t)s.skin_index;
+                    const uint8_t want_level =
+                        (uint8_t)(s.skin_level < levels ? s.skin_level : levels - 1);
+                    Piece sv;
+                    if (read_piece(io, context_.piece, sv, nullptr, true) == PieceRead::Ok) {
+                        skin_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN, sv.skin);
+                        level_.sample_value(context_.piece + go_active::WEAPONPIECE_SKIN_LEVEL, sv.level);
+                        skin_.put(io, want_skin);
+                        level_.put(io, want_level);
+                    }
+                    Piece wk;
+                    if (read_piece(io, context_.piece_local, wk, nullptr, true) == PieceRead::Ok) {
+                        skin_local_.sample_value(
+                            context_.piece_local + go_active::WEAPONPIECE_SKIN, wk.skin);
+                        level_local_.sample_value(
+                            context_.piece_local + go_active::WEAPONPIECE_SKIN_LEVEL, wk.level);
+                        skin_local_.put(io, want_skin);
+                        level_local_.put(io, want_level);
+                    }
+                    if (context_.item.object &&
+                        context_.item.life(io) == Life::Alive) {
+                        int32_t item_skin = 0;
+                        uint8_t item_level = 0;
+                        if (io.read(context_.item.object + go_active::ITEM_SKIN, item_skin) &&
+                            io.read(context_.item.object + go_active::ITEM_SKIN_LEVEL, item_level)) {
+                            skin_item_.sample_value(
+                                context_.item.object + go_active::ITEM_SKIN, item_skin);
+                            level_item_.sample_value(
+                                context_.item.object + go_active::ITEM_SKIN_LEVEL, item_level);
+                            skin_item_.put(io, (int32_t)want_skin);
+                            level_item_.put(io, want_level);
+                        }
+                    }
+                    // Копия 4 — тот же резолв кэша дроу, что в основной ветке:
+                    // ресинк инвентаря ротирует экземпляр без пересборки.
+                    uint64_t ditem = 0, ddata = 0;
+                    if (pointer(io, context_.weapon.object + go_active::PLAYERWEAPON_DRAW_ITEM,
+                                ditem) &&
+                        ditem >= 0x10000 && ditem != context_.item.object &&
+                        pointer(io, ditem + go_active::ITEM_DATA, ddata) &&
+                        ddata == context_.item_data.object) {
+                        if (draw_item_.object != ditem) {
+                            Identity probe{};
+                            draw_item_ = probe.capture(io, ditem, false) ? probe : Identity{};
+                        }
+                    } else {
+                        draw_item_ = {};
+                    }
+                    if (draw_item_.object && draw_item_.life(io) == Life::Alive) {
+                        int32_t draw_skin = 0;
+                        uint8_t draw_level = 0;
+                        if (io.read(draw_item_.object + go_active::ITEM_SKIN, draw_skin) &&
+                            io.read(draw_item_.object + go_active::ITEM_SKIN_LEVEL, draw_level)) {
+                            skin_item2_.sample_value(
+                                draw_item_.object + go_active::ITEM_SKIN, draw_skin);
+                            level_item2_.sample_value(
+                                draw_item_.object + go_active::ITEM_SKIN_LEVEL, draw_level);
+                            skin_item2_.put(io, (int32_t)want_skin);
+                            level_item2_.put(io, want_level);
+                        }
+                    }
+                }
+            }
             return;
         }
         if (!(next == context_)) {
-            // Сменился ствол/предмет: старый возвращаем, новый перехватываем.
-            // Оригинал индекса принадлежит ПРОШЛОМУ стволу — возвращать его в
-            // новый бессмысленно, поэтому при смене контекста владение
-            // снимается без записи только если возврат не прошёл.
-            if (!restore_all()) {
-                skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
-                skin_item_ = {}; level_item_ = {};
-                skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
-                head_lo_local_ = {}; head_hi_local_ = {};
+            // §4.27: чистая ротация экземпляров — дроу пересоздал FPObject/Item
+            // того же ствола. Без restore_all (он моргнул бы оригиналом в
+            // SyncVar на каждом дроу) и без рескана (строки по символу на
+            // каждом дроу): слот Item пересэмплится на новый адрес ниже сам —
+            // смена адреса обновляет оригинал значением свежего экземпляра.
+            if (has_state() && next.same_gun(context_)) {
+                context_ = next;
+            } else {
+                // Сменился ствол/предмет: старый возвращаем, новый перехватываем.
+                // Оригинал индекса принадлежит ПРОШЛОМУ стволу — возвращать его в
+                // новый бессмысленно, поэтому при смене контекста владение
+                // снимается без записи только если возврат не прошёл.
+                if (!restore_all()) {
+                    skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
+                    skin_item_ = {}; level_item_ = {};
+                    skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
+                    head_lo_local_ = {}; head_hi_local_ = {};
+                }
+                context_ = next;
+                scan_age_ = kScanEvery;   // перечитать список сразу
+                entry_count_ = 0;
             }
-            context_ = next;
-            scan_age_ = kScanEvery;   // перечитать список сразу
-            entry_count_ = 0;
         }
 
         if (scan_request_ || scan_age_ >= kScanEvery || entry_count_ == 0) rescan();

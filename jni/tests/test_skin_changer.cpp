@@ -490,6 +490,46 @@ void add_inventory(Fixture& f, int32_t skin = -1) {
     f.io.put<uint64_t>(belt + IL2CPP_ARRAY_FIRST_ELEMENT + 8, belt_other);
 }
 
+// ---- §4.28 v2: только прямой массив пояса player+0x1B8 ----------------------
+// Data/Client инвентаря в фикстуре НЕТ: зонд обязан найти пояс по warr-якорю
+// (сессия 17: полевое v1 за 77 с по Data/Client не нашло ничего).
+constexpr uint64_t warr = 0x4E000;
+void add_warr_only(Fixture& f) {
+    using namespace go_active;
+    f.io.plain(warr);
+    f.io.put<int32_t>(warr + IL2CPP_ARRAY_LENGTH, 1);
+    f.io.plain(belt_item);
+    f.io.put<uint64_t>(belt_item + ITEM_DATA, item_data);
+    f.io.put<int32_t>(belt_item + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(belt_item + ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(warr + IL2CPP_ARRAY_FIRST_ELEMENT, belt_item);
+    f.io.put<uint64_t>(player + PLAYER_WEAPONS_ARRAY, warr);
+}
+
+// ---- §4.28 v2: пояс в контейнере второго уровня -----------------------------
+// В полях Data прямого Item/массива нет: Data+0x50 — контейнер, массив пояса —
+// в его поле +0x20. Одноуровневый зонд v1 такое не видит.
+constexpr uint64_t belt_box = 0x4F000;
+void add_inventory_l2(Fixture& f) {
+    using namespace go_active;
+    f.io.object(inv, "PlayerInventory", "Oxide");
+    f.io.object(inv_data, "PlayerInventoryData", "Oxide");
+    f.io.object(inv_client, "PlayerInventoryClient", "Oxide");
+    f.io.put<uint64_t>(player + PLAYER_INVENTORY, inv);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_DATA, inv_data);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_CLIENT, inv_client);
+    f.io.plain(belt_box);
+    f.io.put<uint64_t>(inv_data + 0x50, belt_box);
+    f.io.plain(belt);
+    f.io.put<int32_t>(belt + IL2CPP_ARRAY_LENGTH, 1);
+    f.io.put<uint64_t>(belt_box + 0x20, belt);
+    f.io.plain(belt_item);
+    f.io.put<uint64_t>(belt_item + ITEM_DATA, item_data);
+    f.io.put<int32_t>(belt_item + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(belt_item + ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(belt + IL2CPP_ARRAY_FIRST_ELEMENT, belt_item);
+}
+
 void switch_to_spear(Fixture& f) {
     constexpr uint64_t item2 = 0x70000, data2 = 0x71000, arr2 = 0x72000, skin_x = 0x73000;
     constexpr uint64_t player_ = player;
@@ -1594,10 +1634,12 @@ void test_inv_probe_adopts_and_writes() {
     add_inventory(f);
     f.tick(f.settings(true, 1));
     assert(f.c.status == viewmodel::Status::Active);
-    assert(f.c.ui().inv_count == 0);   // первый проход — только кандидаты
+    assert(f.c.ui().inv_count == 0);   // зонд спит до 5-го тика
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == -1);
-    f.tick(f.settings(true, 1));       // второй проход — усыновление + запись
-    assert(f.c.ui().inv_count == 1);
+    for (int i = 0; i < 4; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 0);   // 5-й тик — первый проход, кандидаты
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);   // 10-й тик — усыновление + запись
     assert(f.c.ui().inv_state == 1);   // был чужой (-1 сервера)
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
     assert(f.io.value<int32_t>(belt_other + go_active::ITEM_SKIN) == 7);
@@ -1609,7 +1651,7 @@ void test_inv_probe_adopts_and_writes() {
     f.tick(f.settings(false));
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == -1);
     assert(!f.c.has_state());
-    std::printf("  inv probe: belt adopted on 2nd tick, held, restored on disable\n");
+    std::printf("  inv probe: belt adopted on 10th tick, held, restored on disable\n");
 }
 
 // ---- 46. §4.28: мусор и транзиенты не усыновляются --------------------------
@@ -1625,7 +1667,7 @@ void test_inv_ignores_garbage_and_transients() {
     f.tick(f.settings(true, 1));
     const unsigned standard = f.io.writes;
     assert(standard == 3);             // SV/рабочая/FP-Item, как без зонда
-    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    for (int i = 0; i < 11; ++i) f.tick(f.settings(true, 1));   // два прохода
     assert(f.c.ui().inv_count == 0);
     assert(f.c.ui().inv_state == -1);
     assert(f.io.writes == standard);
@@ -1639,8 +1681,7 @@ void test_inv_ignores_garbage_and_transients() {
 void test_inv_rotation_and_resync_healed() {
     Fixture f;
     add_inventory(f);
-    f.tick(f.settings(true, 1));
-    f.tick(f.settings(true, 1));
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
     // Сервер подменил экземпляр в том же слоте (skin -1).
     f.io.plain(belt_item2);
@@ -1670,8 +1711,7 @@ void test_inv_rotation_and_resync_healed() {
 void test_inv_drop_and_reprobe() {
     Fixture f;
     add_inventory(f);
-    f.tick(f.settings(true, 1));
-    f.tick(f.settings(true, 1));
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.c.ui().inv_count == 1);
     f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, 0);
     const unsigned before = f.io.writes;
@@ -1680,12 +1720,10 @@ void test_inv_drop_and_reprobe() {
     assert(f.c.ui().inv_state == -1);
     assert(f.io.writes == before);     // по мёртвой ссылке — ни записи
     f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, belt_item);
-    f.tick(f.settings(true, 1));
-    assert(f.c.ui().inv_count == 0);   // первый проход — кандидаты
-    f.tick(f.settings(true, 1));
-    assert(f.c.ui().inv_count == 1);   // второй — снова ведём
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));   // два прохода
+    assert(f.c.ui().inv_count == 1);   // снова ведём
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
-    std::printf("  inv probe: dead ref dropped silently, re-adopted in 2 ticks\n");
+    std::printf("  inv probe: dead ref dropped silently, re-adopted in 2 passes\n");
 }
 
 // ---- 49. §4.28: пояс ведётся и в блэкауте -----------------------------------
@@ -1693,8 +1731,7 @@ void test_inv_drop_and_reprobe() {
 void test_inv_maintained_in_blackout() {
     Fixture f;
     add_inventory(f);
-    f.tick(f.settings(true, 1));
-    f.tick(f.settings(true, 1));
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
     f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);   // стадия 9
     f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
@@ -1712,8 +1749,7 @@ void test_inv_maintained_in_blackout() {
 void test_inv_restored_on_switch() {
     Fixture f;
     add_inventory(f);
-    f.tick(f.settings(true, 1));
-    f.tick(f.settings(true, 1));
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
     assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
     switch_to_spear(f);                // новый ствол, пояса у него в фикстуре нет
     f.tick(f.settings(true, 0));
@@ -1721,6 +1757,38 @@ void test_inv_restored_on_switch() {
     assert(f.c.ui().inv_count == 0);   // копьё без пояса — зонд молча спит
     assert(f.c.ui().inv_state == -1);
     std::printf("  inv probe: old belt restored on switch, new gun silent\n");
+}
+
+// ---- 51. §4.28 v2: пояс находится по прямому массиву player+0x1B8 -----------
+// Data/Client нет вовсе — warr-якорь (route 4 имён оружия, game.cpp) находит
+// поясной Item сам.
+void test_inv_probe_finds_warr_array() {
+    Fixture f;
+    add_warr_only(f);
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);
+    assert(f.c.ui().inv_state == 1);   // тик усыновления видел чужой -1
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_state == 0);
+    std::printf("  inv probe: player+0x1B8 belt array adopted\n");
+}
+
+// ---- 52. §4.28 v2: пояс в контейнере второго уровня --------------------------
+// Первый уровень молчит (контейнер — не Item и не массив), второй находит
+// массив пояса. v1 такое не видел — регресс-тест на слепоту сессии 17.
+void test_inv_probe_finds_l2_container() {
+    Fixture f;
+    add_inventory_l2(f);
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 0);   // первый проход — кандидаты
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);
+    assert(f.c.ui().inv_state == 1);   // тик усыновления видел чужой -1
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_state == 0);
+    std::printf("  inv probe: L2 container belt adopted\n");
 }
 
 int main() {
@@ -1782,6 +1850,8 @@ int main() {
     test_inv_drop_and_reprobe();
     test_inv_maintained_in_blackout();
     test_inv_restored_on_switch();
+    test_inv_probe_finds_warr_array();
+    test_inv_probe_finds_l2_container();
     std::printf("OK\n");
     return 0;
 }

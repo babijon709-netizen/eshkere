@@ -660,6 +660,9 @@ template<class IO> class Controller {
     // дважды (транзиент, мелькнувший один тик, не пишется никогда).
     uint64_t inv_probe_cands_[kMaxInv * 2]{};
     int inv_probe_n_ = 0;
+    int inv_probe_tick_ = 0; // каденс зонда: проход каждый 5-й тик, пока пусто
+    // §4.28: якоря последнего прохода зонда для среза (1 — жив, 0 — нет).
+    bool inv_dbg_data_ = false, inv_dbg_client_ = false, inv_dbg_warr_ = false;
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
     bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
@@ -721,6 +724,7 @@ template<class IO> class Controller {
     uint32_t last_sv_head_ = 0xFFFFFFFFu;  // Enabled|Number SyncVar последнего среза
     int  last_uzl_number_ = 0x7FFFFFFF;
     uint64_t last_cur_ = ~0ull;
+    int  last_inv_count_ = -1;   // §4.28: срез и на усыновление/сброс пояса
     bool reset_armed_ = true;    // сброс _currentWeapon — один на эпизод
     int  reset_count_ = 0;       // сколько раз чит сбрасывал панцирь (лог/меню)
     int32_t quarantine_id_ = -1;   // ItemData.m_Id ствола, на котором упала сборка
@@ -960,43 +964,84 @@ template<class IO> class Controller {
         return io.read(obj + ITEM_SKIN, skin) && io.read(obj + ITEM_SKIN_LEVEL, level);
     }
 
-    // §4.28: один проход зонда. Якоря — PlayerInventoryData/Client (оффсеты те
-    // же, что у ESP model info — рабочие на этом билде). Поля 0x10..0xF8:
-    // прямое Item-значение либо массив (длина 1..32) с нашим Item внутри.
+    // §4.28: один проход зонда. Три якоря: прямой массив пояса
+    // player+0x1B8 («inventory/belt weapon objects», game.cpp route 4 имён
+    // оружия — элементы читаются как Item) и PlayerInventoryData/Client
+    // (оффсеты те же, что у ESP model info). Data/Client сканируются на ДВА
+    // уровня: поля 0x10..0xF8 (прямое Item-значение либо массив 1..32), затем
+    // поля подобъектов 0x10..0x80 (контейнеры пояса/рюкзака — массивы слотов
+    // живут в них, одноуровневый зонд v1 за 77 с ничего не нашёл).
     // Запоминаются АДРЕСА ССЫЛОК (поле/слот), а не экземпляры: ресинк меняет
     // экземпляр, ссылка перечитывается каждый тик. Найденное — в
     // inv_probe_cands_; усыновление (дважды подтверждённым) — в maintain().
     void probe_inventory() {
         using namespace go_active;
         inv_probe_n_ = 0;
+        inv_dbg_data_ = inv_dbg_client_ = inv_dbg_warr_ = false;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
+        uint64_t warr = 0;
+        inv_dbg_warr_ = pointer(io, context_.player.object + PLAYER_WEAPONS_ARRAY, warr) &&
+                        warr >= 0x10000;
+        if (inv_dbg_warr_) scan_array_for_inv(warr);
         uint64_t inv = 0;
         if (!pointer(io, context_.player.object + PLAYER_INVENTORY, inv) || inv < 0x10000)
             return;
         uint64_t anchors[2] = {};
         pointer(io, inv + INV_PLAYER_INVENTORY_DATA, anchors[0]);
         pointer(io, inv + INV_PLAYER_INVENTORY_CLIENT, anchors[1]);
+        inv_dbg_data_ = anchors[0] >= 0x10000;
+        inv_dbg_client_ = anchors[1] >= 0x10000;
+        uint64_t l2[16];
+        int l2_n = 0;
         for (int a = 0; a < 2; ++a) {
             const uint64_t base = anchors[a];
             if (base < 0x10000) continue;
             for (uint64_t off = 0x10; off <= 0xF8; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, base + off, p) || p < 0x10000) continue;
-                if (inv_probe_n_ < cap && validate_inv_item(p))
-                    inv_probe_cands_[inv_probe_n_++] = base + off;
-                int32_t len = 0;
-                if (!io.read(p + IL2CPP_ARRAY_LENGTH, len) || len <= 0 || len > 32) continue;
-                for (int32_t i = 0; i < len; ++i) {
-                    const uint64_t slot =
-                        p + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8u;
-                    uint64_t e = 0;
-                    if (!pointer(io, slot, e)) continue;
-                    if (inv_probe_n_ >= cap) return;
-                    if (validate_inv_item(e)) inv_probe_cands_[inv_probe_n_++] = slot;
+                if (validate_inv_item(p)) {
+                    // Прямое Item — уже классификация: массив и контейнер
+                    // не ищем (указатель на массив Item'ом не валидируется).
+                    if (inv_probe_n_ < cap) inv_probe_cands_[inv_probe_n_++] = base + off;
+                    continue;
                 }
+                if (scan_array_for_inv(p)) continue;
+                // Не Item и не массив — возможно контейнер: второй уровень.
+                if (l2_n < (int)(sizeof(l2) / sizeof(l2[0]))) l2[l2_n++] = p;
             }
         }
+        for (int i = 0; i < l2_n; ++i) {
+            for (uint64_t off = 0x10; off <= 0x80; off += 8) {
+                uint64_t p = 0;
+                if (!pointer(io, l2[i] + off, p) || p < 0x10000) continue;
+                if (validate_inv_item(p)) {
+                    if (inv_probe_n_ < cap) inv_probe_cands_[inv_probe_n_++] = l2[i] + off;
+                    continue;
+                }
+                if (inv_probe_n_ >= cap) return;
+                scan_array_for_inv(p);
+            }
+        }
+    }
+
+    // §4.28: элементы массива — кандидаты, если это наш Item. Возвращает true,
+    // когда по адресу похож на массив (длина 1..32) — поле уже классифицировано.
+    bool scan_array_for_inv(uint64_t arr) {
+        using namespace go_active;
+        const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
+        int32_t len = 0;
+        if (!io.read(arr + IL2CPP_ARRAY_LENGTH, len) || len <= 0 || len > 32)
+            return false;
+        for (int32_t i = 0; i < len; ++i) {
+            const uint64_t slot =
+                arr + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8u;
+            uint64_t e = 0;
+            if (!pointer(io, slot, e)) continue;
+            if (inv_probe_n_ >= cap) return true;
+            if (validate_inv_item(e)) inv_probe_cands_[inv_probe_n_++] = slot;
+        }
+        return true;
     }
 
     // §4.28: ведение инвентарных целей + зонд, когда вести нечего. Зовётся и
@@ -1031,7 +1076,11 @@ template<class IO> class Controller {
             }
             ++i;
         }
-        if (inv_count_ == 0) {
+        // Зонд — каждый 5-й тик, пока вести нечего (в ритме рескана): проход
+        // тяжёлый (~тысяча чтений на два уровня), а пояс никуда не убегает —
+        // усыновление за ~1 с. Подтверждение — два прохода подряд.
+        ++inv_probe_tick_;
+        if (inv_count_ == 0 && inv_probe_tick_ % 5 == 0) {
             uint64_t prev[sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0])];
             const int prev_n = inv_probe_n_;
             for (int i = 0; i < prev_n; ++i) prev[i] = inv_probe_cands_[i];
@@ -1117,6 +1166,7 @@ template<class IO> class Controller {
         for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
         inv_count_ = 0;
         inv_probe_n_ = 0;
+        inv_probe_tick_ = 0;
         inv_state_ = -1;
         return ok;
     }
@@ -1329,6 +1379,13 @@ template<class IO> class Controller {
         }
         ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
         ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
+        // §4.28: зонд пояса — живость якорей data:client:warr, c — кандидатов
+        // в последнем проходе, t — ведётся. c=0 при живых якорях = пояс глубже
+        // двух уровней; t>0 без «инвентарного» срабатывания видно по item=.
+        std::snprintf(v, sizeof(v), " inv=%d:%d:%d:c%dt%d",
+                      inv_dbg_data_ ? 1 : 0, inv_dbg_client_ ? 1 : 0,
+                      inv_dbg_warr_ ? 1 : 0, inv_probe_n_, inv_count_);
+        ap(v);
     }
 
     // §4.26: ритм срезов — на изменение триггерных полей (указатель cur,
@@ -1358,7 +1415,8 @@ template<class IO> class Controller {
             sv_head = ((uint32_t)en << 16) | (uint32_t)(uint16_t)num;
         const bool changed = cur != last_cur_ ||
                              (uzl_ok && (int)uzl_n != last_uzl_number_) ||
-                             sv_head != last_sv_head_;
+                             sv_head != last_sv_head_ ||
+                             inv_count_ != last_inv_count_;
         if (!changed && dump_ticks_ < kDumpHeartbeatTicks) return;
         if (dump_cooldown_ > 0) return;
         build_fp_dump(player);
@@ -1366,6 +1424,7 @@ template<class IO> class Controller {
         last_cur_ = cur;
         last_uzl_number_ = uzl_ok ? (int)uzl_n : 0x7FFFFFFF;
         last_sv_head_ = sv_head;
+        last_inv_count_ = inv_count_;
         dump_ticks_ = 0;
         dump_cooldown_ = kDumpCooldownTicks;
     }
@@ -1442,6 +1501,7 @@ public:
         for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
         inv_count_ = 0;
         inv_probe_n_ = 0;
+        inv_probe_tick_ = 0;
         inv_state_ = -1;
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;

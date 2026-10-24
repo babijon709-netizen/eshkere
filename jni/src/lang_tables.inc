@@ -23,6 +23,7 @@ static const LangPair kUiEn[] = {
     {"«%s»", "\"%s\""},
     {"Автофарм", "Auto-farm"},
     {"Аим", "Aim"},
+    {"Аирдропы", "Airdrops"},
     {"Без баллистики", "No ballistics"},
     {"Без отдачи", "No recoil"},
     {"Без разброса", "No spread"},

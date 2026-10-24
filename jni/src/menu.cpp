@@ -380,6 +380,7 @@ float TabContent(int tab, float dt, float cW) {
         if (group("##esp_entities", XS("Существа и транспорт"), entities, 4)) drawRows(entities, 4);
         ERow loot[] = {
 {"##vlt", XS("Ящики"),    &g_state.esp_loot,         &g_state.a_esp_loot,         &cfg::esp::loot_col},
+{"##vairdrop", XS("Аирдропы"), &g_state.esp_airdrop, &g_state.a_esp_airdrop, &cfg::esp::loot_col},
 {"##vhb", XS("Ящики в домах"), &g_state.esp_house_boxes, &g_state.a_esp_house_boxes, nullptr},
 {"##vsc", XS("Скрап"),    &g_state.esp_scrap,        &g_state.a_esp_scrap,        &cfg::esp::scrap_col},
 {"##vpk", XS("Предметы"), &g_state.esp_pickup,       &g_state.a_esp_pickup,       &cfg::esp::pickup_col},
@@ -388,7 +389,7 @@ float TabContent(int tab, float dt, float cW) {
 {"##vcb", XS("Шкафы"),    &g_state.esp_cupboards,    &g_state.a_esp_cupboards,    &cfg::esp::cupboard_col},
 {"##vpm", XS("Тыквы"),    &g_state.esp_pumpkins,     &g_state.a_esp_pumpkins,     &cfg::esp::pumpkin_col},
         };
-        if (group("##esp_loot", XS("Предметы и постройки"), loot, 8)) drawRows(loot, 8);
+        if (group("##esp_loot", XS("Предметы и постройки"), loot, 9)) drawRows(loot, 9);
         char rangeSummary[48]; snprintf(rangeSummary, sizeof(rangeSummary), XS("%.0f м"), g_state.marker_dist);
         if (SettingsHeader("##esp_distance", XS("Дальность"), rangeSummary)) {
             CardBg(Layout::SliderH);
@@ -1415,6 +1416,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_ore_sulfur, g_state.esp_ore_sulfur, dt);
     Tick(g_state.a_esp_animal, g_state.esp_animal,         dt);
     Tick(g_state.a_esp_loot,   g_state.esp_loot,           dt);
+    Tick(g_state.a_esp_airdrop, g_state.esp_airdrop,       dt);
     Tick(g_state.a_esp_pickup, g_state.esp_pickup,         dt);
     Tick(g_state.a_esp_bots,   g_state.esp_bots,           dt);
     Tick(g_state.a_esp_arrows, g_state.esp_arrows,         dt);

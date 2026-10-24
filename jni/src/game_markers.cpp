@@ -37,6 +37,7 @@ using namespace go_active;
 static bool g_markers_ore_enabled = false;
 static bool g_markers_animal_enabled = false;
 static bool g_markers_loot_enabled = false;
+static bool g_markers_airdrop_enabled = false;
 static bool g_markers_pickup_enabled = false;
 static bool g_markers_vehicle_enabled = false;
 static bool g_markers_bot_enabled = false;
@@ -56,7 +57,7 @@ bool esp_marker_frame_transient() { return g_marker_frame_transient; }
 
 static bool marker_visuals_enabled() {
     return g_markers_ore_enabled || g_markers_animal_enabled ||
-           g_markers_loot_enabled || g_markers_pickup_enabled ||
+           g_markers_loot_enabled || g_markers_airdrop_enabled || g_markers_pickup_enabled ||
            g_markers_vehicle_enabled || g_markers_bot_enabled ||
            g_markers_scrap_enabled || g_markers_turret_enabled ||
            g_markers_backpack_enabled || g_markers_sleeper_enabled ||
@@ -123,11 +124,12 @@ enum class MarkerScanResult { Complete, Pending, Unavailable };
 void esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
                              bool vehicles, bool bots, bool scrap, bool turrets,
                              bool backpacks, bool sleepers, bool house,
-                             bool cupboards, bool pumpkins) {
+                             bool cupboards, bool pumpkins, bool airdrops) {
     std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
-    // Loot, pickups, scrap and house boxes are filtered during the registry walk.
-    if (loot != g_markers_loot_enabled || pickups != g_markers_pickup_enabled ||
-        scrap != g_markers_scrap_enabled || house != g_markers_house_enabled ||
+    // Loot, airdrops, pickups, scrap and house boxes are filtered during the registry walk.
+    if (loot != g_markers_loot_enabled || airdrops != g_markers_airdrop_enabled ||
+        pickups != g_markers_pickup_enabled || scrap != g_markers_scrap_enabled ||
+        house != g_markers_house_enabled ||
         cupboards != g_markers_cupboard_enabled || pumpkins != g_markers_pumpkin_enabled) {
         g_marker_next_scan = 0.0;
         marker_scan_abort();   // половина списка собрана по старым фильтрам
@@ -135,6 +137,7 @@ void esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
     g_markers_ore_enabled = ore;
     g_markers_animal_enabled = animals;
     g_markers_loot_enabled = loot;
+    g_markers_airdrop_enabled = airdrops;
     g_markers_pickup_enabled = pickups;
     g_markers_vehicle_enabled = vehicles;
     g_markers_bot_enabled = bots;
@@ -1732,10 +1735,13 @@ static MarkerScanResult rebuild_marker_entities() {
             }
             if (!known && (component_class == MARKER_CLASS_LOOT || family_unknown) &&
                 !id_has_vehicle &&
-                (g_markers_loot_enabled || g_markers_scrap_enabled || g_markers_house_enabled)) {
+                (g_markers_loot_enabled || g_markers_airdrop_enabled ||
+                 g_markers_scrap_enabled || g_markers_house_enabled)) {
                 known = loot_marker(component, object_name, root_name, loot_panel, look);
                 if (known && look.kind == ESP_MARKER_SCRAP && !g_markers_scrap_enabled) known = false;
-                if (known && look.kind == ESP_MARKER_LOOT && !g_markers_loot_enabled) known = false;
+                if (known && look.kind == ESP_MARKER_LOOT &&
+                    !g_markers_loot_enabled && !(look.map_wide && g_markers_airdrop_enabled))
+                    known = false;
                 // Ящики в домах фильтруются при отрисовке, не здесь: их
                 // список живёт вместе с loot-семьёй и не требует перескана.
             }
@@ -2357,7 +2363,8 @@ std::vector<EspMarker> esp_get_markers() {
         if (entity.kind == ESP_MARKER_ORE &&
             (!g_markers_ore_enabled || !ore_type_enabled(entity.ore_type))) continue;
         if (entity.kind == ESP_MARKER_ANIMAL && !g_markers_animal_enabled) continue;
-        if (entity.kind == ESP_MARKER_LOOT && !g_markers_loot_enabled) continue;
+        if (entity.kind == ESP_MARKER_LOOT && !g_markers_loot_enabled &&
+            !(entity.map_wide && g_markers_airdrop_enabled)) continue;
         if (entity.kind == ESP_MARKER_SCRAP && !g_markers_scrap_enabled) continue;
         if (entity.kind == ESP_MARKER_PICKUP && !g_markers_pickup_enabled) continue;
         if (entity.kind == ESP_MARKER_VEHICLE && !g_markers_vehicle_enabled) continue;

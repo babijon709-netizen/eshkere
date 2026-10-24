@@ -90,7 +90,7 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
                                 g_state.esp_scrap, g_state.esp_turrets,
                                 g_state.esp_backpacks, g_state.esp_sleepers,
                                 g_state.esp_house_boxes, g_state.esp_cupboards,
-                                g_state.esp_pumpkins);
+                                g_state.esp_pumpkins, g_state.esp_airdrop);
         // Аим по ботам — тем же условием, что кости для аима: работает и
         // когда маркеры ботов выключены.
         esp_set_bot_aim_enabled(g_state.esp_bots || g_state.aim_touch ||
@@ -186,7 +186,7 @@ void DrawEspOverlay() {
     // Список обязан совпадать с тем, что ниже рисуется: шкафы (esp_cupboards)
     // в нём отсутствовали, и с одним включённым тумблером «Шкафы» функция
     // выходила здесь — тумблер не делал ничего, пока не включишь ещё и горшки.
-    if (!g_state.esp_box && !g_state.esp_chams && !g_state.esp_wall && !g_state.esp_tracer && !g_state.esp_skeleton && !g_state.esp_name && !g_state.esp_weapon && !g_state.esp_ore && !g_state.esp_animal && !g_state.esp_loot && !g_state.esp_pickup && !g_state.esp_bots && !g_state.esp_vehicles && !g_state.esp_scrap && !g_state.esp_turrets && !g_state.esp_backpacks && !g_state.esp_sleepers && !g_state.esp_house_boxes && !g_state.esp_cupboards && !g_state.esp_pumpkins && !g_state.esp_arrows && !g_state.esp_radar) return;
+    if (!g_state.esp_box && !g_state.esp_chams && !g_state.esp_wall && !g_state.esp_tracer && !g_state.esp_skeleton && !g_state.esp_name && !g_state.esp_weapon && !g_state.esp_ore && !g_state.esp_animal && !g_state.esp_loot && !g_state.esp_airdrop && !g_state.esp_pickup && !g_state.esp_bots && !g_state.esp_vehicles && !g_state.esp_scrap && !g_state.esp_turrets && !g_state.esp_backpacks && !g_state.esp_sleepers && !g_state.esp_house_boxes && !g_state.esp_cupboards && !g_state.esp_pumpkins && !g_state.esp_arrows && !g_state.esp_radar) return;
 
     const std::vector<EspBox>& boxes = FrameBoxes(sw, sh);
     constexpr int BOX_EDGES[][2] = {
@@ -466,7 +466,7 @@ void DrawEspOverlay() {
     // One pill with the resource / animal / bot / vehicle name at the object's
     // position; the scan itself is done by the game layer and reuses this
     // frame's camera.
-    if (g_state.esp_ore || g_state.esp_animal || g_state.esp_loot || g_state.esp_pickup || g_state.esp_bots || g_state.esp_vehicles || g_state.esp_scrap || g_state.esp_turrets || g_state.esp_backpacks || g_state.esp_sleepers || g_state.esp_house_boxes || g_state.esp_cupboards || g_state.esp_pumpkins) {
+    if (g_state.esp_ore || g_state.esp_animal || g_state.esp_loot || g_state.esp_airdrop || g_state.esp_pickup || g_state.esp_bots || g_state.esp_vehicles || g_state.esp_scrap || g_state.esp_turrets || g_state.esp_backpacks || g_state.esp_sleepers || g_state.esp_house_boxes || g_state.esp_cupboards || g_state.esp_pumpkins) {
         // Smaller than the player labels (there are many more of them), with the
         // distance on a second line underneath.
         constexpr float kMarkerScale = 0.78f;

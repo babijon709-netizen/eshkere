@@ -169,13 +169,14 @@ bool          esp_alive_check();
 unsigned long long esp_mem_reads_total();
 unsigned long long esp_mem_read_fails_total();
 void        esp_set_skeleton_enabled(bool enabled);
-// Enable the ore / animal / loot / pickup / vehicle / bot marker scan
-// (all off = no work, unless the bot aim feed below is on).
+// Enable ore / animal / loot / ordinary-airdrop / pickup / vehicle / bot
+// markers (all off = no work, unless the bot aim feed below is on).
 void        esp_set_markers_enabled(bool ore, bool animals, bool loot, bool pickups,
                                     bool vehicles, bool bots, bool scrap = false,
                                     bool turrets = false, bool backpacks = false,
                                     bool sleepers = false, bool house = false,
-                                    bool cupboards = false, bool pumpkins = false);
+                                    bool cupboards = false, bool pumpkins = false,
+                                    bool airdrops = false);
 // Типы руды для меток: общий тумблер «Руда» включает их целиком, а эти три
 // решают, какие именно камни через него проходят (камень / железо / сера).
 // Смена значений перезапускает скан маркеров — снятая галочка гасит метки

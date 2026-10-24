@@ -180,8 +180,11 @@ static void espTests() {
     for (const auto* label : {"##orvt", "##orvi", "##orvs"}) assert(items.count(id(label)));
     assert(!g_state.esp_ore); // expanding the settings must never enable a feature
     expand(2, "##esp_entities"); expand(2, "##esp_loot"); expand(2, "##esp_distance");
-    for (const auto* label : {"##van", "##vbt", "##vvc", "##vsl", "##vlt", "##vhb", "##vsc", "##vpk", "##vtu", "##vbp", "##vcb", "##vpm", "##vmd"})
+    for (const auto* label : {"##van", "##vbt", "##vvc", "##vsl", "##vlt", "##vairdrop", "##vhb", "##vsc", "##vpk", "##vtu", "##vbp", "##vcb", "##vpm", "##vmd"})
         assert(items.count(id(label)));
+    assert(!g_state.esp_airdrop);
+    tap(tab(2), id("##vairdrop")); assert(g_state.esp_airdrop);
+    tap(tab(2), id("##vairdrop")); assert(!g_state.esp_airdrop);
     const float full = frame(tab(2)); assert(full > compact * 3.f);
     // Collapse at a scrolled location, and clamp stale scroll to new content.
     float max = compact - 400.f;

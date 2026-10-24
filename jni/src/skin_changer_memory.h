@@ -709,6 +709,21 @@ template<class IO> class Controller {
     uint32_t inv_dbg_zh_ = 0;
     int inv_dbg_zhm_ = 0;
     uint64_t inv_dbg_za_ = 0;
+    // §4.34: yh — запись СВОЕГО живого слота с НЕ-нулевым Item (stale/чужой:
+    // гейт LzY может ронять и такой — валидация глубже null-чека), yhm —
+    // сколько таких. zh (null-fill) предпочтительнее yh (overwrite).
+    bool inv_dbg_yh_ok_ = false;
+    uint64_t inv_dbg_yh_ = 0;
+    int inv_dbg_yhm_ = 0;
+    // §4.34: инъекция FP-Item в запись экипировки. Slot несёт адрес
+    // (cand+0x10), оригинал (null/stale — возврат) и last (бой с затиранием).
+    // prev — подтверждение адреса двумя проходами (как кандидаты зонда);
+    // adopted slot — смена слота (другой ствол) снимает инъекцию; live_item —
+    // живой FP-Item с этого тика (0 в блэкауте — вливать нечего).
+    Slot<uint64_t> kjw_item_;
+    uint64_t kjw_prev_ = 0;
+    int64_t kjw_slot_ = -1;
+    uint64_t kjw_live_item_ = 0;
     bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
@@ -1039,14 +1054,26 @@ template<class IO> class Controller {
         uint64_t it = 0;
         if (!pointer(io, p + KJW_ITEM, it)) return;
         if (it >= 0x10000) {
-            if (inv_dbg_kjw_ >= 999) return;
-            if (!kjw_item_is_ours(it)) return;
-            int32_t skin = 0;
-            if (!io.read(it + ITEM_SKIN, skin)) return;
-            ++inv_dbg_kjw_;
-            if (!inv_dbg_kjw_skin_ok_) {
-                inv_dbg_kjw_skin_ = skin;
-                inv_dbg_kjw_skin_ok_ = true;
+            if (inv_dbg_kjw_ < 999 && kjw_item_is_ours(it)) {
+                int32_t skin = 0;
+                if (!io.read(it + ITEM_SKIN, skin)) return;
+                ++inv_dbg_kjw_;
+                if (!inv_dbg_kjw_skin_ok_) {
+                    inv_dbg_kjw_skin_ = skin;
+                    inv_dbg_kjw_skin_ok_ = true;
+                }
+                return;
+            }
+            // §4.34: не-наш Item на СВОЁМ живом слоте — yh (stale-запись:
+            // кандидат на overwrite, когда zh (null-fill) нет).
+            uint32_t slot = 0;
+            if (inv_live_slot_ >= 0 && io.read(p + KJW_SLOT, slot) &&
+                slot == (uint32_t)inv_live_slot_) {
+                if (inv_dbg_yhm_ < 999) ++inv_dbg_yhm_;
+                if (!inv_dbg_yh_ok_) {
+                    inv_dbg_yh_ok_ = true;
+                    inv_dbg_yh_ = p;
+                }
             }
             return;
         }
@@ -1088,6 +1115,9 @@ template<class IO> class Controller {
         inv_dbg_zh_ok_ = false;
         inv_dbg_zhm_ = 0;
         inv_dbg_za_ = 0;
+        inv_dbg_yh_ok_ = false;
+        inv_dbg_yh_ = 0;
+        inv_dbg_yhm_ = 0;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1174,6 +1204,38 @@ template<class IO> class Controller {
                 scan_array_for_inv(p);
             }
         }
+        // §4.34: усыновление записи своего слота — дважды подтверждённой
+        // (транзиент не пишется никогда). zh (null-fill) предпочтительнее yh
+        // (stale-overwrite). Только если живой kJw нет (k==0 — чинить нечего)
+        // и FP-Item жив (вливать нечего — нечего). Известные объекты
+        // исключены: FP-Item с совпадением +0x18 — не запись экипировки.
+        {
+            uint64_t cand = 0;
+            if (inv_dbg_zh_ok_)
+                cand = inv_dbg_za_;
+            else if (inv_dbg_yh_ok_)
+                cand = inv_dbg_yh_;
+            if (cand >= 0x10000 && inv_dbg_kjw_ == 0 &&
+                kjw_live_item_ >= 0x10000 && cand != kjw_live_item_ &&
+                cand != context_.item_data.object &&
+                cand != draw_item_.object && cand != context_.weapon.object &&
+                cand != context_.player.object && cand != warr && cand != inv &&
+                cand != anchors[0] && cand != anchors[1]) {
+                if (cand == kjw_prev_ && !kjw_item_.owned) {
+                    uint64_t orig = 0;
+                    if (pointer(io, cand + KJW_ITEM, orig)) {
+                        kjw_item_.sample_value(cand + KJW_ITEM, orig);
+                        if (kjw_item_.put(io, kjw_live_item_))
+                            kjw_slot_ = inv_live_slot_;
+                        else
+                            kjw_item_ = {};
+                    }
+                }
+                kjw_prev_ = cand;
+            } else if (!kjw_item_.owned) {
+                kjw_prev_ = 0;
+            }
+        }
         inv_dbg_active_ = false;
     }
 
@@ -1197,12 +1259,49 @@ template<class IO> class Controller {
         return true;
     }
 
+    // §4.34: ведение kJw-инъекции. FP мёртв (live_item == 0, блэкаут/холстер) —
+    // инъекция указывает в освобождённое: снять НЕМЕДЛЕННО (висячий kJw.item
+    // уронил бы ctor сборки на ближайшем дроу). Слот сменился — запись чужая:
+    // снять, прозондировать заново. Иначе бой: держать указатель на ЖИВОЙ
+    // FP-Item (ротация per-draw и затирание игрой лечатся одной записью;
+    // original при этом НЕ трогаем — restore вернёт честный null/stale).
+    void maintain_kjw(uint64_t live_item) {
+        if (live_item < 0x10000) {
+            if (kjw_item_.owned && !kjw_item_.restore(io)) kjw_item_ = {};
+            if (!kjw_item_.owned) {
+                kjw_item_ = {};
+                kjw_prev_ = 0;
+                kjw_slot_ = -1;
+            }
+            return;
+        }
+        if (!kjw_item_.owned) return;
+        if (inv_live_slot_ >= 0 && inv_live_slot_ != kjw_slot_) {
+            if (!kjw_item_.restore(io)) kjw_item_ = {};
+            kjw_prev_ = 0;
+            kjw_slot_ = -1;
+            return;
+        }
+        uint64_t cur = 0;
+        if (!kjw_item_.read(io, cur)) {
+            // Не читается — мир умирает: снять молча без записи.
+            kjw_item_ = {};
+            kjw_prev_ = 0;
+            kjw_slot_ = -1;
+            return;
+        }
+        if (cur != live_item) kjw_item_.put(io, live_item);
+    }
+
     // §4.28: ведение инвентарных целей + зонд, когда вести нечего. Зовётся и
     // из основной ветки, и из блэкаута (§4.27): пояс стабилен и от FP-цепи не
     // зависит. Best-effort и молча: неуспех виден строкой лога по inv_state_,
-    // а не стадией.
-    void maintain_inventory(int16_t want_skin, uint8_t want_level) {
+    // а не стадией. §4.34: live_item — живой FP-Item этого тика (0 в
+    // блэкауте): источник указателя для kJw-инъекции.
+    void maintain_inventory(int16_t want_skin, uint8_t want_level,
+                            uint64_t live_item) {
         using namespace go_active;
+        kjw_live_item_ = live_item;
         bool any_foreign = false;
         for (int i = 0; i < inv_count_;) {
             InvTarget& t = inv_[i];
@@ -1264,6 +1363,7 @@ template<class IO> class Controller {
             }
         }
         inv_state_ = inv_count_ == 0 ? -1 : (any_foreign ? 1 : 0);
+        maintain_kjw(live_item);   // §4.34: ведение kJw-инъекции — каждый тик
     }
 
     // §4.29: ведение piece вьюхи. Зовётся ПОСЛЕ read_live_state: детектор
@@ -1396,6 +1496,12 @@ template<class IO> class Controller {
         inv_probe_n_ = 0;
         inv_probe_tick_ = 0;
         inv_state_ = -1;
+        // §4.34: kJw-инъекция — оригинал (null/stale) возвращается слотом
+        // (только если там всё ещё наша запись), остатки владения чистятся.
+        ok = kjw_item_.restore(io) && ok;
+        kjw_item_ = {};
+        kjw_prev_ = 0;
+        kjw_slot_ = -1;
         return ok;
     }
 
@@ -1690,6 +1796,19 @@ template<class IO> class Controller {
         else
             std::snprintf(v, sizeof(v), " za=x");
         ap(v);
+        // §4.34: yh — запись своего слота с не-нулевым Item (адрес/x), yhm —
+        // сколько таких; qj — инъекция (0 нет, 1 null-fill, 2 overwrite).
+        if (inv_dbg_yh_ok_)
+            std::snprintf(v, sizeof(v), " yh=%llx",
+                          (unsigned long long)inv_dbg_yh_);
+        else
+            std::snprintf(v, sizeof(v), " yh=x");
+        ap(v);
+        std::snprintf(v, sizeof(v), " yhm=%d", inv_dbg_yhm_);
+        ap(v);
+        const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
+        std::snprintf(v, sizeof(v), " qj=%d", qj);
+        ap(v);
     }
 
     // §4.26: ритм срезов — на изменение триггерных полей (указатель cur,
@@ -1813,6 +1932,10 @@ public:
         inv_probe_n_ = 0;
         inv_probe_tick_ = 0;
         inv_state_ = -1;
+        // §4.34: kJw-инъекция забывается БЕЗ записи (адрес из прошлой жизни).
+        kjw_item_ = {};
+        kjw_prev_ = 0;
+        kjw_slot_ = -1;
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
         scan_request_ = false;
@@ -2083,7 +2206,8 @@ public:
                         }
                     }
                     // §4.28: пояс стабилен и от FP-цепи не зависит — ведём и в блэкауте.
-                    maintain_inventory(want_skin, want_level);
+                    // §4.34: FP-Item мёртв — вливать нечего (0 снимает инъекцию).
+                    maintain_inventory(want_skin, want_level, 0);
                 }
             }
             return;
@@ -2234,7 +2358,9 @@ public:
         // §4.28: пятый источник — инвентарный Item (зонд + ведение). Дроу
         // копирует скин с него в свежий экземпляр, SyncVar и вьюху — одна
         // запись здесь выигрывает все будущие дроу без гонки.
-        maintain_inventory(want_skin, want_level);
+        // §4.34: свежий FP-Item (только что покрашен копией 3) — источник
+        // указателя для kJw-инъекции.
+        maintain_inventory(want_skin, want_level, context_.item.object);
 
         // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ подаёт piece в
         // FPManager.Kxi -> CreateFPWeapon на дроу. Пишем только когда голова

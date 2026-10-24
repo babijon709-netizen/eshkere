@@ -1982,6 +1982,73 @@ void test_dump_carries_kjw_shape() {
     std::printf("  dump: kjw shape k/z + ks/u93/flg/nc gate fields\n");
 }
 
+// ---- §4.34: kJw-инъекция -----------------------------------------------------
+// Пустая запись своего слота (Data+0x40 -> слот: +0x10 null, +0x18 = живой
+// слот 26): два прохода зонда усыновляют, слот+0x10 получает живой FP-Item,
+// срез показывает qj=1; выключение возвращает null.
+constexpr uint64_t kjw_inj = 0x59000;
+void add_kjw_null_only(Fixture& f, uint32_t slot = 26) {
+    using namespace go_active;
+    f.io.object(inv, "PlayerInventory", "Oxide");
+    f.io.object(inv_data, "PlayerInventoryData", "Oxide");
+    f.io.object(inv_client, "PlayerInventoryClient", "Oxide");
+    f.io.put<uint64_t>(player + PLAYER_INVENTORY, inv);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_DATA, inv_data);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_CLIENT, inv_client);
+    f.io.plain(kjw_inj);
+    f.io.put<uint64_t>(kjw_inj + KJW_ITEM, 0);
+    f.io.put<uint32_t>(kjw_inj + KJW_SLOT, slot);
+    f.io.put<uint64_t>(inv_data + 0x40, kjw_inj);
+    f.io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_SLOT, slot);
+    // Поясной Item для триггера позднего среза: adoption на тике 10 (в том же
+    // проходе, что kJw) дёргает inv_count — срез видит shapes застывшими на
+    // пред-инжект проходе (zh/yh), а qj уже живым.
+    f.io.plain(belt);
+    f.io.put<int32_t>(belt + IL2CPP_ARRAY_LENGTH, 1);
+    f.io.put<uint64_t>(inv_data + 0x30, belt);
+    f.io.plain(belt_item);
+    f.io.put<uint64_t>(belt_item + ITEM_DATA, item_data);
+    f.io.put<int32_t>(belt_item + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(belt_item + ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(belt + IL2CPP_ARRAY_FIRST_ELEMENT, belt_item);
+}
+void test_kjw_inject_null_fill() {
+    Fixture f;
+    add_kjw_null_only(f);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    // Два прохода (тики 5 и 10) — усыновление и инъекция живого FP-Item.
+    // Срез застыл на пред-инжект проходе (zh=1a), qj живой (=1).
+    assert(f.io.value<uint64_t>(kjw_inj + go_active::KJW_ITEM) == item);
+    assert(std::strstr(f.c.ui().dump_text, "k0z1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "zh=1a") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=1") != nullptr);
+    // Выключение — оригинал (null) возвращён.
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(kjw_inj + go_active::KJW_ITEM) == 0);
+    std::printf("  kjw: null-fill injects live FP-Item, restores null\n");
+}
+
+// Stale-запись своего слота (+0x10 чужой указатель): overwrite живым
+// FP-Item, срез показывает qj=2 и yh-адрес; выключение возвращает stale.
+constexpr uint64_t stale_ptr = 0x5B000;
+void test_kjw_inject_stale_overwrite() {
+    Fixture f;
+    add_kjw_null_only(f);
+    using namespace go_active;
+    f.io.plain(stale_ptr);
+    f.io.put<uint64_t>(kjw_inj + KJW_ITEM, stale_ptr);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    // Пред-инжект формы в срезе (k0z0, yhm=1), qj живой (=2).
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    assert(std::strstr(f.c.ui().dump_text, "k0z0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yhm=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "yh=59000") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "qj=2") != nullptr);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == stale_ptr);
+    std::printf("  kjw: stale-overwrite injects live FP-Item, restores stale\n");
+}
+
 void test_dump_carries_probe_shape() {
     Fixture f;
     add_inventory(f);
@@ -2065,6 +2132,8 @@ int main() {
     test_dump_carries_loaded_triplet();
     test_dump_carries_probe_shape();
     test_dump_carries_kjw_shape();
+    test_kjw_inject_null_fill();
+    test_kjw_inject_stale_overwrite();
     std::printf("OK\n");
     return 0;
 }

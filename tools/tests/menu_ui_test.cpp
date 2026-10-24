@@ -251,6 +251,24 @@ static void miscTests() {
     // FOV/hands reset still applies immediately, without clearing weapon flags.
     tap(tab(3), id("##vmreset"));
     assert(g_state.viewmodel.no_recoil_button && g_state.viewmodel.no_spread);
+    // Скинченджер — пользовательский список: именованные строки вместо
+    // слепого слайдера «#N», выбор тапом, уровни только у прогрессии.
+    expand(3, "##misc_skins");
+    for (const auto* label : {"##skin_pick0", "##skin_pick1", "##skin_pick2"})
+        assert(items.count(id(label)));
+    assert(!items.count(id("##skin_level")));            // «Gold»: уровней нет
+    assert(!items.count(id("##skin_rewrite_now")));      // техкнопки больше нет
+    assert(!items.count(id("##skin_index")));            // и слайдера индекса
+    // Слайдер уровней появляется кадром позже выбора: `levels` считается до
+    // отрисовки списка (та же задержка была у старого слайдера индекса).
+    tap(tab(3), id("##skin_pick1"));
+    assert(g_state.viewmodel.skin_index == 1);
+    frame(tab(3));                                   // уровни — со следующего кадра
+    assert(items.count(id("##skin_level")));             // «Star»: 3 уровня
+    tap(tab(3), id("##skin_pick2"));
+    assert(g_state.viewmodel.skin_index == 2);
+    frame(tab(3));
+    assert(!items.count(id("##skin_level")));            // «Red»: перекраска
 }
 
 static void configAndOptionsTests() {

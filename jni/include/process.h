@@ -22,3 +22,5 @@ void process_detach();
 // только /proc (cmdline, maps), как и в самом потоке.
 pid_t process_find_game_pid();
 int   process_find_unity_candidates(pid_t* out, int capacity);
+// Fast cmdline-only check used to defer PlayerPrefs edits until Unity exits.
+bool  process_game_process_running();

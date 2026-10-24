@@ -305,6 +305,11 @@ static void no_grass_tick() {
     if (current_trees) wr_buf(trees_field, &disabled, sizeof(disabled));
 }
 
+void esp_tick_no_grass() {
+    std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
+    no_grass_tick();
+}
+
 static void always_day_tick() {
     if (!g_day_enabled) {
         // Выключили: писатель замолкает (адрес в 0), часы игры идут сами.
@@ -11055,9 +11060,6 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     if (g_pid <= 0 || !g_il2cpp_base) {
             return result;
     }
-
-    // No Grass работает независимо от камеры и списка игроков.
-    no_grass_tick();
 
     // Фрикам — до всех ранних выходов: сводки и покадровая запись нужны и в
     // пустой местности (раньше тик стоял за выходом «нет игроков» и там не

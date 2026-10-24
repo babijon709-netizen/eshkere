@@ -96,7 +96,8 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         esp_set_bot_aim_enabled(g_state.esp_bots || g_state.aim_touch ||
                                 g_state.aim_mode == AIM_MODE_MEMORY);
         esp_set_always_day(g_state.always_day);
-        esp_set_no_grass(g_state.no_grass);
+        esp_set_no_grass(g_state.no_grass || g_state.potato_graphics);
+        esp_set_potato_graphics(g_state.potato_graphics);
         esp_set_marker_max_distance(g_state.marker_dist);
         // Automatic control latency for camera-driven modes; no user lead
         // knob. Projectile flight time is solved independently from active
@@ -165,6 +166,10 @@ static const std::vector<EspMarker>& FrameMarkers() {
 }
 
 void DrawEspOverlay() {
+    esp_set_potato_graphics(g_state.potato_graphics);
+    esp_tick_potato_graphics_prefs();
+    esp_set_no_grass(g_state.no_grass || g_state.potato_graphics);
+    esp_tick_no_grass();
     const OverlayGeometry overlay = MakeOverlayGeometry(
         displayInfo.width, displayInfo.height,
         native_window_screen_x, native_window_screen_y);

@@ -190,6 +190,12 @@ void        esp_set_aim_lead(float seconds);
 void        esp_set_always_day(bool enabled);
 // «Без травы»: отключает GrassEnabled и TreesEnabled (рендерер кустов).
 void        esp_set_no_grass(bool enabled);
+void        esp_tick_no_grass();
+// Game graphics are stored in Unity PlayerPrefs; this queues the low preset
+// and applies/restores it after the game process exits. Grass/trees are handled
+// live by the existing WorldStreamingController flag writer.
+void        esp_set_potato_graphics(bool enabled);
+void        esp_tick_potato_graphics_prefs();
 // Ordinary markers further away than this (metres) are dropped. Airdrops
 // remain visible across the map regardless of this range.
 void        esp_set_marker_max_distance(float metres);// Markers for the current frame, nearest first. Call after esp_get_boxes():

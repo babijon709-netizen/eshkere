@@ -200,7 +200,7 @@ static void miscTests() {
     for (auto group : groups) expand(3, group);
     for (const auto* label : {"##vmfovvalue", "##vmx", "##vmy", "##vmz", "##vmreset", "##fc2", "##fc1", "##fclr", "##fcjs", "##xrbtn", "##xr1",
             "##norecoil", "##nospread", "##fastfire", "##farm_wood", "##farm_stone", "##farm_metal", "##farm_sulfur", "##farm_range",
-            "##wd0", "##wd1", "##instantloot", "##flbtn", "##fakelagpct"}) assert(items.count(id(label)));
+            "##wd0", "##wd1", "##potato_graphics", "##instantloot", "##flbtn", "##fakelagpct"}) assert(items.count(id(label)));
     for (auto label : {"##norecoil", "##nospread", "##fastfire"}) {
         int before = applies; tap(tab(3), id(label)); assert(applies == before + 1);
     }

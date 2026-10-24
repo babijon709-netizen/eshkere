@@ -287,7 +287,8 @@ static void WriteExt2Trailer(std::ostream& f) {
               (cfg::esp::fill        ? (1u << 13) : 0u) |
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
-              (g_state.esp_airdrop   ? (1u << 16) : 0u); // bit 16: airdrop ESP
+              (g_state.esp_airdrop   ? (1u << 16) : 0u) |
+              (g_state.potato_graphics ? (1u << 17) : 0u); // bit 17: low graphics preset
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
     t.esp_radar_size   = g_state.esp_radar_size;
     t.esp_radar_range  = g_state.esp_radar_range;
@@ -761,6 +762,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.viewmodel.no_ballistics = false;
         g_state.a_no_ballistics = 0.f;
         g_state.esp_airdrop = false;
+        g_state.potato_graphics = false;
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
             g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;
@@ -779,6 +781,7 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
             g_state.esp_airdrop    = (ext2.flags & (1u << 16)) != 0;
+            g_state.potato_graphics = (ext2.flags & (1u << 17)) != 0;
 
             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);

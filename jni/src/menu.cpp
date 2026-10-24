@@ -850,11 +850,15 @@ float TabContent(int tab, float dt, float cW) {
             }
         }
         char worldSummary[32];
-        snprintf(worldSummary, sizeof(worldSummary), "%d / 3", int(g_state.always_day) + int(g_state.no_grass) + int(vm.fast_loot));
+        if (g_state.potato_graphics)
+            snprintf(worldSummary, sizeof(worldSummary), "%s", XS("Перезапуск"));
+        else
+            snprintf(worldSummary, sizeof(worldSummary), "%d / 4", int(g_state.always_day) + int(g_state.no_grass) + int(g_state.potato_graphics) + int(vm.fast_loot));
         if (SettingsHeader("##misc_world", XS("Мир и предметы"), worldSummary)) {
-            CardBg(Layout::RowH * 3.f);
+            CardBg(Layout::RowH * 4.f);
             ToggleRow("##wd0", XS("Всегда день"), &g_state.always_day, g_state.a_always_day, false, true);
             ToggleRow("##wd1", XS("Без травы"), &g_state.no_grass, g_state.a_no_grass, false);
+            ToggleRow("##potato_graphics", XS("Картофельная графика"), &g_state.potato_graphics, g_state.a_potato_graphics, false);
             ToggleRow("##instantloot", XS("Быстрый подбор"), &vm.fast_loot, g_state.a_fast_loot, true);
         }
         SHdr(XS("Сеть и FPS"));
@@ -1433,6 +1437,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_pumpkins, g_state.esp_pumpkins,     dt);
     Tick(g_state.a_always_day,  g_state.always_day,         dt);
     Tick(g_state.a_no_grass,    g_state.no_grass,            dt);
+    Tick(g_state.a_potato_graphics, g_state.potato_graphics, dt);
     Tick(g_state.a_esp_team,   g_state.esp_team,           dt);
     Tick(g_state.a_aim_pr0,    g_state.aim_priority == 0,  dt);
     Tick(g_state.a_aim_pr1,    g_state.aim_priority == 1,  dt);

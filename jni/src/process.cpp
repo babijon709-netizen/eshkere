@@ -310,3 +310,21 @@ pid_t process_find_game_pid() { return find_game_pid(); }
 int process_find_unity_candidates(pid_t* out, int capacity) {
     return find_renamed_release_candidates(out, capacity);
 }
+
+bool process_game_process_running() {
+    DIR* dir = opendir("/proc");
+    // Fail closed: without a reliable process scan do not touch the live
+    // game's PlayerPrefs file.
+    if (!dir) return true;
+    const char* pkgs[1] = {kTargetPackage};
+    const pid_t self = getpid();
+    bool found = false;
+    struct dirent* entry;
+    while ((entry = readdir(dir))) {
+        const pid_t pid = (pid_t)atoi(entry->d_name);
+        if (pid <= 0 || pid == self) continue;
+        if (cmdline_rank(pid, pkgs, 1) >= 0) { found = true; break; }
+    }
+    closedir(dir);
+    return found;
+}

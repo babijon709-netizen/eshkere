@@ -643,6 +643,15 @@ template<class IO> class Controller {
     Slot<int16_t> skin_view_;
     Slot<uint8_t> level_view_;
     int view_state_ = -1;    // piece вьюхи: -1 не ведём, 0 наш, 1 чужой
+    // §4.30: ЭКСПЕРИМЕНТ — сброс флага Loaded (+0x7) в SV/wk/vw. Сессия 36:
+    // все шесть точек держат наш индекс, руки не смотрят, хэндл модели нулём
+    // (hnd=0), ассет ни разу не запрашивался. Сборка печёт -1 и не ставит
+    // ассет в очередь; пост-сборочная краска очередь не трогает. Если гейт
+    // запроса — Loaded («не загружен — переоцени piece и запроси»), сброс
+    // при нашем индексе в поле запустит запрос и резолв хэндла. Безопасное
+    // направление ТОЛЬКО 1->0 и ТОЛЬКО пока хэндл мёртв: установка 1 при
+    // нулевом хэндле могла бы уронить рендер, живой хэндл — руки прочь.
+    Slot<uint8_t> loaded_sv_, loaded_wk_, loaded_view_;
     // §4.28: ПЯТЫЙ источник — стабильный инвентарный Oxide.Item. Каждый дроу
     // на сервере строит вьюху из -1, хотя все четыре точки держат наш индекс:
     // via(kJw)->drawSV пишет серверную piece в SyncVar и тут же кормит её в
@@ -1155,6 +1164,40 @@ template<class IO> class Controller {
         view_state_ = (vskin != want_skin) ? 1 : 0;
     }
 
+    // §4.30: сброс Loaded — строго ПОСЛЕ краски (в поле уже наш индекс).
+    // Видимость — срез L= (значения) + существующая строка «визуал скина
+    // загружен» (флип хэндла). Отдельной строки нет: эксперимент.
+    void maintain_loaded(int16_t sv_number) {
+        using namespace go_active;
+        const uint64_t pw = context_.weapon.object;
+        if (!pw) return;
+        uint64_t model = 0;
+        if (pointer(io, pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL, model) &&
+            model != 0)
+            return;   // хэндл живой — визуал резолвлен, флаги не трогаем
+        uint8_t l = 0;
+        if (context_.piece &&
+            io.read(context_.piece + WEAPONPIECE_LOADED, l) && l == 1) {
+            loaded_sv_.sample_value(context_.piece + WEAPONPIECE_LOADED, l);
+            loaded_sv_.put(io, (uint8_t)0);
+        }
+        if (context_.piece_local &&
+            io.read(context_.piece_local + WEAPONPIECE_LOADED, l) && l == 1) {
+            loaded_wk_.sample_value(context_.piece_local + WEAPONPIECE_LOADED, l);
+            loaded_wk_.put(io, (uint8_t)0);
+        }
+        if (sv_number < 0) return;
+        uint64_t view = 0;
+        int16_t vnum = 0;
+        if (!pointer(io, pw + PLAYERWEAPON_FP_VIEW, view) || view < 0x10000) return;
+        if (!io.read(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_NUMBER, vnum)) return;
+        if (vnum != sv_number) return;
+        if (io.read(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_LOADED, l) && l == 1) {
+            loaded_view_.sample_value(view + FPWEAPONVIEW_PIECE + WEAPONPIECE_LOADED, l);
+            loaded_view_.put(io, (uint8_t)0);
+        }
+    }
+
     bool restore_all() {
         // Все три точки равноправны: возвращаем оригиналы в каждую — но ТОЛЬКО
         // пока контекст жив. После смерти игрока/мира адреса слотов указывают
@@ -1180,10 +1223,16 @@ template<class IO> class Controller {
             // наша краска прошлого ствола, last совпал — вернём оригинал.
             ok = level_view_.restore(io) && ok;
             ok = skin_view_.restore(io) && ok;
+            // §4.30: флаги Loaded — туда же: оригинал (запечённая игрой 1)
+            // возвращается, только если там всё ещё наш сброс.
+            ok = loaded_view_.restore(io) && ok;
+            ok = loaded_wk_.restore(io) && ok;
+            ok = loaded_sv_.restore(io) && ok;
         } else {
             skin_ = {}; level_ = {}; skin_local_ = {}; level_local_ = {};
             head_lo_local_ = {}; head_hi_local_ = {};
             skin_view_ = {}; level_view_ = {};
+            loaded_sv_ = {}; loaded_wk_ = {}; loaded_view_ = {};
         }
         view_state_ = -1;
         if (context_.item.object && context_.item.life(io) == Life::Alive) {
@@ -1435,6 +1484,22 @@ template<class IO> class Controller {
                       inv_dbg_data_ ? 1 : 0, inv_dbg_client_ ? 1 : 0,
                       inv_dbg_warr_ ? 1 : 0, inv_probe_n_, inv_count_);
         ap(v);
+        // §4.30: флаги Loaded SV/wk/vw одним триплетом (x — не читается).
+        // Диагностика эксперимента со сбросом: запекает ли сборка 1.
+        char lb[3] = {'x', 'x', 'x'};
+        uint8_t lv = 0;
+        if (context_.piece &&
+            io.read(context_.piece + WEAPONPIECE_LOADED, lv) && lv <= 1)
+            lb[0] = (char)('0' + lv);
+        if (context_.piece_local &&
+            io.read(context_.piece_local + WEAPONPIECE_LOADED, lv) && lv <= 1)
+            lb[1] = (char)('0' + lv);
+        uint64_t lvw = 0;
+        if (pw && pointer(io, pw + PLAYERWEAPON_FP_VIEW, lvw) && lvw >= 0x10000 &&
+            io.read(lvw + FPWEAPONVIEW_PIECE + WEAPONPIECE_LOADED, lv) && lv <= 1)
+            lb[2] = (char)('0' + lv);
+        std::snprintf(v, sizeof(v), " L=%c%c%c", lb[0], lb[1], lb[2]);
+        ap(v);
     }
 
     // §4.26: ритм срезов — на изменение триггерных полей (указатель cur,
@@ -1487,6 +1552,7 @@ public:
                skin_item_.owned || level_item_.owned ||
                skin_item2_.owned || level_item2_.owned ||
                skin_view_.owned || level_view_.owned ||
+               loaded_sv_.owned || loaded_wk_.owned || loaded_view_.owned ||
                head_lo_local_.owned || head_hi_local_.owned ||
                inv_count_ > 0;
     }
@@ -1550,6 +1616,7 @@ public:
         skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
         skin_view_ = {}; level_view_ = {};
         view_state_ = -1;
+        loaded_sv_ = {}; loaded_wk_ = {}; loaded_view_ = {};
         head_lo_local_ = {}; head_hi_local_ = {};
         for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
         inv_count_ = 0;
@@ -1772,6 +1839,7 @@ public:
                         // §4.29: вьюха красится и в блэкауте — страж по
                         // Number внутри (погашенная SyncVar не проходит).
                         maintain_view(want_skin, want_level, sv.number, false);
+                        maintain_loaded(sv.number);
                     }
                     Piece wk;
                     if (read_piece(io, context_.piece_local, wk, nullptr, true) == PieceRead::Ok) {
@@ -1848,6 +1916,7 @@ public:
                     skin_item_ = {}; level_item_ = {};
                     skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
                     skin_view_ = {}; level_view_ = {};
+                    loaded_sv_ = {}; loaded_wk_ = {}; loaded_view_ = {};
                     head_lo_local_ = {}; head_hi_local_ = {};
                 }
                 context_ = next;
@@ -2037,6 +2106,8 @@ public:
         // детектор «вьюха СТАРАЯ» видел собранное игрой. piece.number здесь —
         // живой Number SyncVar (голова прочитана выше), страж внутри.
         maintain_view(want_skin, want_level, piece.number, force_rewrite);
+        // §4.30: сброс Loaded — после краски (в поле уже наш индекс).
+        maintain_loaded(piece.number);
 
         // Пересборки здесь НЕТ и быть не может: вьюху собирает игра на своих
         // событиях (холстер/дроу, RPC насадок/модов, спавн/подбор ствола —

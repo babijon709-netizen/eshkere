@@ -1870,6 +1870,71 @@ void test_view_piece_rebake_and_hands() {
     std::printf("  view piece: rebake repainted, hands view untouched\n");
 }
 
+// ---- 56. §4.30: Loaded сбрасывается, пока хэндл мёртв -----------------------
+// Живой хэндл (дефолт фикстуры) — флаги не трогаем вообще. Мёртвый —
+// сбрасываем 1->0 во всех трёх копиях; выключение возвращает запечённые 1.
+// Резолв хэндла игрой останавливает сбросы (домучивать нечего).
+void test_loaded_cleared_while_handle_dead() {
+    Fixture f;
+    f.tick(f.settings(true, 2));
+    assert(f.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    assert(f.io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_LOADED) == 1);
+    assert(f.io.value<uint8_t>(view_piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    // Хэндл умер — следующий тик сбрасывает все три флага.
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_SKIN_HANDLE +
+                       go_active::SKINHANDLE_MODEL, 0);
+    f.tick(f.settings(true, 2));
+    assert(f.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 0);
+    assert(f.io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_LOADED) == 0);
+    assert(f.io.value<uint8_t>(view_piece() + go_active::WEAPONPIECE_LOADED) == 0);
+    // Игра резолвнула хэндл и подняла флаги — руки прочь, ноль записей.
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_SKIN_HANDLE +
+                       go_active::SKINHANDLE_MODEL, 0xBEEF0);
+    f.io.put<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED, 1);
+    f.io.put<uint8_t>(piece_local() + go_active::WEAPONPIECE_LOADED, 1);
+    f.io.put<uint8_t>(view_piece() + go_active::WEAPONPIECE_LOADED, 1);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 2));
+    assert(f.io.writes == before);
+    assert(f.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    std::printf("  loaded: cleared while handle dead, released when live\n");
+}
+
+// ---- 57. §4.30: сброс возвращается, чужая вьюха не трогается ----------------
+// Оригинал сброшенного флага — запечённая игрой 1. Вьюха чужого ствола под
+// сброс не попадает (тот же страж Number, что у краски).
+void test_loaded_restored_and_guarded() {
+    Fixture f;
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_SKIN_HANDLE +
+                       go_active::SKINHANDLE_MODEL, 0);
+    f.tick(f.settings(true, 2));
+    assert(f.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 0);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    assert(f.io.value<uint8_t>(piece_local() + go_active::WEAPONPIECE_LOADED) == 1);
+    assert(f.io.value<uint8_t>(view_piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    assert(!f.c.has_state());
+    Fixture g;
+    g.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_SKIN_HANDLE +
+                       go_active::SKINHANDLE_MODEL, 0);
+    g.io.put<int16_t>(view_piece() + go_active::WEAPONPIECE_NUMBER, 999);
+    g.tick(g.settings(true, 2));
+    assert(g.io.value<uint8_t>(piece() + go_active::WEAPONPIECE_LOADED) == 0);
+    assert(g.io.value<uint8_t>(view_piece() + go_active::WEAPONPIECE_LOADED) == 1);
+    std::printf("  loaded: restored on disable, foreign view guarded\n");
+}
+
+// ---- 58. §4.30: срез несёт триплет L= ---------------------------------------
+void test_dump_carries_loaded_triplet() {
+    Fixture f;
+    f.io.put<uint64_t>(pw + go_active::PLAYERWEAPON_SKIN_HANDLE +
+                       go_active::SKINHANDLE_MODEL, 0);
+    f.tick(f.settings(true, 2));   // сбросы легли
+    f.tick(f.settings(true, 2));   // срез собрался
+    assert(std::strstr(f.c.ui().dump_text, " L=000") != nullptr);
+    std::printf("  dump: L= triplet reflects loaded flags\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1934,6 +1999,9 @@ int main() {
     test_view_piece_painted_and_restored();
     test_view_piece_guard_number();
     test_view_piece_rebake_and_hands();
+    test_loaded_cleared_while_handle_dead();
+    test_loaded_restored_and_guarded();
+    test_dump_carries_loaded_triplet();
     std::printf("OK\n");
     return 0;
 }

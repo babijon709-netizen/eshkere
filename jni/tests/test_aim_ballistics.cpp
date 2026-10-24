@@ -36,13 +36,81 @@ static float simulated_miss_distance(const Vec3& origin,
             ? -(r0.x * delta.x + r0.y * delta.y + r0.z * delta.z) / denom : 0.0f;
         t = std::max(0.0f, std::min(1.0f, t));
         best = std::min(best, length(add(r0, scale(delta, t))));
+        if (params.averaged_velocity) velocity = scale(add(old_velocity, velocity), 0.5f);
         position = full_next;
         elapsed += dt;
     }
     return best;
 }
 
+// Independent scalar/double transcription of 11978 Step @ 0xCA6AFA4.
+// Does not call production vector/integrator helpers. The averaged velocity
+// must be stored, not merely used to advance position.
+static Vec3 release_position(const Vec3& origin, const Vec3& launch,
+                             const aim_ballistics::Parameters& p, double time) {
+    double pos[3] = {origin.x, origin.y, origin.z};
+    double vel[3] = {launch.x, launch.y, launch.z};
+    constexpr double dt = 1.0 / 32.0;
+    while (time > 1e-12) {
+        const bool water = pos[1] < 0.0;
+        const double damping = std::max(0.0, std::min(1.0,
+            1.0 - (water ? p.underwater_drag : p.air_drag) * dt));
+        const double fraction = std::min(time, dt);
+        for (int axis = 0; axis < 3; ++axis) {
+            const double acceleration = !water && axis == 1 ? -9.81 * p.gravity : 0.0;
+            vel[axis] = (vel[axis] + (vel[axis] + acceleration * dt) * damping) * 0.5;
+            pos[axis] += vel[axis] * fraction;
+        }
+        time -= fraction;
+    }
+    return {static_cast<float>(pos[0]), static_cast<float>(pos[1]),
+            static_cast<float>(pos[2])};
+}
+
+static void test_release_firearms() {
+    using namespace aim_ballistics;
+    // Golden two-step values: gravity 5, vY=0 -> -0.76640625,
+    // then -1.5328125; drop after two ticks is -0.0718505859375.
+    Parameters p{500.0f, 5.0f, 0.0f, 0.0f, 0.0f, true, true};
+    const Vec3 high{0.0f, 100.0f, 0.0f};
+    Vec3 check = release_position(high, {0.0f, 0.0f, 500.0f}, p, 0.0625);
+    assert(near(check.y, 99.9281494140625f, 1e-5f));
+    assert(near(check.z, 31.25f, 1e-5f));
+    // 50% damping: stored speed 100 -> 75 -> 56.25 (not 50 -> 25).
+    p.gravity = 0.0f;
+    p.air_drag = 16.0f;
+    check = release_position(high, {100.0f, 0.0f, 0.0f}, p, 0.0625);
+    assert(near(check.x, 4.1015625f, 1e-6f));
+
+    // Speeds from weaponassets.7z; zero drag and multiplier 5 for firearms.
+    // Exercise integer and fractional ticks, signed gravity, motion, drag,
+    // and inherited launch velocity against a separate forward simulation.
+    for (float speed : {350.0f, 400.0f, 450.0f, 500.0f, 550.0f, 600.0f}) {
+        for (float gravity : {5.0f, -2.5f}) {
+            for (float drag : {0.0f, 0.1f, 1.0f}) {
+                p = {speed, gravity, drag, 0.0f, 0.0f, true, true};
+                for (float seconds : {0.015625f, 0.0625f, 0.213f, 0.5f}) {
+                    const Vec3 movement{4.0f, -0.3f, 2.0f};
+                    const Vec3 inherited{1.0f, 0.0f, -0.5f};
+                    const Vec3 direction{0.0f, 0.0f, 1.0f};
+                    const Vec3 impact = release_position(high,
+                        add(scale(direction, speed), inherited), p, seconds);
+                    const Vec3 target = sub(impact, scale(movement, seconds));
+                    Solution result{};
+                    assert(solve(high, target, movement, inherited, p, result));
+                    assert(near(result.flight_time, seconds, 2e-5f));
+                    const Vec3 actual = release_position(high,
+                        add(scale(result.direction, speed), inherited), p, result.flight_time);
+                    const Vec3 expected = add(target, scale(movement, result.flight_time));
+                    assert(length(sub(actual, expected)) < 0.002f);
+                }
+            }
+        }
+    }
+}
+
 int main() {
+    test_release_firearms();
     using namespace aim_ballistics;
     const Vec3 origin{0.0f, 1.5f, 0.0f};
     Parameters params{100.0f, 0.0f, 0.0f, 0.0f, 0.0f, true};

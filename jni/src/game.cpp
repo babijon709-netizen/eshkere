@@ -7137,7 +7137,9 @@ bool aim_read_profile(uint64_t profile, AimBallisticRead& read) {
         !aim_read_float(profile + BALLISTICPROFILE_AIR_DRAG, 0.0f, 100.0f, air_drag) ||
         !aim_read_float(profile + BALLISTICPROFILE_UNDERWATER_DRAG, 0.0f, 100.0f,
                         underwater_drag)) return false;
-    read.params.gravity = aim_ballistics::gravity_multiplier(gravity);
+    // 11978 BallisticProfile.cQi copies the multiplier directly (including sign).
+    read.params.gravity = gravity;
+    read.params.averaged_velocity = true;
     read.params.air_drag = air_drag;
     read.params.underwater_drag = underwater_drag;
     read.has_physics = true;
@@ -7248,6 +7250,7 @@ void aim_merge_ballistics(const AimBallisticRead& config, const AimBallisticRead
                 out.gravity = config.params.gravity;
                 out.air_drag = config.params.air_drag;
                 out.underwater_drag = config.params.underwater_drag;
+                out.averaged_velocity = config.params.averaged_velocity;
             }
         }
     } else if (config.valid_chain && config.params.valid) {
@@ -7256,12 +7259,13 @@ void aim_merge_ballistics(const AimBallisticRead& config, const AimBallisticRead
     out.valid = out.muzzle_speed >= 1.0f && aim_ballistics::parameters_valid(out);
 }
 
-// Exact weapon ballistics extracted from data-weapons-configs_assets_all bundle
-// keyed by FPObject.m_ObjectID (+0x70).
+// Release 11978 firearm fallback values from weaponassets.7z:
+// data-weapons-configs_assets_all_9cc8cc5a32f278cd381af64ba6c210ee.bundle.
+// Non-firearm rows are legacy and deliberately unchanged. Live config wins.
 bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
     read = {};
     int32_t obj_id = 0;
-    if (!rd_exact(weapon + 0x70, obj_id)) return false;
+    if (!rd_exact(weapon + game_offsets::FPOBJECT_OBJECT_ID, obj_id)) return false;
     struct Entry {
         int32_t id;
         float max_dist;
@@ -7269,31 +7273,32 @@ bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
         float gravity;
         float air_drag;
         float water_drag;
+        bool averaged_velocity = false;
     };
     static constexpr Entry kTable[] = {
-        {  4,  90.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 04_Revolver
-        {  5,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 05_Shotgun
-        {  6, 260.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 06_HuntingRifle
-        {  7, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 07_AssaultRifle
+        {  4, 90.0f, 400.0f, 5.0f, 0.0f, 0.0f, true }, // 04_Revolver_WeaponConfig
+        {  5, 30.0f, 350.0f, 5.0f, 0.0f, 0.0f, true }, // 05_Shotgun_WeaponConfig
+        {  6, 260.0f, 600.0f, 5.0f, 0.0f, 0.0f, true }, // 06_HuntingRifle_WeaponConfig
+        {  7, 200.0f, 500.0f, 5.0f, 0.0f, 0.0f, true }, // 07_AssaultRifle_WeaponConfig
         { 10,  60.0f,  28.0f, 1.0f, 0.05f, 1.5f }, // 10_IronSpear
         { 11, 120.0f,  55.0f, 1.0f, 0.05f, 1.5f }, // 11_WoodenBow
         { 14, 150.0f,  40.0f, 0.5f, 0.05f, 1.5f }, // 14_RocketLauncher
         { 16,  35.0f,  18.0f, 1.0f, 0.05f, 1.5f }, // 16_ExplosiveCharge
-        { 20,  90.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 20_SubmachineGun
-        { 21,   9.0f, 350.0f, 0.5f, 0.10f, 5.0f }, // 21_FlareGun
+        { 20, 90.0f, 450.0f, 5.0f, 0.0f, 0.0f, true }, // 20_SubmachineGun_WeaponConfig
+        { 21, 9.0f, 350.0f, 5.0f, 0.0f, 0.0f, true }, // 21_FlareGun_WeaponConfig
         { 22, 150.0f,  75.0f, 1.0f, 0.05f, 1.5f }, // 22_Crossbow
-        { 26, 130.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 26_DesertEagle
-        { 27, 120.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 27_Thompson
-        { 28, 200.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 28_DMR
-        { 30, 200.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 30_Winchester
-        { 32, 300.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 32_DVL
-        { 33, 180.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 33_HMLMG
-        { 35,  70.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 35_HandmadePistol
-        { 37, 150.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 37_KrissVector
-        { 41,  40.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 41_SteelBallGun
-        { 43, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 43_FnFal
-        { 44,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 44_DoubleBarrel
-        { 45,   9.0f, 300.0f, 0.0f, 0.10f, 2.5f }, // 45_SignalFlareGun
+        { 26, 130.0f, 400.0f, 5.0f, 0.0f, 0.0f, true }, // 26_DesertEagle_WeaponConfig
+        { 27, 120.0f, 450.0f, 5.0f, 0.0f, 0.0f, true }, // 27_Thompson_WeaponConfig
+        { 28, 200.0f, 550.0f, 5.0f, 0.0f, 0.0f, true }, // 28_DMR_WeaponConfig
+        { 30, 200.0f, 600.0f, 5.0f, 0.0f, 0.0f, true }, // 30_Winchester_WeaponConfig
+        { 32, 300.0f, 550.0f, 5.0f, 0.0f, 0.0f, true }, // 32_DVL_WeaponConfig
+        { 33, 180.0f, 500.0f, 5.0f, 0.0f, 0.0f, true }, // 33_HMLMG_WeaponConfig
+        { 35, 70.0f, 400.0f, 5.0f, 0.0f, 0.0f, true }, // 35_HandmadePistol_WeaponConfig
+        { 37, 150.0f, 450.0f, 5.0f, 0.0f, 0.0f, true }, // 37_KrissVector_WeaponConfig
+        { 41, 40.0f, 350.0f, 5.0f, 0.0f, 0.0f, true }, // 41_SteelBallGun_WeaponConfig
+        { 43, 200.0f, 500.0f, 5.0f, 0.0f, 0.0f, true }, // 43_FnFal_WeaponConfig
+        { 44, 30.0f, 350.0f, 5.0f, 0.0f, 0.0f, true }, // 44_DoubleBarrel_WeaponConfig
+        { 45, 9.0f, 300.0f, 2.5f, 0.0f, 0.0f, true }, // 45_SignalFlareGun_WeaponConfig
     };
     for (const Entry& e : kTable) {
         if (e.id == obj_id) {
@@ -7303,6 +7308,7 @@ bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
             read.params.air_drag = e.air_drag;
             read.params.underwater_drag = e.water_drag;
             read.params.valid = true;
+            read.params.averaged_velocity = e.averaged_velocity;
             read.valid_chain = true;
             read.has_physics = true;
             return true;
@@ -7571,20 +7577,16 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     bool ballisticSolved = false;
     if (g_state.aim_touch && haveOrigin) {
         aim_ballistics::Parameters params = g_aim_ballistic_params;
-        if (!params.valid) {
-            params.muzzle_speed = 500.0f;
-            params.gravity = 0.0f;
-            params.air_drag = 0.10f;
-            params.underwater_drag = 5.0f;
-            params.max_range = 200.0f;
-            params.valid = true;
+        // No invented 500 m/s gun when runtime data is unavailable. Keep the
+        // ordinary control-lead point; never publish a fabricated flight path.
+        float velocity_scale = 1.0f;
+        // Preserve the legacy projectile behavior; firearm flight time must
+        // use the full measured velocity even within the first 3.5 metres.
+        if (!params.averaged_velocity && !vehicle_speed && aim_ballistics::finite(dist)) {
+            if (dist <= 3.5f) velocity_scale = 0.0f;
+            else if (dist < 8.5f) velocity_scale = (dist - 3.5f) / 5.0f;
         }
-        float ballistic_vel_scale = 1.0f;
-        if (!vehicle_speed && aim_ballistics::finite(dist)) {
-            if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
-            else if (dist < 8.5f) ballistic_vel_scale = (dist - 3.5f) / 5.0f;
-        }
-        const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
+        const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, velocity_scale);
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
                                   g_aim_inherited_velocity,

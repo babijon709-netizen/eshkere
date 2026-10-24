@@ -364,6 +364,7 @@ inline constexpr std::uint64_t VOICE_STATE_NAME     = 0x38;
 inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = 0x140;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG     = 0x78;
 // FPObject -> Oxide.Item -> Oxide.ItemData display strings.
+inline constexpr std::uint64_t FPOBJECT_OBJECT_ID   = 0x70; // release 11978 FPObject.m_ObjectID (TDI 9897)
 inline constexpr std::uint64_t FPOBJECT_ITEM        = 0x40; // <KHo>k__BackingField (11966: <Ltl>)
 // FPObject.uhq (+0x38): «вюха показана». Ставится в 1 On_Draw (слот vtable 17,
 // 0x68FD250), сбрасывается в 0 Holster-цепочкой FDN (слот 10, 0x68FCD10).

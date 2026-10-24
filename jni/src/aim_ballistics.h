@@ -21,6 +21,8 @@ struct Parameters {
     float underwater_drag = 0.0f;
     float max_range = 0.0f;
     bool valid = false;
+    // Release 11978 BallisticIntegrator; legacy projectile path stays unchanged.
+    bool averaged_velocity = false;
 };
 
 struct Solution {
@@ -64,10 +66,8 @@ inline float motion_age_lead(float age_seconds) {
     return kFreshSeconds + tail * (1.0f + motion_confidence(age_seconds)) * 0.5f;
 }
 
-// Aim params use a gravity multiplier: BallisticProfile stores that multiplier,
-// while some ShaftedProjectile prefabs store the equivalent acceleration (9.81).
-// Normalize the latter to 1.0; the game integrator multiplies this value by
-// Unity's downward gravity vector and applies it only while position.y >= 0.
+// Legacy ShaftedProjectile normalization only. Never use for BallisticProfile:
+// 11978 BallisticProfile.cQi (0x7BF07D8) copies its signed multiplier unchanged.
 inline float gravity_multiplier(float field_value) {
     if (!finite(field_value)) return 1.0f;
     float magnitude = field_value < 0.0f ? -field_value : field_value;
@@ -148,16 +148,25 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const Vec3 old_velocity = velocity;
         if (above_surface) velocity.y += kGravityY * params.gravity * dt;
         velocity = scale(velocity, damping);
-        position = add(position, scale(add(old_velocity, velocity), 0.5f * dt));
+        const Vec3 mean_velocity = scale(add(old_velocity, velocity), 0.5f);
+        position = add(position, scale(mean_velocity, dt));
+        // Step(float dt) @ 0xCA6AFA4 stores the mean back to state.Velocity.
+        if (params.averaged_velocity) velocity = mean_velocity;
         if (!finite(position) || !finite(velocity)) return false;
 
-        const float next_factor_velocity = factor_velocity * damping;
+        const float damped_factor_velocity = factor_velocity * damping;
+        const float mean_factor_velocity = (factor_velocity + damped_factor_velocity) * 0.5f;
+        const float next_factor_velocity = params.averaged_velocity
+            ? mean_factor_velocity : damped_factor_velocity;
         const float next_factor = factor +
-            (factor_velocity + next_factor_velocity) * 0.5f * dt;
+            mean_factor_velocity * dt;
         const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
-        const float next_drop_velocity = (drop_velocity + gravity_delta) * damping;
+        const float damped_drop_velocity = (drop_velocity + gravity_delta) * damping;
+        const float mean_drop_velocity = (drop_velocity + damped_drop_velocity) * 0.5f;
+        const float next_drop_velocity = params.averaged_velocity
+            ? mean_drop_velocity : damped_drop_velocity;
         const float next_drop = drop +
-            (drop_velocity + next_drop_velocity) * 0.5f * dt;
+            mean_drop_velocity * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
             origin, target, target_velocity, inherited_velocity, params);
@@ -248,6 +257,11 @@ inline bool solve(const Vec3& origin, const Vec3& target,
         const float relaxed_length = length(relaxed);
         if (!finite(relaxed_length) || relaxed_length < 0.01f) return false;
         guess = scale(relaxed, 1.0f / relaxed_length);
+    }
+    // An oscillating air/water path is not a verified firearm intercept.
+    if (params.averaged_velocity) {
+        out = {};
+        return false;
     }
     return out.valid;
 }

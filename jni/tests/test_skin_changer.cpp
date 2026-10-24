@@ -2176,6 +2176,78 @@ void test_kjw_array_rejected() {
     std::printf("  kjw: array-shaped candidate rejected, not adopted\n");
 }
 
+// ---- §4.38: заливка ditem ---------------------------------------------------
+// Населённый сервер: pw+0x120 (ditem, Item-кэш via(kJw)) пуст — дроу печёт
+// -1 из null. Заливаем наш FP-Item (перекрашенный): дроу печёт want.
+// Выключение — возврат null.
+void test_ditem_fill_and_restore() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);   // пояс-триггер позднего среза
+    f.io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, 0);   // населённый: кэш пуст
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == item);
+    assert(std::strstr(f.c.ui().dump_text, "df=1") != nullptr);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == 0);
+    std::printf("  ditem: fills empty draw cache, restores null\n");
+}
+
+// Валидный чужой (ресинк-ротация серверным: тот же ItemData, skin -1):
+// НЕ трогаем (состояние сервера целее — аттачменты дроу берёт оттуда же),
+// красит его копия 4; на выключении чужой возвращается в -1, кэш не наш.
+// Битый чужой (чужой деф) — перезаписываем своим (дроу целее).
+constexpr uint64_t ditem_foreign = 0x5E000;
+void test_ditem_leaves_valid_foreign() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);
+    f.io.plain(ditem_foreign);
+    f.io.put<uint64_t>(ditem_foreign + ITEM_DATA, item_data);
+    f.io.put<int32_t>(ditem_foreign + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(ditem_foreign + ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, ditem_foreign);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == ditem_foreign);
+    assert(f.io.value<int32_t>(ditem_foreign + ITEM_SKIN) == 1);
+    assert(std::strstr(f.c.ui().dump_text, "df=2") != nullptr);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == ditem_foreign);
+    assert(f.io.value<int32_t>(ditem_foreign + ITEM_SKIN) == -1);
+    std::printf("  ditem: leaves valid foreign to copy 4\n");
+}
+
+constexpr uint64_t ditem_broken = 0x5F000;
+void test_ditem_overwrites_broken() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);
+    f.io.plain(ditem_broken);
+    f.io.put<uint64_t>(ditem_broken + ITEM_DATA, other_data);   // чужой деф
+    f.io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, ditem_broken);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == item);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == ditem_broken);
+    std::printf("  ditem: overwrites broken foreign, restores as-found\n");
+}
+
+// Холстер (цепь FP мертва): ditem обязан вернуться в null, а не висеть на
+// освобождённом FP-Item (висячий ditem = краш дроу).
+void test_ditem_clears_on_fp_death() {
+    Fixture f;
+    using namespace go_active;
+    add_kjw_null_only(f);
+    f.io.put<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM, 0);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == item);
+    f.io.put<uint64_t>(fp_object + FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(pw + PLAYERWEAPON_DRAW_ITEM) == 0);
+    std::printf("  ditem: clears cache on FP death\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2252,6 +2324,10 @@ int main() {
     test_kjw_pin_drops_unreadable();
     test_dump_carries_fm_cw_shape();
     test_kjw_array_rejected();
+    test_ditem_fill_and_restore();
+    test_ditem_leaves_valid_foreign();
+    test_ditem_overwrites_broken();
+    test_ditem_clears_on_fp_death();
     std::printf("OK\n");
     return 0;
 }

@@ -727,6 +727,11 @@ template<class IO> class Controller {
     uint64_t kjw_prev_ = 0;
     int64_t kjw_slot_ = -1;
     uint64_t kjw_live_item_ = 0;
+    // §4.38: заливка ditem (pw+0x120) нашим FP-Item + dbg-состояние
+    // (0 пассивно/очищено, 1 наш (залит/уже), 2 чужой оставлен копии 4,
+    // 3 запись не прошла).
+    Slot<uint64_t> ditem_;
+    int ditem_dbg_ = 0;
     bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
@@ -1335,6 +1340,49 @@ template<class IO> class Controller {
         }
     }
 
+    // §4.38: заливка кэша дроу pw+0x120 (ditem, Item-кэш via(kJw)).
+    // Экип-дроу via(kJw) строит SyncVar ИЗ DITEM: на населённом ditem пуст
+    // (null — серверный fill-source голодает), дроу печёт -1, а наши
+    // тиковые перекраски (SV/вьюха/FP-Item) ложатся ПОСЛЕ запекания.
+    // Пустой/битый кэш заливаем нашим FP-Item (перекрашен копией 3);
+    // валидный чужой (ресинк-ротация серверным) НЕ трогаем — его красит
+    // копия 4, а состояние сервера целее нашего (аттачменты/прочее из дроу
+    // берутся оттуда же). FP мёртв — возврат null (висячий ditem = краш).
+    // Оригинал — as-found, возврат на disable/смену контекста.
+    void maintain_ditem(uint64_t live_item) {
+        using namespace go_active;
+        const uint64_t pw = context_.weapon.object;
+        if (!pw) { ditem_dbg_ = 0; return; }
+        const uint64_t addr = pw + PLAYERWEAPON_DRAW_ITEM;
+        uint64_t cur = 0;
+        if (!pointer(io, addr, cur)) { ditem_dbg_ = 0; return; }
+        if (live_item < 0x10000) {
+            if (ditem_.owned) {
+                if (!ditem_.restore(io)) ditem_ = {};
+                if (!ditem_.owned) ditem_ = {};
+            }
+            ditem_dbg_ = 0;
+            return;
+        }
+        if (cur == 0 || cur == live_item) {
+            ditem_.sample_value(addr, cur);
+            ditem_dbg_ = ditem_.put(io, live_item) ? 1 : 3;
+            return;
+        }
+        uint64_t ddata = 0;
+        Identity probe{};
+        if (pointer(io, cur + ITEM_DATA, ddata) &&
+            ddata == context_.item_data.object && probe.capture(io, cur, false) &&
+            probe.life(io) == Life::Alive) {
+            // Валидный чужой — владение снимаем БЕЗ записи (адрес не наш).
+            ditem_ = {};
+            ditem_dbg_ = 2;
+            return;
+        }
+        ditem_.sample_value(addr, cur);
+        ditem_dbg_ = ditem_.put(io, live_item) ? 1 : 3;
+    }
+
     // §4.28: ведение инвентарных целей + зонд, когда вести нечего. Зовётся и
     // из основной ветки, и из блэкаута (§4.27): пояс стабилен и от FP-цепи не
     // зависит. Best-effort и молча: неуспех виден строкой лога по inv_state_,
@@ -1406,6 +1454,7 @@ template<class IO> class Controller {
         }
         inv_state_ = inv_count_ == 0 ? -1 : (any_foreign ? 1 : 0);
         maintain_kjw(want_skin, want_level);   // §4.35: пиннинг kJw — каждый тик
+        maintain_ditem(live_item);            // §4.38: заливка ditem — каждый тик
     }
 
     // §4.29: ведение piece вьюхи. Зовётся ПОСЛЕ read_live_state: детектор
@@ -1544,6 +1593,10 @@ template<class IO> class Controller {
         kjw_item_ = {};
         kjw_prev_ = 0;
         kjw_slot_ = -1;
+        // §4.38: ditem — оригинал (null/foreign-as-found) слотом.
+        ok = ditem_.restore(io) && ok;
+        ditem_ = {};
+        ditem_dbg_ = 0;
         return ok;
     }
 
@@ -1753,6 +1806,14 @@ template<class IO> class Controller {
         } else {
             ap("0");
         }
+        // §4.38: kJw=PW+0x110? (ditem — это (PW+0x110)+0x10). +0x18 записи
+        // (pw+0x128) == gate подтверждает kJw-форму на поле PW.
+        uint32_t pw128v = 0;
+        if (pw && io.read(pw + PLAYERWEAPON_DRAW_ITEM - KJW_ITEM + KJW_SLOT, pw128v))
+            std::snprintf(v, sizeof(v), " pw128=%x", pw128v);
+        else
+            std::snprintf(v, sizeof(v), " pw128=x");
+        ap(v);
         ap(" fpw=");  dump_hex(pw ? pw + PLAYERWEAPON_FP_MANAGER : 0, v, sizeof(v)); ap(v);
         ap(" hnd=");  dump_hex(pw ? pw + PLAYERWEAPON_SKIN_HANDLE + SKINHANDLE_MODEL : 0, v, sizeof(v)); ap(v);
         // §4.28: зонд пояса — живость якорей data:client:warr:pw (§4.32: 4-й —
@@ -1852,6 +1913,8 @@ template<class IO> class Controller {
         ap(v);
         const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
         std::snprintf(v, sizeof(v), " qj=%d", qj);
+        ap(v);
+        std::snprintf(v, sizeof(v), " df=%d", ditem_dbg_);   // §4.38
         ap(v);
         // §4.36: настоящий kJw (аргумент via, x20) — НЕ za-декой: сессия 39
         // #6->#7 — дроу под пином qj=1 построил -1, запись игрой не читается.
@@ -2023,6 +2086,9 @@ public:
         kjw_item_ = {};
         kjw_prev_ = 0;
         kjw_slot_ = -1;
+        // §4.38: ditem забывается БЕЗ записи (адрес из прошлой жизни).
+        ditem_ = {};
+        ditem_dbg_ = 0;
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
         scan_request_ = false;

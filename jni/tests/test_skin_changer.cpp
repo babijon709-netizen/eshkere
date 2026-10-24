@@ -1966,6 +1966,9 @@ void test_dump_carries_kjw_shape() {
     f.io.put<uint64_t>(gate_a + PLAYER_GATE_B, gate_b);
     f.io.put<uint8_t>(gate_b + PLAYER_GATE_C, 7);
     f.io.put<int16_t>(pw + PLAYERWEAPON_NUMBER_CACHE, -1);
+    // §4.33: живой слот = 26 — пустой слот kjw_null матчится (zh=1a, za),
+    // а живой kjw_slot (слот 25) в zh не попадает.
+    f.io.put<uint32_t>(pw + PLAYERWEAPON_DRAW_SLOT, 26);
     for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
     assert(std::strstr(f.c.ui().dump_text, "inv=1:1:0:1:") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "k1z1") != nullptr);
@@ -1973,6 +1976,9 @@ void test_dump_carries_kjw_shape() {
     assert(std::strstr(f.c.ui().dump_text, "u93=1") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "flg=7") != nullptr);
     assert(std::strstr(f.c.ui().dump_text, "nc=-1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "zh=1a") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "zhm=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "za=55000") != nullptr);
     std::printf("  dump: kjw shape k/z + ks/u93/flg/nc gate fields\n");
 }
 

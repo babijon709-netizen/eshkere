@@ -700,6 +700,15 @@ template<class IO> class Controller {
     int inv_dbg_kjw_ = 0, inv_dbg_kjw_null_ = 0;
     int32_t inv_dbg_kjw_skin_ = 0;
     bool inv_dbg_kjw_skin_ok_ = false;
+    // §4.33: zh — ПУСТОЙ kJw-слот, совпавший с живым слотом дроу (pw+0x150):
+    // держит ли обнулённая запись именно наш слот. zhm — сколько таких
+    // совпадений (слоты уникальны — >1 подозрительно), za — адрес первого
+    // (стабильность адреса между проходами = запись инъектируема).
+    int64_t inv_live_slot_ = -1;
+    bool inv_dbg_zh_ok_ = false;
+    uint32_t inv_dbg_zh_ = 0;
+    int inv_dbg_zhm_ = 0;
+    uint64_t inv_dbg_za_ = 0;
     bool inv_dbg_active_ = false;   // зонд идёт: validate считает промахи
     int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
@@ -1045,6 +1054,15 @@ template<class IO> class Controller {
         uint32_t slot = 0;
         if (!io.read(p + KJW_SLOT, slot) || slot > 64) return;
         if (inv_dbg_kjw_null_ < 999) ++inv_dbg_kjw_null_;
+        // §4.33: пустой слот живого слота дроу — кандидат на инъекцию Item.
+        if (inv_live_slot_ >= 0 && slot == (uint32_t)inv_live_slot_) {
+            if (inv_dbg_zhm_ < 999) ++inv_dbg_zhm_;
+            if (!inv_dbg_zh_ok_) {
+                inv_dbg_zh_ok_ = true;
+                inv_dbg_zh_ = slot;
+                inv_dbg_za_ = p;
+            }
+        }
     }
 
     // §4.28: один проход зонда. Три якоря: прямой массив пояса
@@ -1066,6 +1084,10 @@ template<class IO> class Controller {
         inv_dbg_pw_ = false;
         inv_dbg_kjw_ = inv_dbg_kjw_null_ = 0;
         inv_dbg_kjw_skin_ok_ = false;
+        inv_live_slot_ = -1;
+        inv_dbg_zh_ok_ = false;
+        inv_dbg_zhm_ = 0;
+        inv_dbg_za_ = 0;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1082,6 +1104,9 @@ template<class IO> class Controller {
         const uint64_t pw = context_.weapon.object;
         inv_dbg_pw_ = pw >= 0x10000;
         if (inv_dbg_pw_) {
+            uint32_t ls = 0;
+            if (io.read(pw + PLAYERWEAPON_DRAW_SLOT, ls))  // §4.33: живой слот
+                inv_live_slot_ = (int64_t)ls;              // для zh-матчинга
             for (uint64_t off = 0x10; off <= 0x1F8; off += 8) {
                 uint64_t p = 0;
                 if (!pointer(io, pw + off, p) || p < 0x10000) continue;
@@ -1104,7 +1129,9 @@ template<class IO> class Controller {
         // §4.31: бюджет L2 16->32 (худший проход ~1.6k чтений — в пределах
         // тика), дедуп повторов и пропуск уже известных адресов (якоря,
         // FP-Item/ItemData/кэш дроу — их сканировать нечего).
-        uint64_t l2[32];
+        // §4.33: 32->48 — сессия 47 давит o33 (переполнение на единицу,
+        // последний контейнер не сканируется — k=0 может врать).
+        uint64_t l2[48];
         int l2_n = 0;
         const int l2_cap = (int)(sizeof(l2) / sizeof(l2[0]));
         for (int a = 0; a < 2; ++a) {
@@ -1646,6 +1673,22 @@ template<class IO> class Controller {
             std::snprintf(v, sizeof(v), " nc=%d", (int)nc);
         else
             std::snprintf(v, sizeof(v), " nc=x");
+        ap(v);
+        // §4.33: zh — пустой kJw-слот живого слота (hex как gate=, x — нет),
+        // zhm — сколько таких, za — адрес первого. zh трекает gate= 19->1a
+        // между срезами = слоты настоящие, следующий шаг — инъекция Item.
+        if (inv_dbg_zh_ok_)
+            std::snprintf(v, sizeof(v), " zh=%x", inv_dbg_zh_);
+        else
+            std::snprintf(v, sizeof(v), " zh=x");
+        ap(v);
+        std::snprintf(v, sizeof(v), " zhm=%d", inv_dbg_zhm_);
+        ap(v);
+        if (inv_dbg_zh_ok_)
+            std::snprintf(v, sizeof(v), " za=%llx",
+                          (unsigned long long)inv_dbg_za_);
+        else
+            std::snprintf(v, sizeof(v), " za=x");
         ap(v);
     }
 

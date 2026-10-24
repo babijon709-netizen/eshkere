@@ -90,7 +90,7 @@ private:
     int  block_ = -1;   // последняя сообщённая ПРИЧИНА (SkinBlock), не стадия
     // stale_/handle_/local_/item_ стартуют с «неизвестно», чтобы первый же тик
     // отчитался о состоянии вьюхи, ассета, рабочей копии piece и Oxide.Item.
-    int  stale_ = -1, handle_ = -1, local_ = -2, item_ = -2, refill_ = -1;
+    int  stale_ = -1, handle_ = -1, local_ = -2, item_ = -2, refill_ = -1, inv_ = -2;
     // §4.22: resets_ стартует с -1 — первое наблюдение числа сбросов
     // запоминается молча (лог открылся после события — не повод врать, что
     // «только что сбросили»). quarantine_ стартует с -2, чтобы первое же
@@ -113,7 +113,7 @@ private:
     }
     void clear_snapshot() {
         enabled_ = -1; skin_ = level_ = count_ = -2; known_ = -1; block_ = -1;
-        stale_ = handle_ = -1; local_ = -2; item_ = -2; refill_ = -1;
+        stale_ = handle_ = -1; local_ = -2; item_ = -2; refill_ = -1; inv_ = -2;
         resets_ = -1; quarantine_ = -2;
         shell_bucket_ = -1; stuck_bucket_ = -1; cache_bucket_ = -1; stall_bucket_ = -1;
         shell_state_[0] = '\0';
@@ -404,6 +404,15 @@ inline void Writer::note(const Snapshot& s) {
         item_ = s.ui.item_state;
         say(s, item_ == 0 ? "скин предмета (Oxide.Item): наш индекс — дроп и сохранение несут его"
                           : "скин предмета (Oxide.Item): ОТЛИЧАЕТСЯ (игра перезаписала — восстанавливаем)");
+    }
+
+    // §4.28: стабильный инвентарный Item — источник, с которого дроу копирует
+    // скин. Строка «наш индекс» означает, что зонд нашёл пояс и дроу понесут
+    // наш скин; тишина при включённой функции — зонд ничего не нашёл.
+    if (s.ui.inv_state >= 0 && s.ui.inv_state != inv_) {
+        inv_ = s.ui.inv_state;
+        say(s, inv_ == 0 ? "инвентарный Item: наш индекс — дроу копирует его в свежий экземпляр"
+                         : "инвентарный Item: ОТЛИЧАЕТСЯ (серверная правда — перезаписываем)");
     }
 
     const int handle = s.ui.handle_live ? 1 : 0;

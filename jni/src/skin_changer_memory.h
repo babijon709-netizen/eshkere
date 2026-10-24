@@ -629,6 +629,38 @@ template<class IO> class Controller {
     Identity draw_item_{};
     Slot<int32_t> skin_item2_;
     Slot<uint8_t> level_item2_;
+    // §4.28: ПЯТЫЙ источник — стабильный инвентарный Oxide.Item. Каждый дроу
+    // на сервере строит вьюху из -1, хотя все четыре точки держат наш индекс:
+    // via(kJw)->drawSV пишет серверную piece в SyncVar и тут же кормит её в
+    // LTI — окно нулевое, снаружи не вклиниться (§4.27 это доказал нулем
+    // побед). А дроп+подбор лечит — подбор кладёт наш индекс в инвентарный
+    // экземпляр, и дроу копируют его. Значит, свежий Item каждого дроу
+    // создаётся КОПИЕЙ инвентарного (skin -1 сервера), и писать надо его:
+    // одна запись — все будущие дроу копируют наше, без гонки. Раскладка
+    // контейнеров PlayerInventoryData/Client неизвестна (дампа здесь нет),
+    // поэтому адрес ищется зондированием: массив/поле, чей элемент — живой
+    // Oxide.Item ровно нашего ItemData. Валидация — ТОЧНОЕ совпадение
+    // указателя ItemData (64 бита мимо не проходят) + стабильность klass:
+    // имя класса не сверяется (в бинаре оно может быть обфусцировано, а
+    // ItemData уже доказывает, что это наш предмет). Пишем только в
+    // подтверждённый два тика подряд адрес; транзиенты FP-цепи и кэша дроу
+    // исключены (их ведут копии 3–4, а ротация каждый дроу давала бы churn).
+    struct InvTarget {
+        uint64_t ref = 0;    // адрес, ПО КОТОРОМУ лежит указатель на Item
+                             // (слот массива либо поле структуры — ресинк
+                             // меняет экземпляр, ссылка перечитывается)
+        Identity id;         // последний подтверждённый экземпляр
+        Slot<int32_t> skin;
+        Slot<uint8_t> level;
+    };
+    static constexpr int kMaxInv = 4;
+    InvTarget inv_[kMaxInv]{};
+    int inv_count_ = 0;
+    // Кандидаты зонда с прошлого тика: усыновление — только подтверждённым
+    // дважды (транзиент, мелькнувший один тик, не пишется никогда).
+    uint64_t inv_probe_cands_[kMaxInv * 2]{};
+    int inv_probe_n_ = 0;
+    int inv_state_ = -1;     // инвентарный Item: -1 нет/не найден, 0 наш, 1 чужой
 
     bool rewrite_request_ = false; // одноразовый запрос «переписать обе копии»
     bool scan_request_ = false;    // одноразовый запрос перечитать список
@@ -910,6 +942,128 @@ template<class IO> class Controller {
         return true;
     }
 
+    // §4.28: кандидат — живой экземпляр ровно нашего ItemData, не транзиент.
+    // Валидация — ТОЧНОЕ совпадение указателя ItemData: 64 бита мимо не
+    // проходят, имя класса не сверяется (в бинаре оно может быть
+    // обфусцировано, а ItemData уже доказывает наш предмет).
+    bool validate_inv_item(uint64_t obj) {
+        using namespace go_active;
+        if (obj < 0x10000 || !context_.item_data.object) return false;
+        if (obj == context_.item.object || obj == draw_item_.object) return false;
+        uint64_t data = 0;
+        if (!pointer(io, obj + ITEM_DATA, data) || data != context_.item_data.object)
+            return false;
+        uint64_t klass = 0;
+        if (!pointer(io, obj, klass) || klass < 0x10000) return false;
+        int32_t skin = 0;
+        uint8_t level = 0;
+        return io.read(obj + ITEM_SKIN, skin) && io.read(obj + ITEM_SKIN_LEVEL, level);
+    }
+
+    // §4.28: один проход зонда. Якоря — PlayerInventoryData/Client (оффсеты те
+    // же, что у ESP model info — рабочие на этом билде). Поля 0x10..0xF8:
+    // прямое Item-значение либо массив (длина 1..32) с нашим Item внутри.
+    // Запоминаются АДРЕСА ССЫЛОК (поле/слот), а не экземпляры: ресинк меняет
+    // экземпляр, ссылка перечитывается каждый тик. Найденное — в
+    // inv_probe_cands_; усыновление (дважды подтверждённым) — в maintain().
+    void probe_inventory() {
+        using namespace go_active;
+        inv_probe_n_ = 0;
+        const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
+        if (!context_.player.object) return;
+        uint64_t inv = 0;
+        if (!pointer(io, context_.player.object + PLAYER_INVENTORY, inv) || inv < 0x10000)
+            return;
+        uint64_t anchors[2] = {};
+        pointer(io, inv + INV_PLAYER_INVENTORY_DATA, anchors[0]);
+        pointer(io, inv + INV_PLAYER_INVENTORY_CLIENT, anchors[1]);
+        for (int a = 0; a < 2; ++a) {
+            const uint64_t base = anchors[a];
+            if (base < 0x10000) continue;
+            for (uint64_t off = 0x10; off <= 0xF8; off += 8) {
+                uint64_t p = 0;
+                if (!pointer(io, base + off, p) || p < 0x10000) continue;
+                if (inv_probe_n_ < cap && validate_inv_item(p))
+                    inv_probe_cands_[inv_probe_n_++] = base + off;
+                int32_t len = 0;
+                if (!io.read(p + IL2CPP_ARRAY_LENGTH, len) || len <= 0 || len > 32) continue;
+                for (int32_t i = 0; i < len; ++i) {
+                    const uint64_t slot =
+                        p + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8u;
+                    uint64_t e = 0;
+                    if (!pointer(io, slot, e)) continue;
+                    if (inv_probe_n_ >= cap) return;
+                    if (validate_inv_item(e)) inv_probe_cands_[inv_probe_n_++] = slot;
+                }
+            }
+        }
+    }
+
+    // §4.28: ведение инвентарных целей + зонд, когда вести нечего. Зовётся и
+    // из основной ветки, и из блэкаута (§4.27): пояс стабилен и от FP-цепи не
+    // зависит. Best-effort и молча: неуспех виден строкой лога по inv_state_,
+    // а не стадией.
+    void maintain_inventory(int16_t want_skin, uint8_t want_level) {
+        using namespace go_active;
+        bool any_foreign = false;
+        for (int i = 0; i < inv_count_;) {
+            InvTarget& t = inv_[i];
+            uint64_t obj = 0;
+            Identity id;
+            if (!pointer(io, t.ref, obj) || !validate_inv_item(obj) ||
+                !id.capture(io, obj, false)) {
+                // Ссылка умерла (фрибут/ресинк унёс контейнер) — снять молча:
+                // слоты чистятся без записи, чужой адрес не трогаем.
+                for (int j = i; j + 1 < inv_count_; ++j) inv_[j] = inv_[j + 1];
+                inv_[--inv_count_] = {};
+                continue;
+            }
+            t.id = id;
+            int32_t cur_skin = 0;
+            uint8_t cur_level = 0;
+            if (io.read(obj + ITEM_SKIN, cur_skin) &&
+                io.read(obj + ITEM_SKIN_LEVEL, cur_level)) {
+                t.skin.sample_value(obj + ITEM_SKIN, cur_skin);
+                t.level.sample_value(obj + ITEM_SKIN_LEVEL, cur_level);
+                t.skin.put(io, (int32_t)want_skin);
+                t.level.put(io, want_level);
+                if (cur_skin != (int32_t)want_skin) any_foreign = true;
+            }
+            ++i;
+        }
+        if (inv_count_ == 0) {
+            uint64_t prev[sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0])];
+            const int prev_n = inv_probe_n_;
+            for (int i = 0; i < prev_n; ++i) prev[i] = inv_probe_cands_[i];
+            probe_inventory();
+            for (int i = 0; i < inv_probe_n_ && inv_count_ < kMaxInv; ++i) {
+                bool confirmed = false;
+                for (int j = 0; j < prev_n; ++j)
+                    if (prev[j] == inv_probe_cands_[i]) { confirmed = true; break; }
+                if (!confirmed) continue;
+                uint64_t obj = 0;
+                Identity id;
+                if (!pointer(io, inv_probe_cands_[i], obj) ||
+                    !validate_inv_item(obj) || !id.capture(io, obj, false))
+                    continue;
+                InvTarget& t = inv_[inv_count_++];
+                t.ref = inv_probe_cands_[i];
+                t.id = id;
+                int32_t cur_skin = 0;
+                uint8_t cur_level = 0;
+                if (io.read(obj + ITEM_SKIN, cur_skin) &&
+                    io.read(obj + ITEM_SKIN_LEVEL, cur_level)) {
+                    t.skin.sample_value(obj + ITEM_SKIN, cur_skin);
+                    t.level.sample_value(obj + ITEM_SKIN_LEVEL, cur_level);
+                    t.skin.put(io, (int32_t)want_skin);
+                    t.level.put(io, want_level);
+                    if (cur_skin != (int32_t)want_skin) any_foreign = true;
+                }
+            }
+        }
+        inv_state_ = inv_count_ == 0 ? -1 : (any_foreign ? 1 : 0);
+    }
+
     bool restore_all() {
         // Все три точки равноправны: возвращаем оригиналы в каждую — но ТОЛЬКО
         // пока контекст жив. После смерти игрока/мира адреса слотов указывают
@@ -947,6 +1101,23 @@ template<class IO> class Controller {
             skin_item2_ = {}; level_item2_ = {};
         }
         draw_item_ = {};
+        // §4.28: инвентарные цели — живым возвращается оригинал, мёртвые
+        // ссылки чистятся без записи; в любом случае цели забываются (новый
+        // контекст прозондируется заново).
+        for (int i = 0; i < inv_count_; ++i) {
+            InvTarget& t = inv_[i];
+            uint64_t obj = 0;
+            if (pointer(io, t.ref, obj) && validate_inv_item(obj)) {
+                ok = t.level.restore(io) && ok;
+                ok = t.skin.restore(io) && ok;
+            } else {
+                t.skin = {}; t.level = {};
+            }
+        }
+        for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
+        inv_count_ = 0;
+        inv_probe_n_ = 0;
+        inv_state_ = -1;
         return ok;
     }
 
@@ -1207,7 +1378,8 @@ public:
         return skin_.owned || level_.owned || skin_local_.owned || level_local_.owned ||
                skin_item_.owned || level_item_.owned ||
                skin_item2_.owned || level_item2_.owned ||
-               head_lo_local_.owned || head_hi_local_.owned;
+               head_lo_local_.owned || head_hi_local_.owned ||
+               inv_count_ > 0;
     }
     // Одноразовый запрос перезаписать обе копии piece, даже если значения уже
     // совпадают (меню «Переписать обе копии» / one-shot CLI `--rebuild`). Сама
@@ -1237,6 +1409,8 @@ public:
         info.local_state = local_state_;
         info.local_refill = head_lo_local_.owned;
         info.item_state = item_state_;
+        info.inv_state = inv_state_;
+        info.inv_count = inv_count_;
         info.fp_build_resets = reset_count_;
         info.quarantine_skin = quarantine_skin_;
         // §4.24: наблюдение за панцирём и беспанцирным застреванием — лог
@@ -1265,6 +1439,10 @@ public:
         skin_item_ = {}; level_item_ = {};
         skin_item2_ = {}; level_item2_ = {}; draw_item_ = {};
         head_lo_local_ = {}; head_hi_local_ = {};
+        for (int i = 0; i < kMaxInv; ++i) inv_[i] = {};
+        inv_count_ = 0;
+        inv_probe_n_ = 0;
+        inv_state_ = -1;
         context_ = {}; weapon_cache_ = 0;
         rewrite_request_ = false;
         scan_request_ = false;
@@ -1530,6 +1708,8 @@ public:
                             level_item2_.put(io, want_level);
                         }
                     }
+                    // §4.28: пояс стабилен и от FP-цепи не зависит — ведём и в блэкауте.
+                    maintain_inventory(want_skin, want_level);
                 }
             }
             return;
@@ -1674,6 +1854,11 @@ public:
                 if (!level_item2_.put(io, want_level)) { status = Status::Failed; stage_ = 23; return; }
             }
         }
+
+        // §4.28: пятый источник — инвентарный Item (зонд + ведение). Дроу
+        // копирует скин с него в свежий экземпляр, SyncVar и вьюху — одна
+        // запись здесь выигрывает все будущие дроу без гонки.
+        maintain_inventory(want_skin, want_level);
 
         // Копия 2 — рабочая (+0xC0): из неё hbr.pMZ подаёт piece в
         // FPManager.Kxi -> CreateFPWeapon на дроу. Пишем только когда голова

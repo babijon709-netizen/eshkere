@@ -454,6 +454,42 @@ void test_session_change_forgets_without_write() {
 }
 
 // Другой FPObject -> другой Item -> другой ItemData, в котором один скин.
+// ---- §4.28: инвентарь для зонда (не в дефолтной фикстуре!) ------------------
+// Поясной массив в PlayerInventoryData+0x30: наш стабильный экземпляр (skin -1
+// сервера) + чужой ствол. Дефолтная фикстура без инвентаря — старые тесты
+// счётчиков записей не трогаем, зонд там спит.
+constexpr uint64_t inv        = 0x46000;
+constexpr uint64_t inv_data   = 0x47000;
+constexpr uint64_t inv_client = 0x48000;
+constexpr uint64_t belt       = 0x49000;
+constexpr uint64_t belt_item  = 0x4A000;
+constexpr uint64_t belt_other = 0x4B000;
+constexpr uint64_t other_data = 0x4C000;
+constexpr uint64_t belt_item2 = 0x4D000;   // ротация пояса (ресинк)
+void add_inventory(Fixture& f, int32_t skin = -1) {
+    using namespace go_active;
+    f.io.object(inv, "PlayerInventory", "Oxide");
+    f.io.object(inv_data, "PlayerInventoryData", "Oxide");
+    f.io.object(inv_client, "PlayerInventoryClient", "Oxide");
+    f.io.put<uint64_t>(player + PLAYER_INVENTORY, inv);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_DATA, inv_data);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_CLIENT, inv_client);
+    f.io.plain(belt);
+    f.io.put<int32_t>(belt + IL2CPP_ARRAY_LENGTH, 2);
+    f.io.put<uint64_t>(inv_data + 0x30, belt);
+    f.io.plain(belt_item);
+    f.io.put<uint64_t>(belt_item + ITEM_DATA, item_data);
+    f.io.put<int32_t>(belt_item + ITEM_SKIN, skin);
+    f.io.put<uint8_t>(belt_item + ITEM_SKIN_LEVEL, 0);
+    f.io.plain(other_data);
+    f.io.plain(belt_other);
+    f.io.put<uint64_t>(belt_other + ITEM_DATA, other_data);
+    f.io.put<int32_t>(belt_other + ITEM_SKIN, 7);
+    f.io.put<uint8_t>(belt_other + ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(belt + IL2CPP_ARRAY_FIRST_ELEMENT + 0, belt_item);
+    f.io.put<uint64_t>(belt + IL2CPP_ARRAY_FIRST_ELEMENT + 8, belt_other);
+}
+
 void switch_to_spear(Fixture& f) {
     constexpr uint64_t item2 = 0x70000, data2 = 0x71000, arr2 = 0x72000, skin_x = 0x73000;
     constexpr uint64_t player_ = player;
@@ -1549,6 +1585,144 @@ void test_rotation_keeps_list_without_restore() {
     std::printf("  rotation: same gun, no restore/rescan, new instance owned\n");
 }
 
+// ---- 45. §4.28: зонд находит пояс и держит его ------------------------------
+// Усыновление — дважды подтверждённым (первый тик только собирает
+// кандидатов), чужой ствол в том же массиве не трогается, выключение
+// возвращает серверное значение.
+void test_inv_probe_adopts_and_writes() {
+    Fixture f;
+    add_inventory(f);
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Active);
+    assert(f.c.ui().inv_count == 0);   // первый проход — только кандидаты
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == -1);
+    f.tick(f.settings(true, 1));       // второй проход — усыновление + запись
+    assert(f.c.ui().inv_count == 1);
+    assert(f.c.ui().inv_state == 1);   // был чужой (-1 сервера)
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    assert(f.io.value<int32_t>(belt_other + go_active::ITEM_SKIN) == 7);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_state == 0);   // устоялось — наш индекс
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 1));
+    assert(f.io.writes == before);     // steady state: ноль записей
+    f.tick(f.settings(false));
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == -1);
+    assert(!f.c.has_state());
+    std::printf("  inv probe: belt adopted on 2nd tick, held, restored on disable\n");
+}
+
+// ---- 46. §4.28: мусор и транзиенты не усыновляются --------------------------
+// В массиве только FP-экземпляр (его ведёт копия 3) + битый указатель:
+// целей ноль, записей сверх штатных трёх нет.
+void test_inv_ignores_garbage_and_transients() {
+    Fixture f;
+    add_inventory(f);
+    // Поясной слот затираем транзиентом FP-цепи, второй — мусором.
+    f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, item);
+    f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 8, 0x99999);
+    f.io.put<uint64_t>(inv_data + 0x48, 0x88888);   // прямое поле-мусор
+    f.tick(f.settings(true, 1));
+    const unsigned standard = f.io.writes;
+    assert(standard == 3);             // SV/рабочая/FP-Item, как без зонда
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 0);
+    assert(f.c.ui().inv_state == -1);
+    assert(f.io.writes == standard);
+    assert(f.live_item_skin() == 1);   // транзиент ведётся копией 3, как раньше
+    std::printf("  inv probe: garbage and FP transient ignored, 0 extra writes\n");
+}
+
+// ---- 47. §4.28: ротация пояса и ресинк лечатся без перезонда ----------------
+// Ссылка (слот массива) та же — новый экземпляр подхватывается сам, оригинал
+// нового — его серверное значение. Переписка на месте — тоже следующий тик.
+void test_inv_rotation_and_resync_healed() {
+    Fixture f;
+    add_inventory(f);
+    f.tick(f.settings(true, 1));
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    // Сервер подменил экземпляр в том же слоте (skin -1).
+    f.io.plain(belt_item2);
+    f.io.put<uint64_t>(belt_item2 + go_active::ITEM_DATA, item_data);
+    f.io.put<int32_t>(belt_item2 + go_active::ITEM_SKIN, -1);
+    f.io.put<uint8_t>(belt_item2 + go_active::ITEM_SKIN_LEVEL, 0);
+    f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, belt_item2);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);   // та же ссылка, перезонда нет
+    assert(f.io.value<int32_t>(belt_item2 + go_active::ITEM_SKIN) == 1);
+    // Сервер переписал значение на месте — следующий тик возвращает наше.
+    f.io.put<int32_t>(belt_item2 + go_active::ITEM_SKIN, -1);
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(belt_item2 + go_active::ITEM_SKIN) == 1);
+    assert(f.c.ui().inv_state == 1);   // строка борьбы видна в логе
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_state == 0);
+    // Оригинал нового экземпляра — его -1, не старый.
+    f.tick(f.settings(false));
+    assert(f.io.value<int32_t>(belt_item2 + go_active::ITEM_SKIN) == -1);
+    std::printf("  inv probe: rotation re-owned, resync healed, original per instance\n");
+}
+
+// ---- 48. §4.28: смерть ссылки — снять молча, появление — прозондировать ----
+// Слот обнулился (контейнер уехал): цель снимается без записи по мёртвому
+// адресу; слот вернулся — усыновление снова за два тика.
+void test_inv_drop_and_reprobe() {
+    Fixture f;
+    add_inventory(f);
+    f.tick(f.settings(true, 1));
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);
+    f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, 0);
+    const unsigned before = f.io.writes;
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 0);
+    assert(f.c.ui().inv_state == -1);
+    assert(f.io.writes == before);     // по мёртвой ссылке — ни записи
+    f.io.put<uint64_t>(belt + go_active::IL2CPP_ARRAY_FIRST_ELEMENT + 0, belt_item);
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 0);   // первый проход — кандидаты
+    f.tick(f.settings(true, 1));
+    assert(f.c.ui().inv_count == 1);   // второй — снова ведём
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    std::printf("  inv probe: dead ref dropped silently, re-adopted in 2 ticks\n");
+}
+
+// ---- 49. §4.28: пояс ведётся и в блэкауте -----------------------------------
+// Пояс стабилен и от FP-цепи не зависит: стадия 9 не останавливает ведение.
+void test_inv_maintained_in_blackout() {
+    Fixture f;
+    add_inventory(f);
+    f.tick(f.settings(true, 1));
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    f.io.put<uint64_t>(fp_object + go_active::FPOBJECT_ITEM, 0);   // стадия 9
+    f.io.put<uint8_t>(fp_object + go_active::FPOBJECT_SHOWN, 0);
+    f.io.put<int32_t>(belt_item + go_active::ITEM_SKIN, -1);        // ресинк в блэкауте
+    f.tick(f.settings(true, 1));
+    assert(f.c.status == viewmodel::Status::Waiting);
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    assert(f.c.ui().inv_count == 1);
+    std::printf("  inv probe: maintained through stage-9 blackout\n");
+}
+
+// ---- 50. §4.28: смена ствола — пояс возвращён, новый зондируется ------------
+// Старый поясной экземпляр чужому ItemData нового ствола не подходит:
+// restore_all возвращает ему оригинал, цели забываются.
+void test_inv_restored_on_switch() {
+    Fixture f;
+    add_inventory(f);
+    f.tick(f.settings(true, 1));
+    f.tick(f.settings(true, 1));
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == 1);
+    switch_to_spear(f);                // новый ствол, пояса у него в фикстуре нет
+    f.tick(f.settings(true, 0));
+    assert(f.io.value<int32_t>(belt_item + go_active::ITEM_SKIN) == -1);
+    assert(f.c.ui().inv_count == 0);   // копьё без пояса — зонд молча спит
+    assert(f.c.ui().inv_state == -1);
+    std::printf("  inv probe: old belt restored on switch, new gun silent\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -1602,6 +1776,12 @@ int main() {
     test_blackout_rewrite_heals_server_wipe();
     test_blackout_skips_dead_weapon_and_early_stages();
     test_rotation_keeps_list_without_restore();
+    test_inv_probe_adopts_and_writes();
+    test_inv_ignores_garbage_and_transients();
+    test_inv_rotation_and_resync_healed();
+    test_inv_drop_and_reprobe();
+    test_inv_maintained_in_blackout();
+    test_inv_restored_on_switch();
     std::printf("OK\n");
     return 0;
 }

@@ -2049,6 +2049,69 @@ void test_kjw_inject_stale_overwrite() {
     std::printf("  kjw: stale-overwrite injects live FP-Item, restores stale\n");
 }
 
+// ---- §4.35: пиннинг kJw через холстер ----------------------------------------
+// Холстер (FP мёртв, блэкаут): пин ДЕРЖИМ, а не снимаем — иначе следующий
+// дроу строится из null (§4.34, сессия 34). Ревайв — тот же пин, без
+// пере-усыновления.
+void test_kjw_pin_survives_holster() {
+    Fixture f;
+    add_kjw_null_only(f);
+    using namespace go_active;
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    // Холстер: цепь FP мертва.
+    f.io.put<uint64_t>(fp_object + FPOBJECT_ITEM, 0);
+    f.io.put<uint8_t>(fp_object + FPOBJECT_SHOWN, 0);
+    for (int i = 0; i < 5; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    // Ревайв: пин на месте, пере-усыновления не было.
+    f.io.put<uint64_t>(fp_object + FPOBJECT_ITEM, item);
+    f.io.put<uint8_t>(fp_object + FPOBJECT_SHOWN, 1);
+    for (int i = 0; i < 10; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    assert(std::strstr(f.c.ui().dump_text, "qj=1") != nullptr);
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == 0);
+    std::printf("  kjw: pin survives holster, restores on disable\n");
+}
+
+// Ресинк ротировал в запись свежий -1 экземпляр (тот же ItemData): пин
+// держим (НЕ перевливаем живой), свежий перекрашиваем прямо в записи.
+void test_kjw_pin_repaints_resync() {
+    Fixture f;
+    add_kjw_null_only(f);
+    using namespace go_active;
+    f.io.plain(item2);
+    f.io.put<uint64_t>(item2 + ITEM_DATA, item_data);
+    f.io.put<int32_t>(item2 + ITEM_SKIN, -1);
+    f.io.put<uint8_t>(item2 + ITEM_SKIN_LEVEL, 0);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    // Ресинк: игра положила в запись свежий экземпляр.
+    f.io.put<uint64_t>(kjw_inj + KJW_ITEM, item2);
+    for (int i = 0; i < 3; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item2);
+    assert(f.io.value<int32_t>(item2 + ITEM_SKIN) == 1);
+    std::printf("  kjw: pin keeps resync instance, repaints it\n");
+}
+
+// Нечитаемая запись (умирающий мир): снимаем молча БЕЗ записи, оригинал
+// не трогаем — выключение после этого в запись не пишет.
+void test_kjw_pin_drops_unreadable() {
+    Fixture f;
+    add_kjw_null_only(f);
+    using namespace go_active;
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    f.io.fail_read = kjw_inj + KJW_ITEM;
+    for (int i = 0; i < 3; ++i) f.tick(f.settings(true, 1));
+    f.io.fail_read = 0;
+    // Владение снято: restore при выключении писать не будет.
+    f.tick(f.settings(false));
+    assert(f.io.value<uint64_t>(kjw_inj + KJW_ITEM) == item);
+    std::printf("  kjw: unreadable pin drops without write\n");
+}
+
 void test_dump_carries_probe_shape() {
     Fixture f;
     add_inventory(f);
@@ -2134,6 +2197,9 @@ int main() {
     test_dump_carries_kjw_shape();
     test_kjw_inject_null_fill();
     test_kjw_inject_stale_overwrite();
+    test_kjw_pin_survives_holster();
+    test_kjw_pin_repaints_resync();
+    test_kjw_pin_drops_unreadable();
     std::printf("OK\n");
     return 0;
 }

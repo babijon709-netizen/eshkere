@@ -1265,9 +1265,36 @@ template<class IO> class Controller {
     // снять, прозондировать заново. Иначе бой: держать указатель на ЖИВОЙ
     // FP-Item (ротация per-draw и затирание игрой лечатся одной записью;
     // original при этом НЕ трогаем — restore вернёт честный null/stale).
-    void maintain_kjw(uint64_t live_item) {
-        if (live_item < 0x10000) {
-            if (kjw_item_.owned && !kjw_item_.restore(io)) kjw_item_ = {};
+    // §4.35: ведение kJw-инъекции — PINNING. Ошибка §4.34: снятие на холстере
+    // оставляло каждый дроу без покрытия (инжект жил только в hold-окне между
+    // усыновлением и холстером — сессия 34: qj=1 в hold, дроу строил из null).
+    // Теперь вживлённый Item ДЕРЖИМ через холстер: указатель из живой
+    // структуры игры для консервативного GC — корень, Item не освобождается
+    // (а освобождённый-но-нетронутый читается безопасно и несёт наш скин).
+    // Свежий FP-Item НЕ преследуем: в нём серверный -1, а в пине — наш индекс,
+    // запечённый копией 3 при hold. Снимаем только инвалид (ItemData чужой /
+    // переиспользование кучи / смена ствола-слота / нечитаемость), а ресинк,
+    // ротировавший сюда свежий -1, перекрашиваем прямо в пине (сирота:
+    // restore бессмысленен, Item мёртв для игры).
+    void maintain_kjw(int16_t want_skin, uint8_t want_level) {
+        using namespace go_active;
+        if (!kjw_item_.owned) return;   // усыновление — в зонде (§4.34)
+        if (inv_live_slot_ >= 0 && inv_live_slot_ != kjw_slot_) {
+            if (!kjw_item_.restore(io)) kjw_item_ = {};
+            kjw_prev_ = 0;
+            kjw_slot_ = -1;
+            return;
+        }
+        uint64_t cur = 0, data = 0;
+        const bool ok = kjw_item_.read(io, cur) && cur >= 0x10000 &&
+                        context_.item_data.object &&
+                        pointer(io, cur + ITEM_DATA, data) &&
+                        data == context_.item_data.object;
+        if (!ok) {
+            // Пин умер (фрибут/переиспользование/ресинк чужим) или мир
+            // умирает: restore пишет оригинал, только если там наш last, —
+            // мусор не трогаем; усыновление начнётся заново.
+            if (!kjw_item_.restore(io)) kjw_item_ = {};
             if (!kjw_item_.owned) {
                 kjw_item_ = {};
                 kjw_prev_ = 0;
@@ -1275,22 +1302,19 @@ template<class IO> class Controller {
             }
             return;
         }
-        if (!kjw_item_.owned) return;
-        if (inv_live_slot_ >= 0 && inv_live_slot_ != kjw_slot_) {
-            if (!kjw_item_.restore(io)) kjw_item_ = {};
-            kjw_prev_ = 0;
-            kjw_slot_ = -1;
-            return;
+        // Пин жив — перекрасить при расхождении (ресинк-ротация свежим -1).
+        int32_t skin = 0;
+        if (io.read(cur + ITEM_SKIN, skin) && skin != (int32_t)want_skin &&
+            io.write_heap(cur + ITEM_SKIN, (int32_t)want_skin)) {
+            int32_t back = 0;
+            io.read(cur + ITEM_SKIN, back);
         }
-        uint64_t cur = 0;
-        if (!kjw_item_.read(io, cur)) {
-            // Не читается — мир умирает: снять молча без записи.
-            kjw_item_ = {};
-            kjw_prev_ = 0;
-            kjw_slot_ = -1;
-            return;
+        uint8_t level = 0;
+        if (io.read(cur + ITEM_SKIN_LEVEL, level) && level != want_level &&
+            io.write_heap(cur + ITEM_SKIN_LEVEL, want_level)) {
+            uint8_t back = 0;
+            io.read(cur + ITEM_SKIN_LEVEL, back);
         }
-        if (cur != live_item) kjw_item_.put(io, live_item);
     }
 
     // §4.28: ведение инвентарных целей + зонд, когда вести нечего. Зовётся и
@@ -1363,7 +1387,7 @@ template<class IO> class Controller {
             }
         }
         inv_state_ = inv_count_ == 0 ? -1 : (any_foreign ? 1 : 0);
-        maintain_kjw(live_item);   // §4.34: ведение kJw-инъекции — каждый тик
+        maintain_kjw(want_skin, want_level);   // §4.35: пиннинг kJw — каждый тик
     }
 
     // §4.29: ведение piece вьюхи. Зовётся ПОСЛЕ read_live_state: детектор

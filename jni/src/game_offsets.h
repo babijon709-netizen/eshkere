@@ -476,6 +476,20 @@ inline constexpr std::uint64_t PLAYER_WEAPONS_ARRAY     = 0x1B8;
 // Oxide.PlayerInventory instance fields (dump.cs).
 inline constexpr std::uint64_t INV_PLAYER_INVENTORY_DATA = 0x20; // _playerInventoryData
 inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInventoryClient
+inline constexpr std::uint64_t INV_PLAYER_INVENTORY_SERVER = 0x30; // _playerInventoryServer (HZu/HcG)
+// PlayerInventoryServer (dump11978): гейт-цепочка HcG (vVT) и via.
+inline constexpr std::uint64_t INVSERVER_FLAGOBJ = 0x40; // объект флага HcG
+inline constexpr std::uint64_t INVSERVER_FLAGBIT = 0x49; // байт флага (от FLAGOBJ, HcG требует !=0)
+inline constexpr std::uint64_t INVSERVER_INV     = 0xD8; // <KXx> Inventory (результат HZu)
+inline constexpr std::uint64_t INVSERVER_SLOT    = 0xE8; // <KXb> int текущий слот (слот HcG)
+// Inventory (HZu): kJw[] в +0x10, длина/элементы — IL2CPP_ARRAY_LENGTH/FIRST.
+// Item (dump11978): входы HcG/LWM.
+inline constexpr std::uint64_t ITEM_KJX     = 0x28; // <KrK> kJX (LWM читает KRM)
+inline constexpr std::uint64_t ITEM_KRF     = 0x36; // <Krf> bool (HcG требует 0)
+inline constexpr std::uint64_t KJX_KRM      = 0x10; // <Krm> float (LWM требует <=0)
+inline constexpr std::uint64_t ITEMDATA_CFG = 0x88; // m_ConfigValues
+inline constexpr std::uint64_t CFG_DURMAX   = 0x10; // durabilityMax float (LWM требует >0)
+inline constexpr std::uint64_t CFG_UNBRK    = 0x14; // durabilityUnbreakable bool (LWM требует 0)
 
 // ---- Сверка с dump.cs (11949 релиз и 11957 бета) ----------------------------
 // Профиль ниже проверен против Il2CppDumper-дампов обоих билдов — имена классов

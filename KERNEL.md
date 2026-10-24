@@ -823,6 +823,24 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
     держит копию 4 выключенной — прежние тесты не затронуты; пин 0x120 в
     test_release_11978_offsets и в обоих профилях test_beta_profile_layout.
 
+30. **Дом kJw найден дизассемблером (dump11978, capstone-сессия, без чужих
+    записей): x20 = x1 (аргумент via), вызыватели vQR/DT/ZlK/vsn/vQn берут
+    kJw живым поиском `HZu()[slot]`, где HZu = inv+0x30→+0xD8, массив kJw[]
+    в H+0x10 (длина +0x18, элементы +0x20).** Класс kJw (TypeDefIndex 10139):
+    +0x10 Item KKO, +0x18 int KKT (слот), +0x20 Inventory KKK (родитель).
+    G4 (LzY 0x6E556A4) — буквально `kJw+0x10 != null`. G3 (vVT 0x7BC5A18) =
+    HcG && !LWM, целиком из памяти: HcG (0x6E7AAB4→0x6E9DBCC) требует
+    server+0x40→+0x49 != 0, H != null, слот server+0xE8 в диапазоне, kJw !=
+    null, LzY(kJw), Item+0x36 (Krf) == 0; LWM(Item) = durMax>0 && !unbrk &&
+    krm<=0 ([ItemData+0x88]+0x10/+0x14, [Item+0x28]+0x10). u93 = ItemData
+    +0x93 m_HasBlueprint (потому пушечный, не мировой). LhM — не гейт (обе
+    ветки сходятся к записи ditem @0x7BB77D8). Пустые выходы 0x7BB7878 (G3/
+    G5) и 0x7BB787C (G4) пекут piece skin=-1 с number из pw+0x128; cbz-выходы
+    на 0x7BB7D30 — throw, не запёк. §4.42: chain-walk kh (0-6 цепочка, 7
+    Item-null=G4, 8 Krf, 9 LWM, a LWM-цепь нечитаема, f PASS) + kv/kl/kf/kb/
+    ks/kj; остаточный неизвестный пост-LzY — interface-check 0x91F8890
+    (статики вне libil2cpp) и G5-виртуалка (кандидат на серверный unlock).
+
 ## 5. Скрытие процесса (stealth.h) — что новый код обязан учитывать
 
 - Процесс маскируется: cmdline = «/system/bin/vold …», comm = vold,

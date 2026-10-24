@@ -2355,6 +2355,91 @@ void test_probe_reports_foreign_x() {
     std::printf("  probe: foreign-X surfaces stale-kjw record, read-only\n");
 }
 
+constexpr uint64_t kh_server = 0x6C000, kh_s40 = 0x6D000, kh_hinv = 0x6D100;
+constexpr uint64_t kh_arr = 0x6D200, kh_kjw = 0x6D300;
+constexpr uint64_t kh_cfg = 0x6D400, kh_kjx = 0x6D500;
+
+// §4.42: полная HcG/LWM-цепь (PASS): сервер-флаг/H/массив/kJw/Item/Krf=0,
+// durMax>0 + unbreakable (LWM=false). Живой слот 1, HcG-слот 1.
+void add_kh_full(Fixture& f) {
+    using namespace go_active;
+    add_kjw_null_only(f, 1);
+    f.io.put<uint64_t>(inv + INV_PLAYER_INVENTORY_SERVER, kh_server);
+    f.io.plain(kh_server);
+    f.io.put<uint64_t>(kh_server + INVSERVER_FLAGOBJ, kh_s40);
+    f.io.put<int32_t>(kh_server + INVSERVER_SLOT, 1);
+    f.io.put<uint64_t>(kh_server + INVSERVER_INV, kh_hinv);
+    f.io.plain(kh_s40);
+    f.io.put<uint8_t>(kh_s40 + INVSERVER_FLAGBIT, 1);
+    f.io.plain(kh_hinv);
+    f.io.put<uint64_t>(kh_hinv + KJW_ITEM, kh_arr);
+    f.io.plain(kh_arr);
+    f.io.put<uint32_t>(kh_arr + IL2CPP_ARRAY_LENGTH, 2);
+    f.io.put<uint64_t>(kh_arr + IL2CPP_ARRAY_FIRST_ELEMENT + 8, kh_kjw);
+    f.io.plain(kh_kjw);
+    f.io.put<uint64_t>(kh_kjw + KJW_ITEM, item);
+    f.io.put<uint32_t>(kh_kjw + KJW_SLOT, 1);
+    f.io.put<uint8_t>(item + ITEM_KRF, 0);
+    f.io.put<uint64_t>(item + ITEM_KJX, kh_kjx);
+    f.io.put<uint64_t>(item_data + ITEMDATA_CFG, kh_cfg);
+    f.io.plain(kh_cfg);
+    f.io.put<float>(kh_cfg + CFG_DURMAX, 10.0f);
+    f.io.put<uint8_t>(kh_cfg + CFG_UNBRK, 1);
+    f.io.plain(kh_kjx);
+    f.io.put<float>(kh_kjx + KJX_KRM, 5.0f);
+}
+
+void test_kh_chain_pass() {
+    Fixture f;
+    add_kh_full(f);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "kh=f") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kv=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kl=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kf=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kb=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "ks=1") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kj=6d300") != nullptr);
+    std::printf("  kh: full HcG/LWM chain passes, draw element reported\n");
+}
+
+void test_kh_chain_g4_item_null() {
+    Fixture f;
+    using namespace go_active;
+    add_kh_full(f);
+    f.io.put<uint64_t>(kh_kjw + KJW_ITEM, 0);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "kh=7") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kv=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kj=6d300") != nullptr);
+    std::printf("  kh: null kJw-Item fails hop 7 (G4), element still shown\n");
+}
+
+void test_kh_chain_krf() {
+    Fixture f;
+    using namespace go_active;
+    add_kh_full(f);
+    f.io.put<uint8_t>(item + ITEM_KRF, 1);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "kh=8") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kv=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kf=1") != nullptr);
+    std::printf("  kh: Krf set fails hop 8\n");
+}
+
+void test_kh_chain_lwm() {
+    Fixture f;
+    using namespace go_active;
+    add_kh_full(f);
+    f.io.put<uint8_t>(kh_cfg + CFG_UNBRK, 0);
+    f.io.put<float>(kh_kjx + KJX_KRM, -1.0f);
+    for (int i = 0; i < 25; ++i) f.tick(f.settings(true, 1));
+    assert(std::strstr(f.c.ui().dump_text, "kh=9") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kv=0") != nullptr);
+    assert(std::strstr(f.c.ui().dump_text, "kl=1") != nullptr);
+    std::printf("  kh: LWM-true fails hop 9\n");
+}
+
 int main() {
     std::printf("skin changer:\n");
     test_disabled_writes_nothing();
@@ -2439,6 +2524,10 @@ int main() {
     test_dump_carries_flag_chain();
     test_probe_reports_yh_any();
     test_probe_reports_foreign_x();
+    test_kh_chain_pass();
+    test_kh_chain_g4_item_null();
+    test_kh_chain_krf();
+    test_kh_chain_lwm();
     std::printf("OK\n");
     return 0;
 }

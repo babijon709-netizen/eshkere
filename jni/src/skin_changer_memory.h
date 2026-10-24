@@ -736,6 +736,21 @@ template<class IO> class Controller {
     uint32_t inv_dbg_yhxs_ = 0;
     int inv_dbg_yhn_ = 0;
     char inv_dbg_yhxc_[12] = {};
+    // §4.42: chain-walk гейтов G3 (vVT/HcG) и G4 (LzY). Дизассемблер
+    // dump11978: kJw = HZu()[slot] (HZu = inv+0x30→+0xD8, массив в H+0x10),
+    // HcG требует flagobj/байт/H/слот-в-диапазоне/kJw/Item/Krf==0, vVT =
+    // HcG && !LWM (durMax>0 && !unbrk && krm<=0). kh = первый упавший хоп
+    // (0-6 цепочка, 7 Item-null = G4, 8 Krf, 9 LWM, a LWM-цепь нечитаема,
+    // f PASS), kv/kl/kf/kb — вердикты/биты, ks — слот HcG (server+0xE8),
+    // kj — kJw живого слота (элемент дроу). Только чтение.
+    int inv_dbg_kh_ = 0;
+    int inv_dbg_kv_ = 0;
+    int inv_dbg_kl_ = 0;
+    int inv_dbg_kf_ = 0;
+    int inv_dbg_kb_ = 0;
+    int32_t inv_dbg_ks_ = 0;
+    bool inv_dbg_kj_ok_ = false;
+    uint64_t inv_dbg_kj_ = 0;
     // §4.34: инъекция FP-Item в запись экипировки. Slot несёт адрес
     // (cand+0x10), оригинал (null/stale — возврат) и last (бой с затиранием).
     // prev — подтверждение адреса двумя проходами (как кандидаты зонда);
@@ -813,7 +828,7 @@ template<class IO> class Controller {
     // доказательство живости тика: нет строк среза в окне отравления = умер
     // чит/транспорт, а не игра.
     int  dump_seq_ = 0;          // монотонный номер среза (не сбрасывается)
-    char dump_text_[512] = {};   // §4.36: 384->512 (fm/cw-поля охоты за kJw)
+    char dump_text_[640] = {};   // §4.42: 512->640 (kh/kv/kl/kf/kb/ks/kj chain-walk)
     int  dump_ticks_ = 0;        // тики с последнего среза (сердцебиение)
     int  dump_cooldown_ = 0;     // минимальный интервал между срезами
     uint32_t last_sv_head_ = 0xFFFFFFFFu;  // Enabled|Number SyncVar последнего среза
@@ -1185,6 +1200,74 @@ template<class IO> class Controller {
     // Запоминаются АДРЕСА ССЫЛОК (поле/слот), а не экземпляры: ресинк меняет
     // экземпляр, ссылка перечитывается каждый тик. Найденное — в
     // inv_probe_cands_; усыновление (дважды подтверждённым) — в maintain().
+    // §4.42: chain-walk G3/G4 (HcG-точно + LWM + пик живого слота). Хопы
+    // повторяют cbz/tbz via/HcG/LzY/LWM один в один (включая OOB-семантику
+    // HcG: throw трактуем как падение хопа — дроу всё равно не печёт).
+    // kj-пик независим от валидности HcG-слота (дивергенция ks/slot видна).
+    void walk_kjw_chain(uint64_t inv) {
+        using namespace go_active;
+        uint64_t server = 0;
+        if (!pointer(io, inv + INV_PLAYER_INVENTORY_SERVER, server) ||
+            server < 0x10000) { inv_dbg_kh_ = 0; return; }
+        uint64_t flagobj = 0;
+        if (!pointer(io, server + INVSERVER_FLAGOBJ, flagobj) ||
+            flagobj < 0x10000) { inv_dbg_kh_ = 1; return; }
+        uint8_t b49 = 0;
+        if (!io.read(flagobj + INVSERVER_FLAGBIT, b49)) { inv_dbg_kh_ = 1; return; }
+        inv_dbg_kb_ = b49 ? 1 : 0;
+        if (!b49) { inv_dbg_kh_ = 2; return; }
+        uint64_t hinv = 0;
+        if (!pointer(io, server + INVSERVER_INV, hinv) ||
+            hinv < 0x10000) { inv_dbg_kh_ = 3; return; }
+        uint64_t arr = 0;
+        if (!pointer(io, hinv + KJW_ITEM, arr) || arr < 0x10000) {
+            inv_dbg_kh_ = 4;
+            return;
+        }
+        int32_t hslot = 0;
+        uint32_t alen = 0;
+        if (!io.read(server + INVSERVER_SLOT, hslot) ||
+            !io.read(arr + IL2CPP_ARRAY_LENGTH, alen)) { inv_dbg_kh_ = 4; return; }
+        inv_dbg_ks_ = hslot;
+        if (inv_live_slot_ >= 0 && (uint32_t)inv_live_slot_ < alen) {
+            uint64_t lkj = 0;
+            if (pointer(io, arr + IL2CPP_ARRAY_FIRST_ELEMENT +
+                            (uint64_t)inv_live_slot_ * 8, lkj) &&
+                lkj >= 0x10000) {
+                inv_dbg_kj_ok_ = true;
+                inv_dbg_kj_ = lkj;
+            }
+        }
+        if (hslot < 0 || (uint32_t)hslot >= alen) { inv_dbg_kh_ = 5; return; }
+        uint64_t kjw = 0;
+        if (!pointer(io, arr + IL2CPP_ARRAY_FIRST_ELEMENT +
+                         (uint64_t)hslot * 8, kjw) ||
+            kjw < 0x10000) { inv_dbg_kh_ = 6; return; }
+        uint64_t kitem = 0;
+        if (!pointer(io, kjw + KJW_ITEM, kitem) || kitem < 0x10000) {
+            inv_dbg_kh_ = 7;
+            return;
+        }
+        uint8_t krf = 0;
+        if (!io.read(kitem + ITEM_KRF, krf)) { inv_dbg_kh_ = 7; return; }
+        inv_dbg_kf_ = krf ? 1 : 0;
+        if (krf) { inv_dbg_kh_ = 8; return; }
+        uint64_t kdata = 0, kcfg = 0, kjx = 0;
+        float dur = 0, krm = 0;
+        uint8_t unb = 0;
+        if (!pointer(io, kitem + ITEM_DATA, kdata) || kdata < 0x10000 ||
+            !pointer(io, kdata + ITEMDATA_CFG, kcfg) || kcfg < 0x10000 ||
+            !io.read(kcfg + CFG_DURMAX, dur) ||
+            !io.read(kcfg + CFG_UNBRK, unb) ||
+            !pointer(io, kitem + ITEM_KJX, kjx) || kjx < 0x10000 ||
+            !io.read(kjx + KJX_KRM, krm)) { inv_dbg_kh_ = 0xA; return; }
+        const int lwm = (dur > 0 && !unb && krm <= 0) ? 1 : 0;
+        inv_dbg_kl_ = lwm;
+        if (lwm) { inv_dbg_kh_ = 9; return; }
+        inv_dbg_kh_ = 0xF;
+        inv_dbg_kv_ = 1;
+    }
+
     void probe_inventory() {
         using namespace go_active;
         inv_probe_n_ = 0;
@@ -1211,6 +1294,14 @@ template<class IO> class Controller {
         inv_dbg_yhxs_ = 0;
         inv_dbg_yhn_ = 0;
         inv_dbg_yhxc_[0] = '\0';
+        inv_dbg_kh_ = 0;
+        inv_dbg_kv_ = 0;
+        inv_dbg_kl_ = 0;
+        inv_dbg_kf_ = 0;
+        inv_dbg_kb_ = 0;
+        inv_dbg_ks_ = 0;
+        inv_dbg_kj_ok_ = false;
+        inv_dbg_kj_ = 0;
         const int cap = (int)(sizeof(inv_probe_cands_) / sizeof(inv_probe_cands_[0]));
         if (!context_.player.object) return;
         inv_dbg_active_ = true;
@@ -1249,6 +1340,7 @@ template<class IO> class Controller {
         pointer(io, inv + INV_PLAYER_INVENTORY_CLIENT, anchors[1]);
         inv_dbg_data_ = anchors[0] >= 0x10000;
         inv_dbg_client_ = anchors[1] >= 0x10000;
+        walk_kjw_chain(inv);   // §4.42: G3/G4 chain-walk (живой слот уже снят)
         // §4.40: kJw нет в PW/Data/Client-L1 (yh молчит везде) — сканируем
         // поля FPManager (+0x20..; +0x10/+0x18 известны — cachedPtr/0),
         // PlayerInventory (свой L1 — раньше читали только якоря!), игрока
@@ -2069,6 +2161,25 @@ template<class IO> class Controller {
             std::snprintf(v, sizeof(v), " yhxc=%s", inv_dbg_yhxc_);
         else
             std::snprintf(v, sizeof(v), " yhxc=-");
+        ap(v);
+        // §4.42: G3/G4 chain-walk — хоп, вердикты, биты, слот HcG, kJw дроу.
+        std::snprintf(v, sizeof(v), " kh=%x", inv_dbg_kh_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " kv=%d", inv_dbg_kv_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " kl=%d", inv_dbg_kl_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " kf=%d", inv_dbg_kf_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " kb=%d", inv_dbg_kb_);
+        ap(v);
+        std::snprintf(v, sizeof(v), " ks=%x", (unsigned)inv_dbg_ks_);
+        ap(v);
+        if (inv_dbg_kj_ok_)
+            std::snprintf(v, sizeof(v), " kj=%llx",
+                          (unsigned long long)inv_dbg_kj_);
+        else
+            std::snprintf(v, sizeof(v), " kj=x");
         ap(v);
         const int qj = !kjw_item_.owned ? 0 : (kjw_item_.original == 0 ? 1 : 2);
         std::snprintf(v, sizeof(v), " qj=%d", qj);

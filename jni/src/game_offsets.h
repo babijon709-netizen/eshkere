@@ -49,17 +49,15 @@ namespace game_offsets {
 //   вставлен AssetReference KLE @0x80 (хвост +0x10);
 //   FPObject: <uhq> -> <KHI>, Ltl -> KHo (Item), Gum -> kAu;
 //   PlayerWeapon: QVN -> wDT (piece_local), QVW -> wDN (SyncVar), QVV -> wDU
-//   (state), sGm -> wDO (skin handle), sR-ref -> Yp playerWeaponViewReference;
+//   (state), sR-ref -> Yp playerWeaponViewReference;
 //   вьюха третьего лица sR/ON -> YU : Yp (TDI 4515, найдена по форме полей
 //   WeaponBase/WeaponPiece/Transform), декоратор pGW/WRU -> kun (sealed : Yp,
 //   единственное поле Yp @0x10);
-//   nicklabel gt -> Di; voicePlayer WDB -> kIq; интерфейсы дроу hbr -> jH/kUA;
-//   Draw-событие eDt/Wxz -> kAP (Action @0x10); EG (реестр PlayerWeaponPiece)
-//   -> YB; hMj/IWt (25 LayerMask-статик) -> kiQ; TOD_Sky lE/Gf -> QA (TDI 706).
+//   nicklabel gt -> Di; voicePlayer WDB -> kIq; hMj/IWt (25 LayerMask-статик)
+//   -> kiQ; TOD_Sky lE/Gf -> QA (TDI 706).
 //   Переехали в неймспейсы: FPCrossbow/FPSnowball -> HyperHug.Games.Oxide.
 //   By_Namespace.Oxide.Player.First_Person.*; конфиги оружия и AimAssist ->
-//   HyperHug.Games.Oxide.Features.Weapons.* / .Features.AimAssist.*;
-//   SkinData/скины -> HyperHug.Games.Oxide.Features.Player.*.
+//   HyperHug.Games.Oxide.Features.Weapons.* / .Features.AimAssist.*.
 
 // Native Unity Camera (via Camera::m_CachedPtr) — from libunity.so (dump2)
 // get_worldToCameraMatrix_Injected @ 0x5ac514 → helper 0xe1fe08 returns cam+0x70
@@ -368,28 +366,14 @@ inline constexpr std::uint64_t FPOBJECT_ITEM        = 0x40; // <KHo>k__BackingFi
 // FPObject.uhq (+0x38): «вюха показана». Ставится в 1 On_Draw (слот vtable 17,
 // 0x68FD250), сбрасывается в 0 Holster-цепочкой FDN (слот 10, 0x68FCD10).
 // Здоровый инвариант, доказанный дизассемблером dump11966: uhq==1 тогда и
-// только тогда, когда Item(+0x40) != null. Нарушение (uhq==0 при Item==null
-// десятки секунд) — signature полусобранной вьюхи после исключения в сборке
-// (KERNEL.md §4.22): воротa CreateFPWeapon (0x68EF940) видят uhq==0 и
-// каждый дроу гонят пересборку, которая снова падает на том же скине.
+// только тогда, когда Item(+0x40) != null; на нём держится чтение имени
+// предмета в руках (game.cpp, remote held weapon).
 inline constexpr std::uint64_t FPOBJECT_SHOWN       = 0x38; // <KHI>k__BackingField (11966: <uhq>)
 inline constexpr std::uint64_t ITEM_DATA            = 0x20; // <KrT>k__BackingField (11966: <LIN>)
-// Oxide.Item.skin / .skinLevel — серверная правда о скине предмета. Доказано
-// дизассемблером dump11966: Item..ctor 0x69C8174 кладёт аргумент skin в +0x30
-// (int, -1 = «скина нет»; диапазон проверяется по ItemData.skinData), а
-// skinLevel в +0x34 (byte); ItemPickup.KZq 0x6926BDC при дропе берёт скин из
-// +0x30 в SyncVar дропа (KZv), уровень из +0x34 — в piece дропа, а
-// PlayerInventory.Gah/Gaz читают +0x30 в RPC синка инвентаря. Запись сюда
-// несёт наш скин в дроп и сохранение; пересборка вьюхи — на дроу/спавне,
-// НЕ на дропе (KERNEL.md §4.17–4.20).
-inline constexpr std::uint64_t ITEM_SKIN            = 0x30; // <uyQ>k__BackingField
-inline constexpr std::uint64_t ITEM_SKIN_LEVEL      = 0x34; // <uya>k__BackingField
 inline constexpr std::uint64_t ITEMDATA_NAME        = 0x18; // m_Name
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME   = 0x20; // m_ShortName
-// ItemData.m_Id (+0x58): уникальный id предмета. Скины ищутся по классу, но
-// класс живёт между предметами (несколько пушек одного family), а карантин
-// «сломал сборку» — свойство именно СТВОЛА (KERNEL.md §4.22): другой предмет
-// того же класса после карантина обязан пробовать свой скин заново.
+// ItemData.m_Id (+0x58): уникальный id предмета — отличает предметы одного
+// класса (несколько пушек одного family живут в одном ItemData-классе).
 inline constexpr std::uint64_t ITEMDATA_ID          = 0x58; // m_Id
 // Il2Cpp System.String layout: int32 length @0x10, UTF-16 chars @0x14.
 inline constexpr std::uint64_t IL2CPP_STRING_LENGTH = 0x10;
@@ -522,44 +506,8 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // field from there on moved (old 0x90/0xD8/0xE8/0x100). The SyncVar trio was
 // re-identified positionally against the _Mirror_SyncVarHookDelegate__loaded /
 // _weaponPiece / _weaponState tail, not by name (names are re-obfuscated).
-// NB: в PlayerWeapon лежат ДВЕ копии WeaponPiece: SyncVar (wDN @0x130) и
-// «рабочая копия» (wDT @0xD0). В релизе 11966 игра собирала визуал ИЗ РАБОЧЕЙ
-// копии (pMd сеял её на каждый RPC/спавн, pMj/pMZ несли её в Kxi). В 11978
-// живой путь дроу переехал на SyncVar — доказательство, свежий RE + лог v19
-// (сессия 48, сборка 70644c0, 54 среза):
-//   * via(kJw) -> drawSV (Slot 32, RVA 0x7BB7540): пишет принятую piece в
-//     SyncVar (vsu-путь 0x7BB74C0 -> 0x7BD5888), затем на обоих своих вызовах
-//     FPManager.LTI (0x7BB7A1C/0x7BB7C4C) передаёт piece ИЗ SYNCVAR
-//     (`ldr q0,[x19,#0x130]; ldr x8,[x19,#0x140]`) и slot `ldr w2,[x19,#0x150]`;
-//   * ceC(WeaponPiece,int) (RPC, RVA 0x7BB7D34): вооружает гейт —
-//     `strb #1,[pw,#0xF4]`, `str slot,[pw,#0xF0]`, гасит старый Action 0xE8 —
-//     и зовёт builder 0x7BB5084, который ЕДИНСТВЕННЫЙ пишет рабочую копию
-//     (`str q0,[x19,#0xD0]` @0x7BB50C0) и skinVisualHandle (`stp` @0x7BB5130,
-//     +0xC0); на устройстве за всю сессию не сработал ни разу — wk/gate/hnd
-//     замерли на значениях первого ствола (19/19/0) во всех 54 срезах;
-//   * интерфейсные слоты jH: 18 (0x7BBBA74) и 19 (vVu 0x7BB7088) по-прежнему
-//     читают РАБОЧУЮ копию (0xD0) и через vVb (0x7BB70B4: гейт `ldr w2,
-//     [x19,#0xF0]`, FPM `ldr x0,[x19,#0x110]`, выбор пути по bool +0xF4)
-//     зовут LTI — но в логе ни один дроу не принёс wk-значений (uzL всегда
-//     совпадал с SyncVar на момент дроу), т.е. на устройстве эти слоты спят;
-//   * LTI (RVA 0x6D59828, аналог Kxi) пересоздаёт CTS +0x88 / UTCS +0x98
-//     и запускает сборку; TAIL кладёт piece в uzL (FPM+0x68) — по ней срез
-//     видит, ИЗ ЧЕГО собиралась вьюха.
-// Вывод для скинченджера 11978: рабочая запись — SyncVar (+0x130); запись в
-// рабочую копию (+0xD0) оставлена как страховка для спящих интерфейсных
-// слотов (дешевле, чем доказывать их смерть на всех устройствах). Серверная
-// ресинхронизация piece (vsu/klQ/kau) ПЕРЕЗАПИСЫВАЕТ SyncVar своим значением
-// (skin=-1/оригинал) — в логе v19 поймано живьём (45->0, ->7): наша запись
-// локальная, и дроу, пришедшийся между ресинком и перезаписью, собирает
-// вьюху из серверного скина. skinVisualHandle (+0xC0) в 11978 наполняется
-// только спящим ceC-путём — вердикт «визуал не загружен» по hnd здесь
-// хронический и НЕ означает, что вьюха без скина (вьюха строится из SV).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // 11978: Yp playerWeaponViewReference (тип-интерфейс; реализация YU, декоратор kun); 11966: 0xE8
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar wDN; 11966: 0x110 (QVW)
-// wDT: рабочая копия WeaponPiece (см. NB выше). Пишется самой игрой только в
-// серверном RPC-пути; локально больше никто не перезаписывает — наша правка
-// держится до следующего серверного RPC с piece.
-inline constexpr std::uint64_t PLAYERWEAPON_PIECE_LOCAL    = 0xD0;  // 11966: 0xC0 (QVN)
 inline constexpr std::uint64_t PLAYERWEAPON_STATE          = 0x14C; // wDU WeaponState; 11966: 0x120 (QVV)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160; // 11966: 0x138
 // Oxide.WeaponPiece (value type): Enabled 0x0, Number 0x2, Skin 0x4,
@@ -617,10 +565,10 @@ inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG          = 0x10;
 inline constexpr std::uint64_t PLAYER_FP_MANAGER             = 0x90;
 // 11978: в FPManager вставлен AssetReference KLE @0x80 (загрузка ассета
 // вьюхи, как в бете 11977) — всё, что лежало с 0x78, уехало на +0x10.
-inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58; // KLY FPWeaponBase (11966: uzN) — типизированный кэш, через него проходит зомби-резолв §4.24
+inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58; // KLY FPWeaponBase (11966: uzN) — типизированный кэш текущего оружия
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT      = 0x50; // _currentWeapon (authoritative active FPObject)
-inline constexpr std::uint64_t FPMANAGER_UZL                 = 0x68; // KLd WeaponPiece (11966: uzL) последней сборки, дошедшей до TAIL; поля — WEAPONPIECE_* (Number = +0x6A)
-inline constexpr std::uint64_t FPMANAGER_CTS                 = 0x88; // KLm CancellationTokenSource (11966: uzf @0x78): LTI/Kxi создаёт новый на каждый вызов (`str x,[x0,#0x88]!` @0x6D598CC) — смена указателя = дроу дошёл до Kxi
+inline constexpr std::uint64_t FPMANAGER_UZL                 = 0x68; // KLd WeaponPiece (11966: uzL) — копия piece последней сборки вьюхи; поля — WEAPONPIECE_* (Number = +0x6A)
+inline constexpr std::uint64_t FPMANAGER_CTS                 = 0x88; // KLm CancellationTokenSource (11966: uzf @0x78): LTI/Kxi создаёт новый на каждый вызов (`str x,[x0,#0x88]!` @0x6D598CC)
 inline constexpr std::uint64_t FPMANAGER_CTS2                = 0x90; // KLl второй CTS (тот же жизненный цикл; 11966: uzi @0x80)
 inline constexpr std::uint64_t FPMANAGER_UTCS                = 0x98; // KLI UniTaskCompletionSource (11966: uzD @0x88): пересоздаётся в LTI/Kxi (`str x,[x0,#0x98]!` @0x6D598A8)
 inline constexpr std::uint64_t FPMANAGER_UZJ                 = 0xA0; // bool KLo (11966: uzj @0x90)
@@ -1161,158 +1109,5 @@ inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xE8;
 
 // Legacy snapshot field; custom hands no longer modify animation speed.
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = 0x20; // Oxide.TransformOffset.m_LerpSpeed
-
-// ---- Скины (Oxide.WeaponPiece -> ItemData.skinData[] -> SkinData) -----------
-//
-// Как игру заставляет сменить скин её собственный код (проверено по
-// dump11966 + дизассемблеру EN.XLy(WeaponPiece, List<AssetReference>),
-// RVA 0x7CBC768, и EG.Initialize/XHb):
-//
-//   WeaponPiece.Number (short, индекс предмета)
-//     -> EG.XHb(int) 0x7C9E104: Rpk[int]->string id, Rpc[id]->PlayerWeaponPiece
-//   PlayerWeaponPiece.id (string)
-//     -> ItemData.GwO(string) 0x69D6598 -> ItemData
-//   WeaponPiece.Skin (short)
-//     -> ItemData.skinData (SkinData[], +0xD0): ИНДЕКС В СОБСТВЕННОМ массиве
-//        предмета, а не глобальный id. В XLy это буквально
-//        ldr x8,[x0,#0xD0]; ldr w10,[x8,#0x18]; cmp Skin,w10;
-//        add x8,x8,Skin,lsl #3; ldr x20,[x8,#0x20]
-//     -> hbE.VkR(SkinData, SkinLevel, List<AssetReference>, bool) 0x6CDFB74
-//     -> Addressables load -> dV (список GameObject/Material/Renderer)
-//     -> применяется под FPSkinChanger (weaponParent/leftWeaponParent/
-//        defaultSkinMeshRenderer) и в PlayerFPWeaponView.
-//
-// В релизе 11966 WeaponPiece (0x10 байт) передавался В ОДНОМ 64-битном
-// регистре: bit0 Enabled, bits16..31 Number, bits32..47 Skin, bits48..55
-// SkinLevel, bit56 Loaded — видно по asr/lsr в XLy. С беты 11977 и в релизе
-// 11978 структура 0x18 байт (добавлен bool EmptyHands @0x10) и передаётся
-// ПО ССЫЛКЕ (LTI: ldr q0,[piece]; ldr x8,[piece,#0x10]); на запись отдельных
-// полей это не влияет, они на тех же 0x0/0x2/0x4/0x6/0x7/0x8.
-inline constexpr std::uint64_t WEAPONPIECE_SKIN        = 0x04; // short, индекс в ItemData.skinData
-inline constexpr std::uint64_t WEAPONPIECE_SKIN_LEVEL  = 0x06; // byte, уровень WeaponProgressionSkinData
-inline constexpr std::uint64_t WEAPONPIECE_LOADED      = 0x07; // bool, «визуал скина загружен»
-inline constexpr std::uint64_t WEAPONPIECE_MODS        = 0x08; // WeaponModData[]
-inline constexpr std::uint64_t WEAPONPIECE_SIZE        = 0x18; // sizeof(Oxide.WeaponPiece); 11966: 0x10
-inline constexpr std::uint64_t WEAPONPIECE_EMPTY_HANDS = 0x10; // bool EmptyHands; 11966: поля не было (0)
-
-// Oxide.ItemData.skinData (SkinData[]) — тот самый массив, который индексирует
-// WeaponPiece.Skin. Релиз и бета: 0xD0 (сверено в dump.cs обоих сборок).
-inline constexpr std::uint64_t ITEMDATA_SKIN_DATA = 0xD0;
-
-// SkinData : ScriptableObject, IItemVisualConfig — база всех скинов.
-// Имена не обфусцированы (Id/baseId/iconRef), поля совпадают в 11966 и 11977.
-inline constexpr std::uint64_t SKINDATA_ID       = 0x18; // string,FormerlySerializedAs("id")
-inline constexpr std::uint64_t SKINDATA_BASE_ID  = 0x20; // string baseId
-inline constexpr std::uint64_t SKINDATA_ICON_REF = 0x28; // AssetReference iconRef
-
-// WeaponObjectSkinData — скин ЦЕЛИКОМ другим префабом (то, что нужно
-// скинченджеру; recolor-классы ниже только перекрашивают материал).
-inline constexpr std::uint64_t WEAPONSKIN_RIGHT_HAND_REF = 0x48; // AssetReference rightHandPrefabRef
-inline constexpr std::uint64_t WEAPONSKIN_LEFT_HAND_REF  = 0x50; // AssetReference leftHandPrefabRef
-inline constexpr std::uint64_t WEAPONSKIN_FP_REF         = 0x58; // AssetReference FPPrefabRef
-// WeaponRecolorSkinData: те же слоты, но это материалы (не используется
-// скинченджером, определяется только чтобы честно показать тип в списке).
-inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL    = 0x48; // AssetReference materialRef
-inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL_FP = 0x50; // materialRefOverrideFP
-// WeaponProgressionSkinData : WeaponObjectSkinData — массивы по SkinLevel.
-inline constexpr std::uint64_t WEAPONSKIN_PROG_RIGHT_HAND_REFS = 0x60; // AssetReference[]
-inline constexpr std::uint64_t WEAPONSKIN_PROG_LEFT_HAND_REFS  = 0x68; // AssetReference[]
-inline constexpr std::uint64_t WEAPONSKIN_PROG_FP_REFS         = 0x70; // AssetReference[]
-// WeaponPreviewPrefabSkinData (в релизе есть, в бете тоже) — только превью.
-inline constexpr std::uint64_t WEAPONSKIN_PREVIEW_REF = 0x60; // AssetReference previewPrefabRef
-// EquipmentObjectSkinData / EquipmentRecolorSkinData — одежда и руки.
-inline constexpr std::uint64_t EQUIPSKIN_PROPERTY_BLOCK = 0x48; // MaterialPropertyBlock
-inline constexpr std::uint64_t EQUIPSKIN_OBJECT_REF     = 0x50; // AssetReference gameObjectRef / materialRef
-inline constexpr std::uint64_t EQUIPSKIN_FP_OBJECT_REF  = 0x58; // AssetReference fpGameObjectRef
-inline constexpr std::uint64_t EQUIPSKIN_HIDE_BODY      = 0x60; // bool
-inline constexpr std::uint64_t EQUIPSKIN_HIDE_HEAD      = 0x61; // bool
-
-// UnityEngine.AddressableAssets.AssetReference : IKeyEvaluator.
-// m_AssetGUID — адресная строка ассета; кэша самого ассета в объекте НЕТ
-// (свойство Asset читается из m_Operation), поэтому «загружен ли скин»
-// определяется по непустой ручке операции, а не по указателю.
-inline constexpr std::uint64_t ASSETREF_GUID         = 0x10; // string m_AssetGUID
-inline constexpr std::uint64_t ASSETREF_SUBOBJ_NAME  = 0x18; // string m_SubObjectName
-inline constexpr std::uint64_t ASSETREF_SUBOBJ_TYPE  = 0x20; // string m_SubObjectType
-inline constexpr std::uint64_t ASSETREF_OPERATION    = 0x28; // AsyncOperationHandle m_Operation
-
-// PlayerWeapon.playerFPWeaponView — FP-вьюха ствола. Релиз 11978 сошёлся
-// с бетой 11977: 0x108 (11966: 0xF0).
-inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW = 0x108;
-// §4.26: два поля PlayerWeapon из цепочки дроу (интерфейс jH/kUA -> метод
-// 0x7BB70B4, 11966: pMZ -> pFz). Гейт — int wDr @0xF0: метод читает его
-// `ldr w2,[x19,#0xF0]` и передаёт СЛОТ-аргументом в FPManager.LTI(piece&,slot)
-// (11966: 0xDC, тот же смысл — аргумент Kxi); значение уходит в срез сырым,
-// смысл сравнивается по здоровым и отравленным окнам. Рядом bool wDC @0xF4 —
-// выбор FP-пути (LTI) против старого Action @0xE8. Указатель на FPManager —
-// fPManager (читаемое имя!) @0x110: дроу-метод берёт FPM отсюда, а не от
-// игрока (11966: 0xF8). ВНИМАНИЕ: 0xDC в 11978 — СЕРЕДИНА piece_local wDT
-// (0xD0..0xE8), старое значение читало бы мусор.
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE = 0xF0;
-// ЖИВОЙ слот дроу 11978: drawSV (via, Slot 32) читает `ldr w2,[x19,#0x150]`
-// на обоих своих вызовах LTI (0x7BB7A0C/0x7BB7C3C) — именно это значение
-// уходит slot-аргументом в сборку на каждом дроу от экипировки. wDr (0xF0)
-// вооружает только ceC (piece-RPC; на устройстве не срабатывал всю сессию —
-// gate замер на 19), поэтому в срез §4.26 печатаются ОБА.
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT = 0x150; // int wDY
-// Кэш Item-источника дроу: via(kJw) (Slot 32, 0x7BB7540) на каждом экип-дроу
-// кладёт в +0x120 Item записи экипировки ([kJw+0x10]; `ldr x1,[x20,#0x10] ...
-// str x1,[x19,#0x120]` @0x7BB77D8, при ротации экземпляра обнуляется int
-// +0x11C) и ПОТОМ строит SyncVar из этого экземпляра: skin +0x30 (0x7BB7864),
-// skinLevel +0x34 (0x7BB7870), mods +0x40 — piece уходит в FPManager.LTI.
-// Наша FP-цепь (FPM.cur -> FPObject -> Item) обычно даёт тот же экземпляр, но
-// серверное обновление Item (ресинк инвентаря) ротирует экземпляр в kJw БЕЗ
-// пересборки FPM.cur: дроу читает новый, чит пишет мёртвый — ствол навсегда
-// с дефолтным скином, лечит только дроп+подбор (подбор пересобирает FPM.cur,
-// цепи сходятся). Поэтому кэш дроу — четвёртая точка записи, пока он отличается
-// от FP-цепи (см. skin_changer_memory.h).
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM = 0x120; // Item-кэш via(kJw)
-inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0x110;
-// PlayerFPWeaponView : MonoBehaviour — из чего FP-вьюха ПОСТРОЕНА.
-//   kZy visual 0x20 (11966: dV), WeaponPiece piece 0x28, CancellationTokenSource
-//   0x40 (11978, как в бете 11977; в 11966 был 0x38 — встроенный WeaponPiece
-//   вырос до 0x18 байт и сдвинул CTS).
-// Копия piece здесь — диагностическая: пока weaponPiece.Skin != piece.Skin,
-// FP-визуал собран из СТАРОГО скина (игра ещё не пересобрала его).
-inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL         = 0x20; // Pqi (kZy)
-inline constexpr std::uint64_t FPWEAPONVIEW_PIECE          = 0x28; // PqQ (WeaponPiece)
-inline constexpr std::uint64_t FPWEAPONVIEW_CANCELLATION   = 0x40; // PqV (11966: 0x38)
-
-// PlayerWeapon.skinVisualHandle (Oxide.Features.ResourceManagment.Gameplay.
-// SkinVisualHandle: hbB _model 0x0, int _slot 0x8, int _generation 0xC) —
-// живая ручка загруженного визуала скина. Пустая (model == 0) = не загружен.
-inline constexpr std::uint64_t PLAYERWEAPON_SKIN_HANDLE = 0xC0; // wDO SkinVisualHandle (11966: sGm @0xB0)
-inline constexpr std::uint64_t SKINHANDLE_MODEL         = 0x00;
-inline constexpr std::uint64_t SKINHANDLE_SLOT          = 0x08;
-inline constexpr std::uint64_t SKINHANDLE_GENERATION    = 0x0C;
-
-// TypeInfo-слоты (внутренние .data, одно разыменование) из script.json 11978.
-// Методика та же, что у PLAYER_MANAGER_TYPEINFO_RVA; сверка: Oxide.PlayerManager
-// этим же разбором дал 0xE66DEE8 — ровно значение выше. Раскладка «пятерки»
-// оружейных скинов (object +8 preview +8 progression +8 recolor +0x10 abstract)
-// и «тройки» экипировки (object +8 abstract +8 recolor) та же, что в 11966.
-// Слоты ПРИВЯЗАНЫ к билду дампа И к базе libil2cpp, на которую привязался
-// чит: перезапуск игры через exec оставляет в карте старый «(deleted)» образ,
-// а во время загрузки статика живого образа ещё NULL — привязка в этот момент
-// может взять образ, где слоты мертвы, хотя полевые оффсеты живы (устройство:
-// skin.log — все типы скинов стали «other» при неизменной версии игры).
-// Поэтому skinchanger::kind_of при промахе слотов сверяет точное имя класса
-// (KERNEL.md §4.14) — оно читается от самого объекта и от базы не зависит.
-inline constexpr std::uint64_t EG_TYPEINFO_RVA                       = 0xE673558; // реестр PlayerWeaponPiece (YB; 11966: EG @0xDE9ACA0)
-inline constexpr std::uint64_t EN_TYPEINFO_RVA                       = 0;         // построитель визуала (hbv<WeaponPiece> в 11966): в списке 11978 не опознан
-inline constexpr std::uint64_t WEAPONSKINDATA_TYPEINFO_RVA           = 0xE6727D8; // abstract WeaponSkinData
-inline constexpr std::uint64_t WEAPONOBJECTSKIN_TYPEINFO_RVA         = 0xE6727B0;
-inline constexpr std::uint64_t WEAPONRECOLORSKIN_TYPEINFO_RVA        = 0xE6727C8;
-inline constexpr std::uint64_t WEAPONPROGRESSIONSKIN_TYPEINFO_RVA    = 0xE6727C0;
-inline constexpr std::uint64_t WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA  = 0xE6727B8;
-inline constexpr std::uint64_t EQUIPSKINDATA_TYPEINFO_RVA            = 0xE668500; // abstract EquipmentPieceSkinData
-inline constexpr std::uint64_t EQUIPOBJECTSKIN_TYPEINFO_RVA          = 0xE6684F8;
-inline constexpr std::uint64_t EQUIPRECOLORSKIN_TYPEINFO_RVA         = 0xE668508;
-
-// Пределы, за которые индекс скина не выпускается ни при записи, ни в меню:
-// массив skinData у предмета короткий (единицы-десятки), а SkinLevel — byte
-// уровней прогрессии. Значение вне предела означало бы запись мусора в SyncVar.
-inline constexpr int SKIN_INDEX_MAX = 63;
-inline constexpr int SKIN_LEVEL_MAX = 7;
 
 }

@@ -14,8 +14,6 @@
 #include "str.h"
 #include "esp_draw.h"
 #include "aim.h"
-#include "weapon_name.h"    // читаемое имя ствола для панели скинов
-#include "skin_name.h"      // читаемое имя скина (чистка технического id)
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -825,104 +823,6 @@ float TabContent(int tab, float dt, float cW) {
             if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
                 esp_viewmodel_tick(vm);
         }
-        // ---- Скины -------------------------------------------------------
-        // Скинченджер пишет ИНДЕКС в копии Oxide.WeaponPiece (SyncVar и
-        // рабочую) и в Item (skin/skinLevel, включая кэш дроу pw+0x120):
-        // игра сама берёт по нему SkinData из ItemData.skinData[] этого
-        // предмета и собирает визуал на своём событии — холстер/дроу, RPC
-        // насадок/модов, спавн/подбор ствола (см. skin_changer_memory.h,
-        // «КТО ПЕРЕСОБИРАЕТ»). Список — живой, из памяти игры: глобальной
-        // таблицы скинов не существует, индекс у каждого предмета свой.
-        // Панель — пользовательская: технические id («deagle.skin.rusty.event»)
-        // чистятся в читаемые имена (skin_name.h), ствол подписывается таблицей
-        // weapon_name.h; ни статусных строк, ни тостов — вся диагностика живёт
-        // только в skin.log (KERNEL.md §6).
-        SHdr(XS("Скины"));
-        {
-            viewmodel::SkinEntryView skinEntries[viewmodel::kSkinEntryMax];
-            const viewmodel::SkinUiInfo skinUi = esp_skin_ui();
-            const int skinCount = esp_skin_entries(skinEntries, viewmodel::kSkinEntryMax);
-            // Читаемое имя ствола — как в подписях ESP: игровой shortName
-            // («dmr», «pistol_deagle») через таблицу weapon_name.h.
-            char weaponLabel[64];
-            snprintf(weaponLabel, sizeof(weaponLabel), "%s", skinUi.weapon);
-            if (weaponLabel[0])
-                weaponname::canonicalize(weaponLabel, sizeof(weaponLabel), lang::english());
-            char skinSummary[192];
-            if (!vm.skin_enabled)
-                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Выкл"));
-            else if (skinCount <= 0)
-                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Скинов нет"));
-            else {
-                const int sel = ImClamp(vm.skin_index, 0, skinCount - 1);
-                char selName[96], pos[8];
-                snprintf(pos, sizeof(pos), "%d", sel + 1);
-                if (!skinname::humanize(skinEntries[sel].id, skinEntries[sel].base_id,
-                                        selName, sizeof(selName)))
-                    snprintf(selName, sizeof(selName), XS("Скин %s"), pos);
-                snprintf(skinSummary, sizeof(skinSummary), "%s%s%s",
-                         weaponLabel, weaponLabel[0] ? ": " : "", selName);
-            }
-            if (SettingsHeader("##misc_skins", XS("Скинченджер"), skinSummary,
-                               false, &vm.skin_enabled, g_state.a_skin)) {
-                // Перечитывание списка — по запросу, а не каждый кадр: строки
-                // читаются из памяти игры посимвольно.
-                esp_skin_request_scan();
-                const int n = skinCount;
-                if (n > 0 && vm.skin_index >= n) vm.skin_index = n - 1;
-                if (vm.skin_index < 0) vm.skin_index = 0;
-                const int levels = (n > 0) ? ImMax(1, skinEntries[vm.skin_index].levels) : 1;
-                if (vm.skin_level >= levels) vm.skin_level = levels - 1;
-                const int oldIndex = vm.skin_index, oldLevel = vm.skin_level;
-
-                if (n <= 0) {
-                    // Пустой список — одна понятная строка вместо слепого «#0».
-                    CardBg(Layout::RowH);
-                    auto* dlS = ImGui::GetWindowDrawList();
-                    auto* fnS = ImGui::GetFont();
-                    const float fsS = ImGui::GetFontSize() * 1.15f;
-                    const auto pS = ImGui::GetCursorScreenPos();
-                    dlS->AddText(fnS, fsS,
-                                 {pS.x + Layout::Inset + Layout::PadX,
-                                  pS.y + (Layout::RowH - fsS) * 0.5f},
-                                 C::U(C::Dim()), XS("В руках нет предмета со скинами"));
-                    ImGui::Dummy({ImGui::GetContentRegionAvail().x, Layout::RowH});
-                } else {
-                    // Выбор скина — именованный список: пользователь видит,
-                    // что выбирает. Метка «Перекраска» предупреждает, что
-                    // скин меняет только материал, а не модель.
-                    CardBg(Layout::RowH * (float)n + (levels > 1 ? Layout::SliderH : 0.f));
-                    for (int i = 0; i < n; ++i) {
-                        const viewmodel::SkinEntryView& e = skinEntries[i];
-                        char rowName[96], pos[8], rowId[24];
-                        snprintf(pos, sizeof(pos), "%d", i + 1);
-                        if (!skinname::humanize(e.id, e.base_id, rowName, sizeof(rowName)))
-                            snprintf(rowName, sizeof(rowName), XS("Скин %s"), pos);
-                        snprintf(rowId, sizeof(rowId), "##skin_pick%d", i);
-                        const char* tag =
-                            (e.kind == viewmodel::SkinKind::WeaponRecolor ||
-                             e.kind == viewmodel::SkinKind::EquipRecolor)
-                                ? XS("Перекраска") : nullptr;
-                        if (SelectRow(rowId, rowName, tag, vm.skin_index == i,
-                                      i == n - 1 && levels <= 1))
-                            vm.skin_index = i;
-                    }
-                    if (levels > 1) {
-                        float levelValue = (float)vm.skin_level;
-                        SliderRow("##skin_level", XS("Уровень"), &levelValue, 0.f,
-                                  (float)(levels - 1), "%.0f", true, false,
-                                  g_state.sl_skin_level, dt);
-                        vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
-                    }
-                }
-
-                // Диагностика состояния в меню не показывается вовсе: ни
-                // строк, ни тостов (KERNEL.md §6). Подробности живут в
-                // skin.log — их пишет skin_log.h языком skin_block_text().
-                if (oldIndex != vm.skin_index || oldLevel != vm.skin_level)
-                    esp_viewmodel_tick(vm);
-            }
-        }
 
         SHdr(XS("Автофарм"));
         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
@@ -1644,7 +1544,6 @@ void RenderMenu() {
     Tick(g_state.a_no_spread, g_state.viewmodel.no_spread, dt);
     Tick(g_state.a_no_ballistics, g_state.viewmodel.no_ballistics, dt);
     Tick(g_state.a_fast_loot, g_state.viewmodel.fast_loot, dt);
-    Tick(g_state.a_skin, g_state.viewmodel.skin_enabled, dt);
     Tick(g_state.a_fast_fire, g_state.fast_fire, dt);
     Tick(g_state.a_fast_reload, g_state.fast_reload, dt);
     Tick(g_state.a_fake_lag, g_state.fake_lag, dt);

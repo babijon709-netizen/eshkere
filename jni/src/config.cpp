@@ -327,46 +327,6 @@ static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
     return t.magic == kCfgExt2Magic && t.version == 1;
 }
 
-// ---- Трейлер скинченджера --------------------------------------------------
-// Четвёртый прицеп после CfgBlob / VMW1 / CUI1 / CFX2. Отдельный, а не бит в
-// CFX2, потому что кроме тумблеров несёт два числа (индекс и уровень), а
-// CfgBlob и ConfigExtension заморожены версией (см. шапку). Читатели, которые
-// останавливаются на CFX2, этот трейлер просто не видят — старые конфиги
-// грузятся как раньше, со скинченджером по умолчанию.
-struct CfgSkinTrailer {
-    uint32_t magic;          // "SKN1"
-    uint32_t version;        // 1
-    uint32_t flags;          // bit0 skin_enabled; bit1 был skin_rebuild — тумблер
-                             // убран (Enabled-«пересборка» оказалась пустышкой,
-                             // см. skin_changer_memory.h), бит зарезервирован
-    int32_t  index;          // WeaponPiece.Skin (индекс в skinData предмета)
-    int32_t  level;          // WeaponPiece.SkinLevel
-};
-static constexpr uint32_t kCfgSkinMagic = 0x314E4B53u;   // "SKN1"
-
-static void WriteSkinTrailer(std::ostream& f) {
-    CfgSkinTrailer t{};
-    t.magic = kCfgSkinMagic;
-    t.version = 1;
-    t.flags = (g_state.viewmodel.skin_enabled ? (1u << 0) : 0u);
-    t.index = g_state.viewmodel.skin_index;
-    t.level = g_state.viewmodel.skin_level;
-    uint8_t buf[sizeof(t)];
-    memcpy(buf, &t, sizeof(buf));
-    XorBuf(buf, sizeof(buf));
-    f.write((char*)buf, sizeof(buf));
-}
-
-static bool ReadSkinTrailer(std::istream& f, CfgSkinTrailer& t) {
-    t = CfgSkinTrailer{};
-    uint8_t buf[sizeof(CfgSkinTrailer)];
-    f.read((char*)buf, sizeof(buf));
-    if ((size_t)f.gcount() != sizeof(buf)) return false;
-    XorBuf(buf, sizeof(buf));
-    memcpy(&t, buf, sizeof(t));
-    return t.magic == kCfgSkinMagic && t.version == 1;
-}
-
 // Единственный источник «текущего» конфига: тот же селектор, что у ConfigLoadLast().
 static std::string NewestCfgPath() {
     std::string name;
@@ -573,7 +533,6 @@ static void ConfigSaveToPath(const std::string& path) {
         f.write((char*)extra, sizeof(extra));
         WriteUiTrailer(f);
         WriteExt2Trailer(f);
-        WriteSkinTrailer(f);
         f.close();
         if (f.fail()) remove(tmp.c_str());
         else rename(tmp.c_str(), path.c_str());
@@ -620,8 +579,6 @@ static void LoadCfgByName(const char* name, bool announce) {
     const bool hasUi = ReadUiTrailer(f, ui);
     CfgExt2Trailer ext2{};
     const bool hasExt2 = hasUi && ReadExt2Trailer(f, ext2);
-    CfgSkinTrailer skin{};
-    const bool hasSkin = hasExt2 && ReadSkinTrailer(f, skin);
     f.close();
     if (got != sizeof(buf)) { if (announce) ShowToast(XS("Несовместимый конфиг")); return; }
     XorBuf(buf, sizeof(s));
@@ -632,22 +589,6 @@ static void LoadCfgByName(const char* name, bool announce) {
 
     XorBuf(extra, extraGot);
     g_state.viewmodel = viewmodel::decode(extra, extraGot);
-    // Скины — после decode: он возвращает дефолты полей, которых в VMW1 нет.
-    // Индекс и уровень здесь НЕ клампятся по числу скинов: список читается из
-    // памяти игры уже в сессии, sanitize() контроллера и проверка «индекс
-    // есть в массиве предмета» (skin_changer_memory.h, стадия 13) не дадут
-    // записать мусор. Сохранённый профиль с чужим индексом просто не
-    // применится до выбора существующего.
-    if (hasSkin) {
-        g_state.viewmodel.skin_enabled = (skin.flags & (1u << 0)) != 0;
-        // bit1 (старый skin_rebuild) намеренно игнорируется: старые конфиги
-        // грузятся, зарезервированный бит ничего не включает.
-        g_state.viewmodel.skin_index = viewmodel::bounded((int)skin.index, 0,
-                                                          go_active::SKIN_INDEX_MAX, 0);
-        g_state.viewmodel.skin_level = viewmodel::bounded((int)skin.level, 0,
-                                                          go_active::SKIN_LEVEL_MAX, 0);
-    }
-    g_state.sl_skin_level = {};
     g_state.esp_turrets = g_state.esp_backpacks = g_state.esp_sleepers = false;
     g_state.esp_cupboards = false;
     // Поле aim_lead_ms в старых прицепах читается только как часть формата:

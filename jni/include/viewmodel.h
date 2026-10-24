@@ -2,10 +2,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-// Пределы индекса/уровня скина живут в таблице оффсетов (game_offsets.h, блок
-// «Скины»): и санитайзер, и контроллер обязаны брать их оттуда, а не держать
-// свою копию числа.
-#include "game_offsets_active.h"
 
 // Vertical world FOV; hands are one static position shared by all poses, cm.
 struct ViewmodelSettings {
@@ -24,19 +20,6 @@ struct ViewmodelSettings {
     // DelayPromise, на которых игра ждёт между предметами при сборе лута.
     // Реализация: fast_loot_memory.h, тик из esp_viewmodel_tick.
     bool fast_loot = false;
-    // Скинченджер: подмена ИНДЕКСА скина в Oxide.WeaponPiece ствола в руках —
-    // в ОБЕ копии поля: SyncVar (релиз +0x110) и рабочую (релиз +0xC0), из
-    // которой игра реально собирает визуал (реализация: skin_changer_memory.h,
-    // тик из esp_viewmodel_tick; раскладка доказана дизассемблером dump11966 —
-    // см. большой комментарий там). skin_index — индекс в ItemData.skinData[]
-    // ЭТОГО предмета, а не глобальный id скина: игра сама индексирует свой
-    // массив этим числом (EN.XLy, RVA 0x7CBC768: ldr x8,[ItemData,#0xD0];
-    // [x8 + Skin*8 + 0x20]).
-    bool skin_enabled = false;
-    int  skin_index = 0;
-    // Уровень прогрессии (WeaponProgressionSkinData хранит AssetReference[]
-    // по уровням). Для скинов без уровней игра его просто не читает.
-    int  skin_level = 0;
 };
 
 namespace viewmodel {
@@ -48,11 +31,6 @@ inline bool finite(float v) {
 inline float bounded(float v, float lo, float hi, float fallback) {
     return !finite(v) ? fallback : (v < lo ? lo : (v > hi ? hi : v));
 }
-// Целые пределы (индекс и уровень скина): границы берутся из таблицы оффсетов,
-// потому что за ними — запись мусора в SyncVar Oxide.WeaponPiece.
-inline int bounded(int v, int lo, int hi, int fallback) {
-    return (v < lo || v > hi) ? fallback : v;
-}
 inline int sanitize_fps_limit(int fps) {
     return fps == 90 || fps == 120 || fps == 144 ? fps : 0;
 }
@@ -62,8 +40,6 @@ inline ViewmodelSettings sanitize(ViewmodelSettings s) {
     s.x = bounded(s.x, -50.f, 50.f, 0.f);
     s.y = bounded(s.y, -50.f, 50.f, 0.f);
     s.z = bounded(s.z, -50.f, 50.f, 0.f);
-    s.skin_index = bounded(s.skin_index, 0, go_active::SKIN_INDEX_MAX, 0);
-    s.skin_level = bounded(s.skin_level, 0, go_active::SKIN_LEVEL_MAX, 0);
     return s;
 }
 // Optional trailer after the existing v4 config. Old readers ignore it;
@@ -140,249 +116,7 @@ struct FpsUiInfo {
     uint64_t build_id = 0;           // build ID найденной libunity (0 = mapping'а нет/не прочитан)
 };
 
-// ---- Скинченджер: что видно меню и one-shot CLI ----------------------------
-//
-// Тип скина — по классу ассета SkinData (иерархия из dump.cs, см. блок «Скины»
-// в game_offsets.h). Скинченджеру нужны OBJECT-классы: они дают ДРУГОЙ префаб
-// (WeaponObjectSkinData.FPPrefabRef / rightHandPrefabRef), то есть настоящую
-// модель. Recolor-классы только подменяют материал — это перекраска, не скин,
-// и в списке они помечаются отдельно, чтобы меню честно показывало, что
-// выбрано.
-enum class SkinKind : int {
-    Unknown = 0,
-    WeaponObject = 1,        // WeaponObjectSkinData — другой префаб ствола
-    WeaponProgression = 2,   // WeaponProgressionSkinData — префабы по уровням
-    WeaponPreview = 3,       // WeaponPreviewPrefabSkinData — только превью
-    WeaponRecolor = 4,       // WeaponRecolorSkinData — перекраска материалом
-    EquipObject = 5,         // EquipmentObjectSkinData — одежда/руки
-    EquipRecolor = 6,        // EquipmentRecolorSkinData — перекраска одежды
-    Other = 7,               // BuildingSkinData / Interactable* — не оружие
-};
-inline const char* skin_kind_name(SkinKind kind) {
-    switch (kind) {
-        case SkinKind::WeaponObject:      return "object";
-        case SkinKind::WeaponProgression: return "progression";
-        case SkinKind::WeaponPreview:     return "preview";
-        case SkinKind::WeaponRecolor:     return "recolor";
-        case SkinKind::EquipObject:       return "equip-object";
-        case SkinKind::EquipRecolor:      return "equip-recolor";
-        case SkinKind::Other:             return "other";
-        default:                          return "unknown";
-    }
 }
-// true для скинов, которые меняют модель, а не материал.
-inline bool skin_kind_is_object(SkinKind kind) {
-    return kind == SkinKind::WeaponObject || kind == SkinKind::WeaponProgression ||
-           kind == SkinKind::EquipObject;
-}
-// Распознан ли тип ВООБЩЕ. Unknown/Other означают, что класс не совпал ни с
-// TypeInfo-слотом профиля, ни с точным именем: у asset_ready() для такой
-// записи нечего читать, её ready == false — это «не измерить», а не «ассет не
-// запрашивался». Меню и skin.log обязаны различать эти случаи, иначе
-// неповинный скин будет объявлен отсутствующим на устройстве.
-inline bool skin_kind_identified(SkinKind kind) {
-    return kind != SkinKind::Unknown && kind != SkinKind::Other;
-}
-
-// Предел списка. Был 24 с формулировкой «массив короткий, а больше меню и не
-// нужно» — устройство (§4.23) показало обратное: у популярных стволов
-// (Томпсон, Дезерт Игл, Самопал) в ItemData.skinData больше 24 позиций, и
-// прежний предел отвергал ствол ЦЕЛИКОМ с враньём «у предмета нет скинов».
-// Теперь 64 = SKIN_INDEX_MAX + 1: sanitize дальше и не пустит индекс, а
-// более длинный массив получает честную стадию 27 (TooManySkins). Совпадает
-// с skinchanger::kMaxSkins.
-constexpr int kSkinEntryMax = 64;
-
-// Одна строка списка: скин предмета, который сейчас в руках.
-struct SkinEntryView {
-    int      index = -1;             // значение, которое пишется в WeaponPiece.Skin
-    SkinKind kind = SkinKind::Unknown;
-    int      levels = 1;             // >1 у WeaponProgressionSkinData (массивы по уровням)
-    bool     ready = false;          // AssetReference.m_Operation непуста: ассет уже запрашивался;
-                                     // сборка вьюхи ставит закачку САМА, false — сборки ещё не было
-    char     id[48] = {};            // SkinData.Id (UTF-8)
-    char     base_id[32] = {};       // SkinData.baseId — id базового предмета
-};
-
-// Почему не применилось — УКРУПНЁННО, для меню и автолога skin.log. Стадий у
-// контроллера двадцать семь (skin_changer_memory.h), но игроку нужно не
-// «стадия 13», а что делать. Unreadable и WrongLayout разделены намеренно:
-// первое — транспорт не читает голову WeaponPiece, второе — читает, но это не
-// WeaponPiece, то есть оффсеты не от этого билда (нужен дамп новой версии).
-// Quarantined (§4.22) — отдельная причина: сборка вьюхи падала на этом скине,
-// чит сбросил полусобранный FPObject и временно не даёт выбирать его снова.
-// TooManySkins (§4.23) — не «нет скинов»: массив длиннее предела списка,
-// лечится поднятием предела, а не поиском отсутствующих скинов.
-// Детальная расшифровка для CLI и разработчика —
-// skin_change_stop_reason() в game_viewmodel.cpp; группировка живёт здесь —
-// меню скинченджера не показывает ни причин, ни тостов (KERNEL.md §6),
-// укрупнённую причину потребляют только автолог skin.log и CLI.
-enum class SkinBlock : int {
-    None = 0,        // порядок, скин применён
-    NoPlayer,        // нет локального игрока
-    NoWeapon,        // компонент оружия не найден
-    EmptyHands,      // в руках пусто
-    NoItemData,      // нет данных предмета
-    NoSkins,         // у предмета нет массива скинов
-    BadIndex,        // выбранный индекс не подходит этому стволу
-    Unreadable,      // WeaponPiece не читается транспортом
-    WrongLayout,     // читается, но это не WeaponPiece: оффсеты не от этого билда
-    WriteFailed,     // запись не подтвердилась чтением обратно
-    Quarantined,     // §4.22: этот скин ломал сборку вьюхи — ствол на карантине
-    TooManySkins,    // §4.23: скинов больше предела списка — это не «нет скинов»
-};
-inline SkinBlock skin_block(int stage) {
-    switch (stage) {
-        case 0:                                   return SkinBlock::None;
-        case 1:  case 2:  case 3:  case 4:        return SkinBlock::NoPlayer;
-        case 5:                                   return SkinBlock::NoWeapon;
-        case 6:  case 7:  case 8:  case 9:        return SkinBlock::EmptyHands;
-        case 10:                                  return SkinBlock::NoItemData;
-        case 11: case 12:                         return SkinBlock::NoSkins;
-        case 13:                                  return SkinBlock::BadIndex;
-        case 14:                                  return SkinBlock::Unreadable;
-        case 15:                                  return SkinBlock::WrongLayout;
-        case 16: case 17: case 18: case 19:       return SkinBlock::WriteFailed;
-        case 20:                                  return SkinBlock::Unreadable;
-        case 21:                                  return SkinBlock::WrongLayout;
-        case 22: case 23: case 24: case 25:       return SkinBlock::WriteFailed;
-        case 26:                                  return SkinBlock::Quarantined;
-        case 27:                                  return SkinBlock::TooManySkins;
-        default:                                  return SkinBlock::NoPlayer;
-    }
-}
-// Технические строки для автолога и CLI — пишутся как есть (весь служебный
-// вывод чита на русском). Меню их НЕ показывает: у панели скинченджера нет
-// ни статусных строк, ни тостов вовсе (KERNEL.md §6).
-inline const char* skin_block_text(SkinBlock block) {
-    switch (block) {
-        case SkinBlock::None:        return "Применено";
-        case SkinBlock::NoPlayer:    return "Нет локального игрока";
-        case SkinBlock::NoWeapon:    return "Оружие не найдено";
-        case SkinBlock::EmptyHands:  return "В руках пусто";
-        case SkinBlock::NoItemData:  return "Нет данных предмета";
-        case SkinBlock::NoSkins:     return "У предмета нет скинов";
-        case SkinBlock::BadIndex:    return "Индекс не подходит стволу";
-        case SkinBlock::Unreadable:  return "WeaponPiece не читается";
-        case SkinBlock::WrongLayout: return "Оффсеты WeaponPiece не от этого билда";
-        case SkinBlock::WriteFailed: return "Запись не подтвердилась";
-        case SkinBlock::Quarantined: return "Ствол в карантине: скин ломал сборку вьюхи";
-        case SkinBlock::TooManySkins: return "У предмета больше скинов, чем вмещает список";
-        default:                     return "";
-    }
-}
-
-// Снимок состояния для меню: заполняется контроллером (skin_changer_memory.h)
-// и не делает дополнительных обращений к памяти игры на каждый кадр меню.
-struct SkinUiInfo {
-    int  count = 0;             // сколько скинов у предмета в руках (0 = нет/не привязаны)
-    int  skin = -1;             // WeaponPiece.Skin, который лежит в памяти сейчас
-    int  level = -1;            // WeaponPiece.SkinLevel сейчас
-    bool fp_stale = false;      // PlayerFPWeaponView из ДРУГОГО индекса либо отсутствует
-    bool handle_live = false;   // PlayerWeapon.skinVisualHandle._model != 0
-    // Рабочая копия piece (+0xC0/+0xD0) — вторая цель записи: -1 — не
-    // читается или не WeaponPiece, 0 — там наш индекс,
-    // 1 — индекс отличается (игра перезаписала копию, ждём следующего тика).
-    int  local_state = -1;
-    // §4.21: игра гасит голову рабочей копии на холстере (Enabled=0), а
-    // CreateFPWeapon трактует её как «отложенный Release». Чит достраивает
-    // голову зеркалом из SyncVar (pMd-семантика) — true, пока зеркало держит
-    // голову (дроу снова собирает вьюху, а не выпускает её).
-    bool local_refill = false;
-    // Oxide.Item.skin (+0x30) — третья цель записи: дроп и сохранение несут
-    // наш скин (пересборка вьюхи — на дроу/спавне, KERNEL.md §4.17–4.20).
-    // -1 — не читается, 0 — Item держит наш индекс, 1 — отличается.
-    int  item_state = -1;
-    // Голова рабочей копии сырыми байтами ("xx xx ..."), когда она прошла
-    // только щадящую проверку (Loaded/Number неканонические) или отклонена на
-    // стадии 21: лог и CLI показывают, что реально лежит в копии. Пусто —
-    // голова каноническая либо не прочиталась вовсе.
-    char local_head[24] = {};
-    bool piece_read = false;    // skin/level действительно прочитаны из памяти
-    // §4.22: сколько раз чит сбрасывал полусобранный FPObject (_currentWeapon)
-    // после исключения в сборке вьюхи. 0 — сборка ни разу не ломалась.
-    int  fp_build_resets = 0;
-    // §4.22: индекс скина, уронившего сборку, и ItemData.m_Id ствола, на
-    // котором это случилось; -1 — карантина нет. Пока stвол в карантине, тот
-    // же скин на том же стволе не применяется (стадия 26), а смена индекса
-    // или другого предмета снимает карантин и пробует заново.
-    int  quarantine_skin = -1;
-    // §4.24: наблюдение за полусобранной вьюхой — секунды, которые сигнатура
-    // панциря держится подряд (0 — панциря нет). Детали панциря: погашен ли
-    // PlayerEventHandler (+0xC8; у FPBow.FDN на нём NRE — каждый дроу любого
-    // ствола падает ещё до очистки _currentWeapon), куда указывает обратная
-    // ссылка на игрока (1 — наша, 0 — null, 2 — чужая, -1 — не прочиталась)
-    // и имя класса полусобранного объекта («FPBow» в логе — готовый вердикт).
-    int  shell_watch = 0;
-    bool shell_peh_null = false;
-    int  shell_back = -1;
-    char shell_class[24] = {};
-    // §4.24: секунды, которые piece держится «в руках» (Enabled=1), а FP-цепочка
-    // не резолвится (стадии 7–9) и панциря в _currentWeapon НЕТ: игра уронила
-    // сборку раньше создания FPObject (инстанцирование/хвост) — форма, в которой
-    // сбрасывать нечего, но лог обязан её видеть, а не молчать до ротации.
-    int  stuck_seconds = 0;
-    // §4.24: зомби-резолв — секунды, которые _currentWeapon пуст, а резолв
-    // тем не менее ПРОХОДИТ через типизированный кэш uzN (+0x58) живым
-    // объектом прежней сборки: чит видит «применено» (стадия 0), вьюха мертва,
-    // детектор панциря и дедуп блока молчат. Устройство (ответы на вопросы по
-    // v16): игрок пробыл в отравлении 1–2 минуты, а лог оборвался на
-    // «применено» — ни строки нерезолва; тишина при живом тике возможна
-    // только в этой форме. Счёт идёт при piece Enabled=1 (ствол в руках):
-    // пустой _currentWeapon при пустых руках — нормальный холстер.
-    int  cache_seconds = 0;
-    // §4.25: застревание дроу — секунды, которые Number в руках (SyncVar
-    // piece) расходится с Number последней сборки, дошедшей до TAIL
-    // (FPManager.uzL, +0x68; Number внутри +0x2). Дроу не доходит до
-    // CreateFPWeapon: все сигналы чита «применено», вьюха мертва — форма,
-    // которую устройство описывает как «в рандом момент перестают применяться
-    // скины, лечит только перезайти» (v17: сессия оборвалась на «применено»,
-    // ни панциря, ни зомби, ни застревания). Оба номера — для строки лога.
-    int  stall_seconds = 0;
-    int  stall_hand_number = -1;   // SyncVar piece.Number (что в руках)
-    int  stall_view_number = -1;   // uzL.Number (из чего последний раз собиралась вьюха)
-    // §4.26: сырой срез FP-состояния — одна строка со всем, из чего состоит
-    // конвейер сборки вьюхи: cur с классом и инвариантом (Item/uhq/ссылка/
-    // обработчик), CTS/CTS2/UTCS (Kxi пересоздаёт их на каждый вызов — смена
-    // указателей доказывает, что дроу дошёл до Kxi), флаги uzj/uhF, uzL
-    // (piece последней сборки, дошедшей до TAIL), все три копии piece
-    // (SyncVar/рабочая/вьюха), гейт дроу PW+0xDC, FPManager от PW +0xF8,
-    // ручка визуала. dump_seq растёт с каждым новым срезом (монотонно на
-    // жизнь процесса); пустой текст = срезов ещё не было. skin.log печатает
-    // строку как есть («срез #N: …»): сердцебиение раз в 60 с заодно служит
-    // доказательством живости тика, а срезы на смену триггеров показывают
-    // момент, когда сборка перестала двигаться.
-    int  dump_seq = 0;
-    char dump_text[256] = {};
-    int  stage = 0;             // 0 = порядок; расшифровка — skin_change_stop_reason()
-    Status status = Status::Off;
-    char weapon[48] = {};       // ItemData.m_ShortName/m_Name предмета в руках
-};
-// Подробности выбранного скина (id, тип, уровни, готовность ассета) в снимок не
-// дублируются: и меню, и автолог берут их из esp_skin_entries() по индексу —
-// один источник, а не два, которые могут разойтись.
-}
-
-// Список скинов предмета в руках (кэш контроллера, не чтение памяти на вызов).
-// Возвращает число заполненных строк.
-int  esp_skin_entries(viewmodel::SkinEntryView* out, int max);
-// Снимок состояния скинченджера для меню и one-shot CLI.
-viewmodel::SkinUiInfo esp_skin_ui();
-// Расшифровка стадии остановки для лога/меню (стадии — в skin_changer_memory.h).
-const char* skin_change_stop_reason(viewmodel::Status status, int stage);
-// Одноразовый запрос перезаписать ОБЕ копии piece, даже если значения уже
-// совпадают (снимает «свежесть» слотов — следующий тик пишет с readback):
-// ставится меню («Переписать обе копии») и one-shot CLI `skin ... --rebuild`.
-// Внешний процесс не может САМ запустить пересборку вьюхи — её делает игра на
-// своих событиях (холстер/дроу пересобирает из рабочей копии, RPC насадок/
-// модов читает SyncVar, спавн/подбор ствола — OnStartClient); эта кнопка лишь
-// гарантирует, что к событию в обеих копиях лежит наш индекс.
-void esp_skin_request_rebuild();
-// Одноразовый запрос перечитать список скинов. Ставится меню, пока раздел
-// раскрыт, и CLI `skins`: перечитывание читает строки посимвольно, поэтому по
-// запросу, а не каждый тик. Работает и при выключенном тумблере — список
-// показывается до включения, записей при этом нет.
-void esp_skin_request_scan();
 
 // Main-thread tick, independent of ESP toggles. No background writer.
 void esp_viewmodel_tick(const ViewmodelSettings& settings);

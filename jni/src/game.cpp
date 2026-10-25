@@ -7246,10 +7246,18 @@ bool aim_read_weapon_config(uint64_t weapon, uint64_t offset, bool allow_structu
 
     uint64_t profile = 0;
     // Speed is enough for a moving-target intercept when a transient/null
-    // profile read fails. Keep that fallback instead of disabling prediction.
+    // profile read fails. HitscanWeaponConfig.LJm (0x7BDB468) returns
+    // (gravity = 5.0f, airDrag = 0.0f, underwaterDrag = 0.0f) when the
+    // BallisticProfile reference (+0x60) is null.
     if (aim_read_pointer_exact(config + HITSCANCONFIG_BALLISTIC_PROFILE, profile) &&
         profile && !aim_read_profile(profile, read)) {
         read = {};
+    }
+    if (!read.has_physics) {
+        read.params.gravity = 5.0f;
+        read.params.air_drag = 0.0f;
+        read.params.underwater_drag = 0.0f;
+        read.has_physics = true;
     }
 
     if (identity == 2) {
@@ -7332,8 +7340,9 @@ void aim_merge_ballistics(const AimBallisticRead& config, const AimBallisticRead
     out.valid = out.muzzle_speed >= 1.0f && aim_ballistics::parameters_valid(out);
 }
 
-// Exact weapon ballistics extracted from data-weapons-configs_assets_all bundle
-// keyed by FPObject.m_ObjectID (+0x70).
+// Exact weapon ballistics extracted from data-weapons-configs_assets_all and
+// ShaftedProjectile prefabs (ea6ade8cf067047339cfa0ad3406e165), keyed by
+// FPObject.m_ObjectID (+0x70).
 bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
     read = {};
     int32_t obj_id = 0;
@@ -7347,29 +7356,31 @@ bool aim_lookup_weapon_by_object_id(uint64_t weapon, AimBallisticRead& read) {
         float water_drag;
     };
     static constexpr Entry kTable[] = {
-        {  4,  90.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 04_Revolver
-        {  5,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 05_Shotgun
-        {  6, 260.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 06_HuntingRifle
-        {  7, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 07_AssaultRifle
-        { 10,  60.0f,  28.0f, 1.0f, 0.05f, 1.5f }, // 10_IronSpear
-        { 11, 120.0f,  55.0f, 1.0f, 0.05f, 1.5f }, // 11_WoodenBow
-        { 14, 150.0f,  40.0f, 0.5f, 0.05f, 1.5f }, // 14_RocketLauncher
-        { 16,  35.0f,  18.0f, 1.0f, 0.05f, 1.5f }, // 16_ExplosiveCharge
-        { 20,  90.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 20_SubmachineGun
-        { 21,   9.0f, 350.0f, 0.5f, 0.10f, 5.0f }, // 21_FlareGun
-        { 22, 150.0f,  75.0f, 1.0f, 0.05f, 1.5f }, // 22_Crossbow
-        { 26, 130.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 26_DesertEagle
-        { 27, 120.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 27_Thompson
-        { 28, 200.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 28_DMR
-        { 30, 200.0f, 600.0f, 0.0f, 0.10f, 5.0f }, // 30_Winchester
-        { 32, 300.0f, 550.0f, 0.0f, 0.10f, 5.0f }, // 32_DVL
-        { 33, 180.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 33_HMLMG
-        { 35,  70.0f, 400.0f, 0.0f, 0.10f, 5.0f }, // 35_HandmadePistol
-        { 37, 150.0f, 450.0f, 0.0f, 0.10f, 5.0f }, // 37_KrissVector
-        { 41,  40.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 41_SteelBallGun
-        { 43, 200.0f, 500.0f, 0.0f, 0.10f, 5.0f }, // 43_FnFal
-        { 44,  30.0f, 350.0f, 0.0f, 0.10f, 5.0f }, // 44_DoubleBarrel
-        { 45,   9.0f, 300.0f, 0.0f, 0.10f, 2.5f }, // 45_SignalFlareGun
+        {  4,  90.0f, 400.0f, 5.0f, 0.00f, 0.0f }, // 04_Revolver
+        {  5,  30.0f, 350.0f, 5.0f, 0.00f, 0.0f }, // 05_Shotgun
+        {  6, 260.0f, 600.0f, 5.0f, 0.00f, 0.0f }, // 06_HuntingRifle
+        {  7, 200.0f, 500.0f, 5.0f, 0.00f, 0.0f }, // 07_AssaultRifle
+        {  9,  25.0f,  25.0f, 2.5f, 0.15f, 3.0f }, // 09_WoodenSpear / StoneSpear
+        { 10,  25.0f,  22.0f, 3.0f, 0.20f, 3.5f }, // 10_IronSpear / MetalSpear
+        { 11,  50.0f,  70.0f, 2.5f, 0.10f, 2.5f }, // 11_WoodenBow / WoodenArrow
+        { 14,  60.0f,  30.0f, 1.0f, 0.10f, 5.0f }, // 14_RocketLauncher / Rocket
+        { 16,  35.0f,  16.0f, 2.0f, 0.20f, 5.0f }, // 16_ExplosiveCharge
+        { 20,  90.0f, 450.0f, 5.0f, 0.00f, 0.0f }, // 20_SubmachineGun
+        { 21,   9.0f, 350.0f, 5.0f, 0.00f, 0.0f }, // 21_FlareGun
+        { 22,  60.0f,  60.0f, 1.5f, 0.05f, 1.5f }, // 22_Crossbow / CrossbowBolt
+        { 26, 130.0f, 400.0f, 5.0f, 0.00f, 0.0f }, // 26_DesertEagle
+        { 27, 120.0f, 450.0f, 5.0f, 0.00f, 0.0f }, // 27_Thompson
+        { 28, 200.0f, 550.0f, 5.0f, 0.00f, 0.0f }, // 28_DMR
+        { 30, 200.0f, 600.0f, 5.0f, 0.00f, 0.0f }, // 30_Winchester
+        { 31,  35.0f,  16.0f, 2.0f, 0.20f, 5.0f }, // 31_MakeshiftGrenade
+        { 32, 300.0f, 550.0f, 5.0f, 0.00f, 0.0f }, // 32_DVL
+        { 33, 180.0f, 500.0f, 5.0f, 0.00f, 0.0f }, // 33_HMLMG
+        { 35,  70.0f, 400.0f, 5.0f, 0.00f, 0.0f }, // 35_HandmadePistol
+        { 37, 150.0f, 450.0f, 5.0f, 0.00f, 0.0f }, // 37_KrissVector
+        { 41,  40.0f, 350.0f, 5.0f, 0.00f, 0.0f }, // 41_SteelBallGun
+        { 43, 200.0f, 500.0f, 5.0f, 0.00f, 0.0f }, // 43_FnFal
+        { 44,  30.0f, 350.0f, 5.0f, 0.00f, 0.0f }, // 44_DoubleBarrel
+        { 45,   9.0f, 300.0f, 2.5f, 0.00f, 0.0f }, // 45_SignalFlareGun
     };
     for (const Entry& e : kTable) {
         if (e.id == obj_id) {
@@ -7502,16 +7513,19 @@ void update_aim_ballistics(uint64_t player) {
     else if (aim_object_identity(weapon, "FPSpear", "Oxide") == 1)
         kind = Kind::Spear;
 
+    // FPCrossbow.config (+0x138) and FPRocketLauncher.config (+0x128) are used
+    // only for DispersionCalculator (FPCrossbow.FixedUpdate 0x7B80934,
+    // FPRocketLauncher.LCx 0x6D74F10); the launched bolt/rocket always uses
+    // the ShaftedProjectile prefab (+0x148) or the kTable[] fallback when
+    // unloaded.
     uint64_t config_offset = 0, projectile_offset = 0;
     switch (kind) {
         case Kind::Hitscan: config_offset = FPHITSCAN_CONFIG; break;
         case Kind::Bow: projectile_offset = FPBOW_PROJECTILE_PREFAB; break;
         case Kind::Crossbow:
-            config_offset = FPCROSSBOW_CONFIG;
             projectile_offset = FPCROSSBOW_PROJECTILE_PREFAB;
             break;
         case Kind::Rocket:
-            config_offset = FPROCKETLAUNCHER_CONFIG;
             projectile_offset = FPROCKETLAUNCHER_PROJECTILE_PREFAB;
             break;
         case Kind::Explosive: projectile_offset = FPEXPLOSIVECHARGE_PROJECTILE_PREFAB; break;
@@ -7550,6 +7564,19 @@ void update_aim_ballistics(uint64_t player) {
             if (aim_read_projectile(weapon, offset, true, projectile_read) &&
                 projectile_read.params.valid) { projectile_ok = true; break; }
             projectile_read = {};
+        }
+    }
+
+    if ((kind == Kind::Bow || kind == Kind::Crossbow || kind == Kind::Explosive ||
+         kind == Kind::Snowball || kind == Kind::Spear) &&
+        (player_is_mounted(player) || player_mount_engaged(player))) {
+        auto vt = g_player_track.find(player);
+        if (vt != g_player_track.end() && vt->second.have_vel_ref) {
+            const double age = now - vt->second.vel_ref_t;
+            if (age >= 0.0 && age <= 0.35 && aim_ballistics::finite(vt->second.vel)) {
+                g_aim_inherited_velocity = aim_ballistics::scale(
+                    vt->second.vel, aim_ballistics::motion_confidence(static_cast<float>(age)));
+            }
         }
     }
 
@@ -7656,10 +7683,11 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     if (g_state.aim_touch && haveOrigin) {
         aim_ballistics::Parameters params = g_aim_ballistic_params;
         if (!params.valid) {
+            // Default HitscanWeaponConfig.LJm (0x7BDB468) firearm profile.
             params.muzzle_speed = 500.0f;
-            params.gravity = 0.0f;
-            params.air_drag = 0.10f;
-            params.underwater_drag = 5.0f;
+            params.gravity = 5.0f;
+            params.air_drag = 0.0f;
+            params.underwater_drag = 0.0f;
             params.max_range = 200.0f;
             params.valid = true;
         }
@@ -7682,6 +7710,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         // available so network tick bursts cannot overshoot sprint speed (6.6 m/s).
         const bool use_est = silent_mode && g_aim_est.valid && !vehicle_speed;
         Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
+        float effective_horiz_speed = aim_ballistics::finite(horiz_speed) ? horiz_speed : 0.0F;
         if (use_est) {
             const float trust = 0.45F + 0.55F * g_aim_est.confidence;
             Vec3 base_vel = aim_ballistics::scale(g_aim_est.vel, trust);
@@ -7698,6 +7727,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
                 base_vel.x *= k;
                 base_vel.z *= k;
             }
+            effective_horiz_speed = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
             solve_vel = aim_ballistics::scale(base_vel, ballistic_vel_scale);
         }
         // Target path: damped velocity (players reverse strafes, an undamped
@@ -7711,9 +7741,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         path.horizon = vehicle_speed ? 5.0F : 1.25F;
         path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
         const float kSilentNetLatency = g_silent_lead_seconds;   // menu slider, see esp_set_silent_lead
-        box.aim_speed = use_est
-            ? std::sqrt(g_aim_est.vel.x * g_aim_est.vel.x + g_aim_est.vel.z * g_aim_est.vel.z)
-            : 0.0F;
+        box.aim_speed = effective_horiz_speed;
         if (use_est) {
             // KCC remote interpolation (0x5F14D14 / 0x5F14D7C) advances over a
             // 0.03125s (32 Hz) tick window, and jX.vLO (0x7BEAC38) raycasts
@@ -7729,6 +7757,8 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
                     g_aim_est.accel, 0.25F * g_aim_est.confidence * g_aim_predict_scale);
                 path.accel_time = 0.10F;
             }
+        } else if (silent_mode) {
+            path.latency = kSilentNetLatency * g_aim_predict_scale;
         }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
@@ -9504,6 +9534,7 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         // К задержке контура прибавляем возраст отсчёта позиции: далёкие боты
         // перечитываются раз в 6/15 кадров, и видимый бот за это время уходит
         // вперёд от той точки, которую мы ещё держим в кэше.
+        Vec3 bot_catchup{};
         if (src.vel_valid) {
             Vec3 measured{src.vx, src.vy, src.vz};
             if (fabsf(measured.y) < 0.45f) measured.y *= 0.35f;
@@ -9514,22 +9545,27 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
             g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
             if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
             else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
+            const float catchup_dt = (age < kBotPosLeadMax ? age : kBotPosLeadMax) * g_aim_predict_scale;
+            bot_catchup = aim_ballistics::scale(g_aim_velocity, catchup_dt);
+            if (bot_catchup.y > 0.20f) bot_catchup.y = 0.20f;
+            else if (bot_catchup.y < -0.20f) bot_catchup.y = -0.20f;
         } else {
             g_aim_velocity = {};
             g_aim_lead = {};
         }
+        feet = aim_ballistics::add(feet, bot_catchup);
         // Keep bot slots aligned with player slots: [0] head, [1] neck, [2] chest.
         Vec3 head, neck, chest;
         if (src.head_valid) {
             // Точная кость головы модели: без оценки по росту от ног.
-            head = {src.hx, src.hy, src.hz};
+            head = aim_ballistics::add(Vec3{src.hx, src.hy, src.hz}, bot_catchup);
             if (src.neck_valid) {
-                neck = {src.nx, src.ny, src.nz};
+                neck = aim_ballistics::add(Vec3{src.nx, src.ny, src.nz}, bot_catchup);
             } else {
                 neck = head; neck.y -= kBotNeckDrop;
             }
             if (src.chest_valid) {
-                chest = {src.cx, src.cy, src.cz};
+                chest = aim_ballistics::add(Vec3{src.cx, src.cy, src.cz}, bot_catchup);
             } else {
                 chest = head; chest.y -= kBotChestDrop;
             }

@@ -196,5 +196,22 @@ int main() {
         assert(near(target_offset(jump, vy0 / 20.0f, pm).y, 1.35f, 0.02f));   // apex
         assert(near(target_offset(jump, 2.0f * vy0 / 20.0f + 0.1f, pm).y, 0.0f, 1e-3f)); // landed
     }
+    // network latency: target keeps moving past bullet flight; default stays off
+    {
+        TargetModel off{};
+        TargetModel net{}; net.latency = 0.08f;
+        const Vec3 run{6.0f, 0.0f, 0.0f};
+        assert(near(target_offset(run, 0.3f, off).x, 6.0f * 0.3f, 1e-5f));
+        assert(near(target_offset(run, 0.3f, net).x, 6.0f * 0.38f, 1e-5f));
+        assert(near(target_offset(run, 0.0f, net).x, 6.0f * 0.08f, 1e-5f));
+        // solver aims further ahead of a runner with latency than without
+        Parameters p{}; p.muzzle_speed = 500.0f; p.gravity = 1.0f; p.air_drag = 0.1f;
+        p.underwater_drag = 5.0f; p.max_range = 400.0f; p.valid = true;
+        Solution a{}, b{};
+        const Vec3 origin{0, 1.6f, 0}, tgt{0, 1.6f, 120.0f};
+        assert(solve(origin, tgt, run, {}, p, a, off));
+        assert(solve(origin, tgt, run, {}, p, b, net));
+        assert(b.direction.x > a.direction.x);
+    }
     return 0;
 }

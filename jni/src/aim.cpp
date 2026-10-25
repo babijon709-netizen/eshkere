@@ -439,7 +439,15 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         if (b.dead) { ++s_dead_skipped; continue; }
         if (cfg::aim::vis_check && !b.visible) continue;
         AimTarget t;
-        int usedBone = aim_control::configured_bone_slot(wantBone, b.aim_valid);
+        // Silent auto-zone: head/neck hitboxes are a few cm; on a runner or at range
+        // any position error misses the body. Use the chest (largest zone) there.
+        constexpr float kSilentZoneSpeed = 2.0f;   // m/s
+        constexpr float kSilentZoneRange = 60.0f;  // m
+        int candidateBone = wantBone;
+        if (g_state.aim_mode == AIM_MODE_SILENT && g_state.silent_auto_zone && wantBone < 2 &&
+            (b.aim_speed > kSilentZoneSpeed || b.distance > kSilentZoneRange))
+            candidateBone = 2;
+        int usedBone = aim_control::configured_bone_slot(candidateBone, b.aim_valid);
         if (usedBone < 0) {
             for (int fb = 0; fb < 3; ++fb) {
                 if (b.aim_valid[fb]) { usedBone = fb; break; }

@@ -163,6 +163,14 @@ float TabContent(int tab, float dt, float cW) {
             ToggleRow("##ta3", XS("Круг FOV"), &g_state.aim_special, g_state.a_aim_spec, true, false, &cfg::aim::fov_col);
         }
 
+        if (g_state.aim_mode == AIM_MODE_SILENT &&
+            SettingsHeader("##aim_silent", XS("Сайлент"), g_state.silent_auto_zone ? XS("Авто-зона") : XS("Ручная зона"))) {
+            CardBg(Layout::SliderH + Layout::RowH);
+            SliderRow("##silead", XS("Упреждение"), &g_state.silent_lead_ms, 0.f, 200.f, XS("%.0f мс"),
+                      false, true, g_state.sl_silent_lead, dt);
+            ToggleRow("##tsz", XS("Авто-зона (грудь на бегу)"), &g_state.silent_auto_zone, g_state.a_silent_zone, true);
+        }
+
         // ---- Тач-зона аима -------------------------------------------------
         // Где именно лежит палец, которым аимбот водит камеру. Выбирается
         // тапом по экрану — как зоны автофарма, только точка одна: меню
@@ -1416,6 +1424,7 @@ void RenderMenu() {
     Tick(g_state.a_aim_spec,   g_state.aim_special,        dt);
     Tick(g_state.a_aim_scope,  g_state.aim_scope_only,     dt);
     Tick(g_state.a_aim_fire,   g_state.aim_fire_only,      dt);
+    Tick(g_state.a_silent_zone, g_state.silent_auto_zone,  dt);
     Tick(g_state.a_esp_box,    g_state.esp_box,            dt);
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);
     Tick(g_state.a_esp_wall,   g_state.esp_wall,           dt);

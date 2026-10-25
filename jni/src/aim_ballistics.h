@@ -39,12 +39,21 @@ struct Solution {
 //            peaks and lands back at launch height instead of flying off
 //            linearly. 0 = off. FILL: measure from jump logs (apex time).
 //   max_drop cap on predicted fall below the sample, m (ground height unknown).
+//   latency  s added to the target's travel time on top of bullet flight: the
+//            shot is resolved against the server-side position, which is ahead
+//            of the sample we render by network delay + interpolation buffer.
+//            0 = off (legacy: target only moves for the bullet flight time).
 struct TargetModel {
     float tau = 0.0f;
     float horizon = 0.0f;
     float gravity = 0.0f;
     float airborne_vy = 2.0f;
     float max_drop = 3.0f;
+    float latency = 0.0f;
+    // Horizontal acceleration (m/s^2) applied for at most accel_time seconds,
+    // after which the target keeps the velocity it reached. 0 = off.
+    Vec3  accel{};
+    float accel_time = 0.0f;
 };
 
 inline bool finite(float value) {
@@ -110,10 +119,16 @@ inline float length(const Vec3& value) {
 }
 
 inline Vec3 target_offset(const Vec3& v, float t, const TargetModel& m) {
-    float te = t;
+    float te = t + (m.latency > 0.0f ? m.latency : 0.0f);
     if (m.horizon > 0.0f && te > m.horizon) te = m.horizon;
     const float s = m.tau > 1.0e-3f ? m.tau * (1.0f - std::exp(-te / m.tau)) : te;
     Vec3 off{v.x * s, v.y * s, v.z * s};
+    if (m.accel_time > 0.0f) {
+        const float ta = te < m.accel_time ? te : m.accel_time;
+        const float tail = te - ta;
+        off.x += 0.5f * m.accel.x * ta * ta + m.accel.x * ta * tail;
+        off.z += 0.5f * m.accel.z * ta * ta + m.accel.z * ta * tail;
+    }
     if (m.gravity > 0.0f && std::fabs(v.y) >= m.airborne_vy) {
         if (v.y > 0.0f) {
             // Jump: lands back at launch height after 2*vy/g.

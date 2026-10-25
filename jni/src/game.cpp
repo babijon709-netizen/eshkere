@@ -8,6 +8,7 @@
 #include "viewmodel.h"
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
+#include "target_predictor.h"
 #include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
 #include "kernel_io.h"             // кернел-транспорт (сокет ядерного драйвера)
@@ -7123,6 +7124,14 @@ static float g_aim_lead_seconds = 0.0F;
 static Vec3 g_aim_lead{};
 static Vec3 g_aim_velocity{};
 static Vec3 g_aim_inherited_velocity{};
+// Silent-aim motion estimate for the target currently being processed (own
+// LS fit over observed position changes, see target_predictor.h). Reset to
+// invalid for bots / between frames so a stale player estimate never leaks.
+static tgtpred::Estimate g_aim_est{};
+// Extra target-motion time for silent (network delay + interpolation), s.
+// Set from the menu slider through esp_set_silent_lead().
+static float g_silent_lead_seconds = 0.06F;
+static std::unordered_map<uint64_t, tgtpred::Track> g_tgt_track;
 static aim_ballistics::Parameters g_aim_ballistic_params{};
 
 namespace {
@@ -7596,9 +7605,15 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     }
     const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale);
 
-    Vec3 world{world_in.x + scaled_lead.x,
-               world_in.y + scaled_lead.y,
-               world_in.z + scaled_lead.z};
+    // Silent has no finger/camera control lag, so the control-latency lead above
+    // is dead weight there. The solver already moves the target for the whole
+    // flight, so keeping both leads double-counted motion and overshot runners.
+    // Silent instead feeds network latency into the solver (path.latency below).
+    const bool silent_mode = g_state.aim_mode == AIM_MODE_SILENT;
+    const Vec3 pre_lead = silent_mode ? Vec3{} : scaled_lead;
+    Vec3 world{world_in.x + pre_lead.x,
+               world_in.y + pre_lead.y,
+               world_in.z + pre_lead.z};
     if (slot == 0) world.y += head_lift_for_range(world_in);
 
     bool ballisticSolved = false;
@@ -7617,7 +7632,16 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
             else if (dist < 8.5f) ballistic_vel_scale = (dist - 3.5f) / 5.0f;
         }
-        const Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
+        // Silent uses its own motion estimate (LS fit over observed position
+        // changes: velocity + acceleration + fit confidence + sample staleness,
+        // see target_predictor.h). Other modes keep the legacy smoothed velocity.
+        const bool use_est = silent_mode && g_aim_est.valid && !vehicle_speed;
+        Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
+        if (use_est) {
+            // Poor fit (zig-zag) pulls the lead toward ~half instead of trusting it.
+            const float trust = 0.5F + 0.5F * g_aim_est.confidence;
+            solve_vel = aim_ballistics::scale(g_aim_est.vel, ballistic_vel_scale * trust);
+        }
         // Target path: damped velocity (players reverse strafes, a straight line
         // overshoots on slow projectiles) + jump arc. Vehicles are inertial, so
         // they keep velocity longer and get no jump arc.
@@ -7628,6 +7652,26 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         path.tau = vehicle_speed ? 3.0F : 1.5F;
         path.horizon = vehicle_speed ? 5.0F : 3.0F;
         path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
+        // FILL: tune per connection. The server resolves the hit against the
+        // target's authoritative position = our RTT/2 + remote interpolation
+        // buffer ahead of what we render. Too low: still miss runners. Too
+        // high: overshoot strafers. Start at 0.06 and move in 0.02 steps.
+        const float kSilentNetLatency = g_silent_lead_seconds;   // menu slider, see esp_set_silent_lead
+        box.aim_speed = use_est
+            ? std::sqrt(g_aim_est.vel.x * g_aim_est.vel.x + g_aim_est.vel.z * g_aim_est.vel.z)
+            : 0.0F;
+        if (use_est) {
+            // Staleness of the sample we are aiming at is added on top, so a
+            // position that was last refreshed 90 ms ago is led for those 90 ms too.
+            const float stale = g_aim_est.sample_age < 0.35F ? g_aim_est.sample_age : 0.35F;
+            path.latency = kSilentNetLatency + stale;
+            // Steady run: no velocity damping and a longer horizon (long shots keep
+            // the full lead). Otherwise damp and cut the horizon: reversal likely.
+            if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
+            else                    { path.tau = 1.5F; path.horizon = 1.0F; }
+            path.accel = aim_ballistics::scale(g_aim_est.accel, g_aim_est.confidence);
+            path.accel_time = 0.35F;
+        }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
                                   g_aim_inherited_velocity,
@@ -7656,9 +7700,9 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     // ray endpoint so the silent writer steers along the ballistic solution.
     const Vec3 silent_world = ballisticSolved
         ? world
-        : Vec3{world_in.x + scaled_lead.x,
-               world_in.y + scaled_lead.y,
-               world_in.z + scaled_lead.z};
+        : Vec3{world_in.x + pre_lead.x,
+               world_in.y + pre_lead.y,
+               world_in.z + pre_lead.z};
     const Vec3 aim_world = g_state.aim_mode == AIM_MODE_SILENT
         ? silent_world : world;
     box.aim_world[slot][0] = aim_world.x;
@@ -9409,6 +9453,7 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
                 g_frame_bearings.push_back(bearing);
             }
         }
+        g_aim_est = {};
         // Упреждение — по скорости САМОГО бота. Раньше здесь оставался
         // g_aim_lead последнего обработанного игрока кадра (в мемори-режиме не
         // меньше 50 мс), и бегущий игрок уводил прицел на бота в свою сторону.
@@ -11740,6 +11785,16 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 g_aim_velocity = {};
                 g_aim_lead = {};
             }
+        }
+        // Silent predictor: fit velocity/accel over the position history. Mounted
+        // targets keep the legacy inertial model (vehicle_speed path).
+        g_aim_est = {};
+        if (!player_is_mounted(s_transforms[i]) && !player_mount_engaged(s_transforms[i])) {
+            const double est_now = mono_seconds();
+            tgtpred::Track& est_track = g_tgt_track[s_transforms[i]];
+            tgtpred::update(est_track, feet, est_now);
+            g_aim_est = tgtpred::estimate(est_track, est_now);
+            tgtpred::prune(g_tgt_track, est_now);
         }
         box.id = s_transforms[i];
         box.crouched = crouched;

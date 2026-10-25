@@ -70,6 +70,9 @@ struct EspBox {
     // Exact uncompensated bone position for the silent writer. Touch/Memory
     // retain their current angular compensation in aim_yaw/aim_pitch.
     float aim_world[3][3] = {};
+    // Horizontal speed (m/s) of the target from the silent motion estimate;
+    // 0 when no estimate. Used by aim.cpp to pick the hit zone.
+    float aim_speed = 0.f;
     bool  aim_world_valid[3] = {};
     // Бот (враждебный NPC): бокс собран не из игрока, а из маркера — только
     // данные для аима (точка = шея по росту от земли). Оверлей такие боксы
@@ -188,6 +191,8 @@ void        esp_set_ore_types_enabled(bool stone, bool iron, bool sulfur);
 // текущему положению кости). Слайдер «Упреждение» на вкладке аима.
 void        esp_set_screen_stretch(float factor);
 void        esp_set_aim_lead(float seconds);
+// Silent: extra target-motion time (network delay + interpolation), seconds.
+void        esp_set_silent_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).
 void        esp_set_always_day(bool enabled);
 // «Без травы»: отключает GrassEnabled и TreesEnabled (рендерер кустов).

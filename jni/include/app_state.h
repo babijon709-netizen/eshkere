@@ -32,6 +32,11 @@ struct AppState {
     // Shared target priority for Touch, Memory, and Silent modes.
     // 0 = smart distance/alignment balance, 1 = crosshair-first, 2 = nearest.
     int   aim_priority = 0;
+    // Silent: extra lead for network delay + interpolation, ms (session, not
+    // persisted), and automatic zone: moving or far targets get the chest.
+    float silent_lead_ms = 60.f;
+    bool  silent_auto_zone = true;
+    float a_silent_zone = 0;
     bool  esp_box = false, esp_name = false, esp_wall = false, esp_chams = false;
     bool  esp_weapon = false, esp_tracer = false, esp_skeleton = false;
     bool  esp_armor = false;
@@ -168,7 +173,7 @@ struct AppState {
     float a_fakelag_btn_show = 0;
     float a_fps_90 = 0, a_fps_120 = 0, a_fps_144 = 0, a_fps_rst = 0;
 
-    SliderAnim sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_screen_stretch;
+    SliderAnim sl_silent_lead, sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_screen_stretch;
     SliderAnim sl_esp_arrow_ring;
     SliderAnim sl_esp_radar_size, sl_esp_radar_range;
 };

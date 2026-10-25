@@ -2381,7 +2381,10 @@ std::vector<EspMarker> esp_get_markers() {
         float dy = tracked_position.y - g_frame_local_pos.y;
         float dz = tracked_position.z - g_frame_local_pos.z;
         float distance = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (!std::isfinite(distance) || distance > max_distance) {
+        // Supply drops are global map objectives: keep their ESP visible
+        // regardless of the ordinary marker-distance slider.
+        const bool is_airdrop = entity.label && strcmp(entity.label, "Аирдроп") == 0;
+        if (!std::isfinite(distance) || (!is_airdrop && distance > max_distance)) {
             marker_watch_observe(entity, false, "DISTANCE", distance, 0.0F, 0.0F);
             continue;
         }

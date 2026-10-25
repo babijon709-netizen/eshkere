@@ -7587,10 +7587,18 @@ void esp_set_screen_stretch(float factor) {
     if (!(factor >= 0.75F && factor <= 2.0F)) factor = 1.0F;
     g_screen_stretch_x = factor;
 }
+static float g_aim_predict_scale = 1.0F;
+
 void esp_set_silent_lead(float seconds) {
     if (!(seconds >= 0.0F)) seconds = 0.0F;
     if (seconds > 0.25F) seconds = 0.25F;
     g_silent_lead_seconds = seconds;
+}
+void esp_set_aim_predict(float scale) {
+    if (!std::isfinite(scale)) scale = 1.0F;
+    if (scale < 0.0F) scale = 0.0F;
+    if (scale > 2.0F) scale = 2.0F;
+    g_aim_predict_scale = scale;
 }
 void esp_set_aim_lead(float seconds) {
     // Автоматическая задержка контура для touch/memory; это не flight time.
@@ -7612,11 +7620,11 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         if (aim_ballistics::finite(d) && d > 0.01f) dist = d;
     }
 
-    // Distance-dependent lead scaling: in Oxide FixedUpdate steps by 0.03125s,
-    // so a 350–600 m/s firearm bullet raycasts 11–19m on the very first tick.
+    // Distance-dependent lead scaling: in Oxide FixedUpdate steps by 0.02s,
+    // so a 350–600 m/s firearm bullet raycasts 7–12m on the very first tick.
     // On foot (horiz_speed <= 7 m/s), keep extra control lead at 0 inside 5m
-    // and ramp smoothly over 5–25m. In vehicles (horiz_speed > 7 m/s), ramp
-    // much earlier (2–12m) because a fast vehicle covers 1–2m during control lag.
+    // and ramp smoothly to 1.0 over 5–25m (no extra ramp beyond 25m because
+    // aim_ballistics::solve already models projectile flight time + drag).
     const float horiz_speed = std::sqrt(
         g_aim_velocity.x * g_aim_velocity.x + g_aim_velocity.z * g_aim_velocity.z);
     const bool vehicle_speed = aim_ballistics::finite(horiz_speed) && horiz_speed > 7.0f;
@@ -7624,23 +7632,13 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     if (aim_ballistics::finite(dist)) {
         if (vehicle_speed) {
             if (dist > 2.0f) {
-                if (dist <= 12.0f) {
-                    lead_dist_scale = (dist - 2.0f) / 10.0f;
-                } else {
-                    const float extra = (dist - 12.0f) / 30.0f;
-                    lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
-                }
+                lead_dist_scale = (dist <= 12.0f) ? ((dist - 2.0f) / 10.0f) : 1.0f;
             }
         } else if (dist > 5.0f) {
-            if (dist <= 25.0f) {
-                lead_dist_scale = (dist - 5.0f) / 20.0f;
-            } else {
-                const float extra = (dist - 25.0f) / 35.0f;
-                lead_dist_scale = 1.0f + (extra > 0.35f ? 0.35f : extra);
-            }
+            lead_dist_scale = (dist <= 25.0f) ? ((dist - 5.0f) / 20.0f) : 1.0f;
         }
     }
-    const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale);
+    const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale * g_aim_predict_scale);
 
     // Silent has no finger/camera control lag, so the control-latency lead above
     // is dead weight there. The solver already moves the target for the whole
@@ -7664,50 +7662,57 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             params.max_range = 200.0f;
             params.valid = true;
         }
-        float ballistic_vel_scale = 1.0f;
+        float ballistic_vel_scale = g_aim_predict_scale;
         if (!vehicle_speed && aim_ballistics::finite(dist)) {
             if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
-            else if (dist < 8.5f) ballistic_vel_scale = (dist - 3.5f) / 5.0f;
+            else if (dist < 8.5f) ballistic_vel_scale *= (dist - 3.5f) / 5.0f;
         }
         // Silent uses its own motion estimate (LS fit over observed position
         // changes: velocity + acceleration + fit confidence + sample staleness,
-        // see target_predictor.h). Other modes keep the legacy smoothed velocity.
+        // see target_predictor.h), blended with authoritative KCC velocity when
+        // available so network tick bursts cannot overshoot sprint speed (6.6 m/s).
         const bool use_est = silent_mode && g_aim_est.valid && !vehicle_speed;
         Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
         if (use_est) {
-            // Poor fit (zig-zag) pulls the lead toward ~half instead of trusting it.
-            const float trust = 0.5F + 0.5F * g_aim_est.confidence;
-            solve_vel = aim_ballistics::scale(g_aim_est.vel, ballistic_vel_scale * trust);
+            const float trust = 0.45F + 0.55F * g_aim_est.confidence;
+            Vec3 base_vel = aim_ballistics::scale(g_aim_est.vel, trust);
+            if (aim_ballistics::finite(horiz_speed) && horiz_speed > 0.25F) {
+                base_vel.x = 0.5F * g_aim_velocity.x + 0.5F * base_vel.x;
+                base_vel.z = 0.5F * g_aim_velocity.z + 0.5F * base_vel.z;
+            }
+            const float bh = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
+            if (bh > 6.6F) {
+                const float k = 6.6F / bh;
+                base_vel.x *= k;
+                base_vel.z *= k;
+            }
+            solve_vel = aim_ballistics::scale(base_vel, ballistic_vel_scale);
         }
-        // Target path: damped velocity (players reverse strafes, a straight line
-        // overshoots on slow projectiles) + jump arc. Vehicles are inertial, so
-        // they keep velocity longer and get no jump arc.
+        // Target path: damped velocity (players reverse strafes, an undamped
+        // straight line overshoots at long range) + jump arc. Vehicles are
+        // inertial, so they keep velocity longer and get no jump arc.
         // CharacterSpeedConfig (character-shared-local bundle): Gravity 20, JumpHeight 1.35
         // -> jump vy0 = sqrt(2*20*1.35) = 7.35 m/s, airtime 0.73 s. Sprint 6.6 m/s.
         constexpr float kTargetGravity = 20.0F;
         aim_ballistics::TargetModel path{};
-        path.tau = vehicle_speed ? 3.0F : 1.5F;
-        path.horizon = vehicle_speed ? 5.0F : 3.0F;
+        path.tau = vehicle_speed ? 3.0F : 1.05F;
+        path.horizon = vehicle_speed ? 5.0F : 1.25F;
         path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
-        // FILL: tune per connection. The server resolves the hit against the
-        // target's authoritative position = our RTT/2 + remote interpolation
-        // buffer ahead of what we render. Too low: still miss runners. Too
-        // high: overshoot strafers. Start at 0.06 and move in 0.02 steps.
         const float kSilentNetLatency = g_silent_lead_seconds;   // menu slider, see esp_set_silent_lead
         box.aim_speed = use_est
             ? std::sqrt(g_aim_est.vel.x * g_aim_est.vel.x + g_aim_est.vel.z * g_aim_est.vel.z)
             : 0.0F;
         if (use_est) {
-            // Staleness of the sample we are aiming at is added on top, so a
-            // position that was last refreshed 90 ms ago is led for those 90 ms too.
-            const float stale = g_aim_est.sample_age < 0.35F ? g_aim_est.sample_age : 0.35F;
-            path.latency = kSilentNetLatency + stale;
-            // Steady run: no velocity damping and a longer horizon (long shots keep
-            // the full lead). Otherwise damp and cut the horizon: reversal likely.
-            if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
-            else                    { path.tau = 1.5F; path.horizon = 1.0F; }
-            path.accel = aim_ballistics::scale(g_aim_est.accel, g_aim_est.confidence);
-            path.accel_time = 0.35F;
+            const float stale = (g_aim_est.sample_age < 0.08F ? g_aim_est.sample_age : 0.08F)
+                              * 0.5F * g_aim_est.confidence;
+            path.latency = (kSilentNetLatency + stale) * g_aim_predict_scale;
+            if (g_aim_est.straight) { path.tau = 1.15F; path.horizon = 1.35F; }
+            else                    { path.tau = 0.75F; path.horizon = 0.85F; }
+            if (box.aim_speed < 5.0F) {
+                path.accel = aim_ballistics::scale(
+                    g_aim_est.accel, 0.35F * g_aim_est.confidence * g_aim_predict_scale);
+                path.accel_time = 0.12F;
+            }
         }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
@@ -11823,13 +11828,19 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 g_aim_lead = {};
             }
         }
-        // Silent predictor: fit velocity/accel over the position history. Mounted
-        // targets keep the legacy inertial model (vehicle_speed path).
+        // Silent predictor: fit velocity/accel over the raw un-extrapolated
+        // position history so 60Hz playermotion::predict drift is not fitted as
+        // real network updates. Mounted targets keep the inertial vehicle path.
+        Vec3 raw_feet = feet;
+        {
+            auto vt = g_player_track.find(s_transforms[i]);
+            if (vt != g_player_track.end() && vt->second.has_last) raw_feet = vt->second.last;
+        }
         g_aim_est = {};
         if (!player_is_mounted(s_transforms[i]) && !player_mount_engaged(s_transforms[i])) {
             const double est_now = mono_seconds();
             tgtpred::Track& est_track = g_tgt_track[s_transforms[i]];
-            tgtpred::update(est_track, feet, est_now);
+            tgtpred::update(est_track, raw_feet, est_now);
             g_aim_est = tgtpred::estimate(est_track, est_now);
             tgtpred::prune(g_tgt_track, est_now);
         }
@@ -11999,10 +12010,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 if (!box.aim_valid[1]) { Vec3 t = head; t.y -= n_down; if (set_aim_point(box, 1, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 2; }
                 if (!box.aim_valid[2]) { Vec3 t = head; t.y -= c_down; if (set_aim_point(box, 2, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 2; }
             }
-            // (3) feet + pose height estimate
-            if (!box.aim_valid[0]) { Vec3 t = feet; t.y += body_height - 0.12F; if (set_aim_point(box, 0, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
-            if (!box.aim_valid[1]) { Vec3 t = feet; t.y += body_height - 0.26F; if (set_aim_point(box, 1, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
-            if (!box.aim_valid[2]) { Vec3 t = feet; t.y += body_height * 0.72F; if (set_aim_point(box, 2, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
+            // (3) raw_feet + pose height estimate (un-extrapolated so set_aim_point
+            // does not apply target-motion lead a second time on top of playermotion::predict)
+            if (!box.aim_valid[0]) { Vec3 t = raw_feet; t.y += body_height - 0.12F; if (set_aim_point(box, 0, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
+            if (!box.aim_valid[1]) { Vec3 t = raw_feet; t.y += body_height - 0.26F; if (set_aim_point(box, 1, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
+            if (!box.aim_valid[2]) { Vec3 t = raw_feet; t.y += body_height * 0.72F; if (set_aim_point(box, 2, t, vp, sw, sh) && box.aim_source == 0) box.aim_source = 3; }
         }
         // Мёртвый — по позе, а не по здоровью.
         //

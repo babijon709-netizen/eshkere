@@ -194,6 +194,7 @@ void        esp_set_ore_types_enabled(bool stone, bool iron, bool sulfur);
 // текущему положению кости). Слайдер «Упреждение» на вкладке аима.
 void        esp_set_screen_stretch(float factor);
 void        esp_set_aim_lead(float seconds);
+void        esp_set_aim_predict(float scale);
 // Silent: extra target-motion time (network delay + interpolation), seconds.
 void        esp_set_silent_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).

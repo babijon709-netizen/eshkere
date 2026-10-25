@@ -22,7 +22,7 @@ constexpr double kWeightTau    = 0.22;   // s, recency weight e^(-age/tau)
 constexpr double kHoldSample   = 0.25;   // s, push a "still here" sample
 constexpr double kDeadAfter    = 0.70;   // s without any sample -> no estimate
 constexpr float  kMinStep      = 0.015f; // m, smaller = position not updated
-constexpr float  kMaxSpeed     = 9.0f;   // m/s (sprint 6.6 + slack)
+constexpr float  kMaxSpeed     = 6.8f;   // m/s (Oxide CharacterSpeedConfig Sprint = 6.6)
 constexpr float  kMaxAccel     = 14.0f;  // m/s^2
 constexpr float  kTeleportDist = 3.0f;   // m in one step ...
 constexpr float  kTeleportSpeed= 25.0f;  // ... at > this m/s = respawn/teleport

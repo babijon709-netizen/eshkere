@@ -132,6 +132,7 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         const float leadAuto = (g_state.aim_mode == AIM_MODE_TOUCH) ? 0.110f
                              : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.080f : 0.040f);
         esp_set_aim_lead(leadAuto);
+        esp_set_aim_predict(g_state.aim_predict * 0.01f);
         esp_set_silent_lead(g_state.silent_lead_ms * 0.001f);
         esp_set_screen_stretch(g_state.screen_stretch_x);
         esp_set_xray(g_state.xray_on ? g_state.xray_range : 0.f);

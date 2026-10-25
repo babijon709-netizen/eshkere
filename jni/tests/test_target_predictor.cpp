@@ -29,6 +29,11 @@ int main() {
         assert(e.straight);
         assert(std::fabs(e.accel.x) < 3.0f);
     }
+    // bursty ticks above sprint speed are clamped to kMaxSpeed (6.8 m/s)
+    {
+        auto e = run([](double t) { return Vec3{float(12.0 * t), 0.0f, 0.0f}; }, 0.8);
+        assert(e.valid && near(e.vel.x, kMaxSpeed, 0.05f));
+    }
     // standing: zero velocity, no phantom lead
     {
         auto e = run([](double) { return Vec3{5.0f, 1.0f, 5.0f}; }, 1.0);

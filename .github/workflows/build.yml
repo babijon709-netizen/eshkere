@@ -61,12 +61,14 @@ jobs:
           ./build.sh
 
           file libs/arm64-v8a/benzware.sh
-          sha256sum libs/arm64-v8a/benzware.sh
+          sha256sum libs/arm64-v8a/benzware.sh | tee libs/arm64-v8a/benzware.sh.sha256
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: benzware-sh-arm64-v8a
-          path: libs/arm64-v8a/benzware.sh
+          path: |
+            libs/arm64-v8a/benzware.sh
+            libs/arm64-v8a/benzware.sh.sha256
           if-no-files-found: error
           

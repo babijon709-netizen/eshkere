@@ -7555,6 +7555,11 @@ void esp_set_screen_stretch(float factor) {
     if (!(factor >= 0.75F && factor <= 2.0F)) factor = 1.0F;
     g_screen_stretch_x = factor;
 }
+void esp_set_silent_lead(float seconds) {
+    if (!(seconds >= 0.0F)) seconds = 0.0F;
+    if (seconds > 0.25F) seconds = 0.25F;
+    g_silent_lead_seconds = seconds;
+}
 void esp_set_aim_lead(float seconds) {
     // Автоматическая задержка контура для touch/memory; это не flight time.
     // Баллистический flight time считается solver-ом из оружия и дистанции.

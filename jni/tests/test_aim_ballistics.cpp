@@ -26,7 +26,8 @@ static float simulated_miss_distance(const Vec3& origin,
         if (position.y >= 0.0f) velocity.y += kGravityY * params.gravity * full_dt;
         const float drag = position.y >= 0.0f ? params.air_drag : params.underwater_drag;
         velocity = scale(velocity, drag_scale(drag, full_dt));
-        const Vec3 full_next = add(position, scale(add(old_velocity, velocity), 0.5f * full_dt));
+        velocity = scale(add(old_velocity, velocity), 0.5f);
+        const Vec3 full_next = add(position, scale(velocity, full_dt));
         const Vec3 next = add(position, scale(sub(full_next, position), dt / full_dt));
         const Vec3 r0 = sub(position, add(target, scale(target_velocity, elapsed)));
         const Vec3 r1 = sub(next, add(target, scale(target_velocity, elapsed + dt)));
@@ -73,7 +74,7 @@ int main() {
 
     params.gravity = 1.0f;
     assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, params, solution));
-    assert(solution.direction.y > 0.04f);
+    assert(solution.direction.y > 0.02f);
     assert(solution.flight_time > 1.0f);
 
     // Check the solver against a second, forward-simulated game trajectory at

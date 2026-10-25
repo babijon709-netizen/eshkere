@@ -34,9 +34,12 @@ struct AppState {
     int   aim_priority = 0;
     // Overall target-motion prediction multiplier (%), 0 = off, 100 = 1.0x, 200 = 2.0x.
     float aim_predict = 100.f;
-    // Silent: extra lead for network delay + interpolation, ms (session, not
-    // persisted), and automatic zone: moving or far targets get the chest.
-    float silent_lead_ms = 60.f;
+    // Silent: extra lead for FixedUpdate (0.02s) -> BallisticIntegrator (0.03125s)
+    // step phase, ms (session, not persisted). Hit detection in jX.vLO (0x7BEAC38)
+    // raycasts against client colliders and FPHitscan.LOU (0x6D5029C) sends the
+    // client hit timestamp wiY to HitBoxRecorderRoot.mJ (0x5F91800) for server
+    // rewind, so full network RTT must not be added by default.
+    float silent_lead_ms = 15.f;
     bool  silent_auto_zone = true;
     float a_silent_zone = 0;
     bool  esp_box = false, esp_name = false, esp_wall = false, esp_chams = false;

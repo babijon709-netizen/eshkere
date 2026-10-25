@@ -201,16 +201,22 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const Vec3 old_velocity = velocity;
         if (above_surface) velocity.y += kGravityY * params.gravity * dt;
         velocity = scale(velocity, damping);
-        position = add(position, scale(add(old_velocity, velocity), 0.5f * dt));
+        // BallisticIntegrator.Step (RVA 0xCA6AFA4 in libil2cpp.so) stores
+        // v_avg = 0.5 * (v_old + v_dragged) into state.velocity (0xCA6B0E4-E8)
+        // and advances state.position += v_avg * dt (0xCA6B0D8-F8).
+        velocity = scale(add(old_velocity, velocity), 0.5f);
+        position = add(position, scale(velocity, dt));
         if (!finite(position) || !finite(velocity)) return false;
 
-        const float next_factor_velocity = factor_velocity * damping;
-        const float next_factor = factor +
-            (factor_velocity + next_factor_velocity) * 0.5f * dt;
+        const float damped_factor_velocity = factor_velocity * damping;
+        const float next_factor_velocity =
+            (factor_velocity + damped_factor_velocity) * 0.5f;
+        const float next_factor = factor + next_factor_velocity * dt;
         const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
-        const float next_drop_velocity = (drop_velocity + gravity_delta) * damping;
-        const float next_drop = drop +
-            (drop_velocity + next_drop_velocity) * 0.5f * dt;
+        const float damped_drop_velocity = (drop_velocity + gravity_delta) * damping;
+        const float next_drop_velocity =
+            (drop_velocity + damped_drop_velocity) * 0.5f;
+        const float next_drop = drop + next_drop_velocity * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
             origin, target, target_velocity, inherited_velocity, params, model);
@@ -277,7 +283,7 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     if (estimate > kMaxFlightSeconds) estimate = kMaxFlightSeconds;
     Vec3 guess = sub(add(target, target_offset(target_velocity, estimate, model)), origin);
     if (origin.y >= 0.0f && target.y >= 0.0f && params.gravity > 0.0f) {
-        guess.y -= 0.5f * kGravityY * params.gravity * estimate * estimate;
+        guess.y -= 0.25f * kGravityY * params.gravity * estimate * estimate;
     }
     float guess_length = length(guess);
     if (!finite(guess_length) || guess_length < 0.01f) return false;

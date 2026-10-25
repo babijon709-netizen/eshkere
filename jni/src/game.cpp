@@ -7162,7 +7162,9 @@ static Vec3 g_aim_inherited_velocity{};
 static tgtpred::Estimate g_aim_est{};
 // Extra target-motion time for silent (network delay + interpolation), s.
 // Set from the menu slider through esp_set_silent_lead().
-static float g_silent_lead_seconds = 0.06F;
+// Default 15 ms matches the mean FixedUpdate (0.02s) -> BallisticIntegrator
+// (0.03125s) step phase on the client (jF.FixedUpdate 0x7BF7ED4 -> jX.vLO 0x7BEAC38).
+static float g_silent_lead_seconds = 0.015F;
 static std::unordered_map<uint64_t, tgtpred::Track> g_tgt_track;
 static aim_ballistics::Parameters g_aim_ballistic_params{};
 
@@ -7684,8 +7686,11 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             const float trust = 0.45F + 0.55F * g_aim_est.confidence;
             Vec3 base_vel = aim_ballistics::scale(g_aim_est.vel, trust);
             if (aim_ballistics::finite(horiz_speed) && horiz_speed > 0.25F) {
-                base_vel.x = 0.5F * g_aim_velocity.x + 0.5F * base_vel.x;
-                base_vel.z = 0.5F * g_aim_velocity.z + 0.5F * base_vel.z;
+                // g_aim_velocity comes directly from KCC.Move.RealVelocity
+                // (KCC + 0x1AC + 0x18), which is the exact server-sent velocity
+                // from ObserverMove that drives client KCC interpolation (0x5F14D7C).
+                base_vel.x = 0.70F * g_aim_velocity.x + 0.30F * base_vel.x;
+                base_vel.z = 0.70F * g_aim_velocity.z + 0.30F * base_vel.z;
             }
             const float bh = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
             if (bh > 6.6F) {
@@ -7710,15 +7715,19 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             ? std::sqrt(g_aim_est.vel.x * g_aim_est.vel.x + g_aim_est.vel.z * g_aim_est.vel.z)
             : 0.0F;
         if (use_est) {
-            const float stale = (g_aim_est.sample_age < 0.08F ? g_aim_est.sample_age : 0.08F)
+            // KCC remote interpolation (0x5F14D14 / 0x5F14D7C) advances over a
+            // 0.03125s (32 Hz) tick window, and jX.vLO (0x7BEAC38) raycasts
+            // against client colliders before FPHitscan.LOU (0x6D5029C) sends
+            // the client hit timestamp wiY to HitBoxRecorderRoot.mJ (0x5F91800).
+            const float stale = (g_aim_est.sample_age < 0.03125F ? g_aim_est.sample_age : 0.03125F)
                               * 0.5F * g_aim_est.confidence;
             path.latency = (kSilentNetLatency + stale) * g_aim_predict_scale;
             if (g_aim_est.straight) { path.tau = 1.15F; path.horizon = 1.35F; }
             else                    { path.tau = 0.75F; path.horizon = 0.85F; }
             if (box.aim_speed < 5.0F) {
                 path.accel = aim_ballistics::scale(
-                    g_aim_est.accel, 0.35F * g_aim_est.confidence * g_aim_predict_scale);
-                path.accel_time = 0.12F;
+                    g_aim_est.accel, 0.25F * g_aim_est.confidence * g_aim_predict_scale);
+                path.accel_time = 0.10F;
             }
         }
         aim_ballistics::Solution solution{};

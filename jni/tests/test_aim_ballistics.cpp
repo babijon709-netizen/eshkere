@@ -22,11 +22,11 @@ static float simulated_miss_distance(const Vec3& origin,
     while (elapsed < solution.flight_time) {
         const float full_dt = kIntegratorStep;
         const float dt = std::min(full_dt, solution.flight_time - elapsed);
-        const Vec3 old_velocity = velocity;
         if (position.y >= 0.0f) velocity.y += kGravityY * params.gravity * full_dt;
+        const Vec3 with_gravity = velocity;
         const float drag = position.y >= 0.0f ? params.air_drag : params.underwater_drag;
-        velocity = scale(velocity, drag_scale(drag, full_dt));
-        velocity = scale(add(old_velocity, velocity), 0.5f);
+        velocity = scale(with_gravity, drag_scale(drag, full_dt));
+        velocity = scale(add(with_gravity, velocity), 0.5f);
         const Vec3 full_next = add(position, scale(velocity, full_dt));
         const Vec3 next = add(position, scale(sub(full_next, position), dt / full_dt));
         const Vec3 r0 = sub(position, add(target, scale(target_velocity, elapsed)));
@@ -100,12 +100,45 @@ int main() {
     assert(motion_age_lead(0.2f) > 0.12f && motion_age_lead(0.2f) < 0.2f);
 
     // The game passes a gravity multiplier into BallisticIntegrator. Profile
-    // data is already a multiplier; projectile prefabs may store 9.81 instead.
+    // data is already a multiplier (5.0 for firearms, 1.0..3.5 for projectiles);
+    // raw acceleration values > 8.0 (9.81, 19.62) are normalized by 9.81.
     assert(near(gravity_multiplier(0.65f), 0.65f, 1e-5f));
     assert(near(gravity_multiplier(-0.65f), 0.65f, 1e-5f));
+    assert(near(gravity_multiplier(5.0f), 5.0f, 1e-5f));
+    assert(near(gravity_multiplier(2.5f), 2.5f, 1e-5f));
     assert(near(gravity_multiplier(9.81f), 1.0f, 1e-3f));
     assert(near(gravity_multiplier(-9.81f), 1.0f, 1e-3f));
     assert(near(gravity_multiplier(19.62f), 2.0f, 1e-3f));
+
+    // Exact match against Oxide firearm (5.0x gravity) and projectile (Bow/Crossbow/Rocket/Spear)
+    // BallisticIntegrator.Step (0xCA6AFA4) on a 6.6 m/s sprinting target (< 1 mm miss).
+    {
+        const Vec3 sprint{6.6f, 0.0f, 0.0f};
+        Parameters ar{500.0f, gravity_multiplier(5.0f), 0.0f, 0.0f, 200.0f, true};
+        for (float d : {25.0f, 100.0f, 150.0f, 200.0f}) {
+            const Vec3 pt{0.0f, 1.5f, d};
+            assert(solve(origin, pt, sprint, {}, ar, solution));
+            assert(simulated_miss_distance(origin, pt, sprint, {}, ar, solution) < 0.005f);
+        }
+        Parameters bow{70.0f, 2.5f, 0.10f, 2.5f, 50.0f, true};
+        for (float d : {15.0f, 25.0f, 40.0f}) {
+            const Vec3 pt{0.0f, 1.5f, d};
+            assert(solve(origin, pt, sprint, {}, bow, solution));
+            assert(simulated_miss_distance(origin, pt, sprint, {}, bow, solution) < 0.005f);
+        }
+        Parameters cbow{60.0f, 1.5f, 0.05f, 1.5f, 60.0f, true};
+        for (float d : {20.0f, 40.0f, 60.0f}) {
+            const Vec3 pt{0.0f, 1.5f, d};
+            assert(solve(origin, pt, sprint, {}, cbow, solution));
+            assert(simulated_miss_distance(origin, pt, sprint, {}, cbow, solution) < 0.005f);
+        }
+        Parameters rocket{30.0f, 1.0f, 0.10f, 5.0f, 60.0f, true};
+        for (float d : {15.0f, 30.0f, 50.0f}) {
+            const Vec3 pt{0.0f, 1.5f, d};
+            assert(solve(origin, pt, sprint, {}, rocket, solution));
+            assert(simulated_miss_distance(origin, pt, sprint, {}, rocket, solution) < 0.005f);
+        }
+    }
 
     {
         Parameters profile{100.0f, 0.65f, 0.0f, 0.0f, 0.0f, true};

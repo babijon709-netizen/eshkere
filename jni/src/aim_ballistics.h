@@ -91,14 +91,14 @@ inline float motion_age_lead(float age_seconds) {
     return kFreshSeconds + tail * (1.0f + motion_confidence(age_seconds)) * 0.5f;
 }
 
-// Aim params use a gravity multiplier: BallisticProfile stores that multiplier,
-// while some ShaftedProjectile prefabs store the equivalent acceleration (9.81).
-// Normalize the latter to 1.0; the game integrator multiplies this value by
-// Unity's downward gravity vector and applies it only while position.y >= 0.
+// Aim params use a gravity multiplier: BallisticProfile stores that multiplier
+// (5.0 for firearms, 2.5 for flare gun; ShaftedProjectile stores 1.0..3.5),
+// while raw acceleration values (e.g. 9.81 or 19.62 in unit tests) are > 8.0.
+// Normalize raw m/s^2 values by 9.81 while preserving 5.0x firearm multipliers.
 inline float gravity_multiplier(float field_value) {
     if (!finite(field_value)) return 1.0f;
     float magnitude = field_value < 0.0f ? -field_value : field_value;
-    if (magnitude > 4.0f) magnitude /= -kGravityY;
+    if (magnitude > 8.0f) magnitude /= -kGravityY;
     return magnitude;
 }
 
@@ -192,19 +192,22 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
     float previous_residual = residual(0.0f, 0.0f, 0.0f, origin, target,
                                        target_velocity, inherited_velocity, params, model);
 
+    const bool both_above_surface = origin.y >= 0.0f && target.y >= 0.0f;
     for (int index = 1; index <= kMaxSteps; ++index) {
         const float dt = kIntegratorStep;
-        const bool above_surface = position.y >= 0.0f;
+        const bool above_surface = both_above_surface || position.y >= 0.0f;
         const float drag = above_surface ? params.air_drag : params.underwater_drag;
         const float damping = drag_scale(drag, dt);
 
-        const Vec3 old_velocity = velocity;
+        // BallisticIntegrator.Step (RVA 0xCA6AFA4 in libil2cpp.so) adds
+        // gravity to s10 in-place (0xCA6B0A0: fadd s10, s10, s4), applies
+        // damping (0xCA6B0D4-EC), stores v_avg = 0.5 * (v_with_g + v_dragged)
+        // into state.velocity (0xCA6B0E4-100), and advances state.position +=
+        // v_avg * dt (0xCA6B0D8-F8).
         if (above_surface) velocity.y += kGravityY * params.gravity * dt;
-        velocity = scale(velocity, damping);
-        // BallisticIntegrator.Step (RVA 0xCA6AFA4 in libil2cpp.so) stores
-        // v_avg = 0.5 * (v_old + v_dragged) into state.velocity (0xCA6B0E4-E8)
-        // and advances state.position += v_avg * dt (0xCA6B0D8-F8).
-        velocity = scale(add(old_velocity, velocity), 0.5f);
+        const Vec3 with_gravity = velocity;
+        velocity = scale(with_gravity, damping);
+        velocity = scale(add(with_gravity, velocity), 0.5f);
         position = add(position, scale(velocity, dt));
         if (!finite(position) || !finite(velocity)) return false;
 
@@ -213,9 +216,10 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
             (factor_velocity + damped_factor_velocity) * 0.5f;
         const float next_factor = factor + next_factor_velocity * dt;
         const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
-        const float damped_drop_velocity = (drop_velocity + gravity_delta) * damping;
+        const float drop_velocity_with_gravity = drop_velocity + gravity_delta;
+        const float damped_drop_velocity = drop_velocity_with_gravity * damping;
         const float next_drop_velocity =
-            (drop_velocity + damped_drop_velocity) * 0.5f;
+            (drop_velocity_with_gravity + damped_drop_velocity) * 0.5f;
         const float next_drop = drop + next_drop_velocity * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
@@ -243,8 +247,10 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
                      target_velocity, inherited_velocity, params, model, &needed);
             const float distance = length(needed);
             const float travelled = params.muzzle_speed * flight_factor;
+            // HitscanWeaponConfig.LJQ (0x7BDB4D8) allows projectiles to step up
+            // to MaxDistance * 1.25f before expiration.
             if (!finite(distance) || distance < 0.01f || !finite(travelled) ||
-                (params.max_range > 0.0f && travelled > params.max_range)) return false;
+                (params.max_range > 0.0f && travelled > params.max_range * 1.25f)) return false;
             out.direction = scale(needed, 1.0f / distance);
             out.flight_time = flight_time;
             out.valid = finite(out.direction) && flight_time > 0.0f;
@@ -283,7 +289,7 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     if (estimate > kMaxFlightSeconds) estimate = kMaxFlightSeconds;
     Vec3 guess = sub(add(target, target_offset(target_velocity, estimate, model)), origin);
     if (origin.y >= 0.0f && target.y >= 0.0f && params.gravity > 0.0f) {
-        guess.y -= 0.25f * kGravityY * params.gravity * estimate * estimate;
+        guess.y -= 0.5f * kGravityY * params.gravity * estimate * estimate;
     }
     float guess_length = length(guess);
     if (!finite(guess_length) || guess_length < 0.01f) return false;

@@ -7742,16 +7742,19 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             effective_horiz_speed = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
             solve_vel = aim_ballistics::scale(base_vel, ballistic_vel_scale);
         }
-        // Target path: damped velocity (players reverse strafes, an undamped
-        // straight line overshoots at long range) + jump arc. Vehicles are
-        // inertial, so they keep velocity longer and get no jump arc.
+        // Target path: authoritative KCC.Move.RealVelocity (0x1AC + 0x18)
+        // catches stops and strafe reversals on the very first 32 Hz tick, so
+        // steady runners get exact linear constant-velocity lead (tau = 0.0)
+        // with zero under-lead across all firearms and bows/crossbows, while
+        // actively juking/accelerating targets get gentle damping (tau = 1.60).
         // CharacterSpeedConfig (character-shared-local bundle): Gravity 20, JumpHeight 1.35
         // -> jump vy0 = sqrt(2*20*1.35) = 7.35 m/s, airtime 0.73 s. Sprint 6.6 m/s.
         constexpr float kTargetGravity = 20.0F;
         aim_ballistics::TargetModel path{};
-        path.tau = vehicle_speed ? 3.0F : 1.35F;
+        path.tau = 0.0F;
         path.horizon = vehicle_speed ? 5.0F : 1.50F;
         path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
+        path.airborne_vy = 1.15F;
         box.aim_speed = effective_horiz_speed;
         if (use_est) {
             // KCC remote interpolation (0x5F14D14 / 0x5F14D7C) advances over a
@@ -7761,8 +7764,8 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             const float stale = (g_aim_est.sample_age < 0.03125F ? g_aim_est.sample_age : 0.03125F)
                               * 0.5F * g_aim_est.confidence;
             path.latency = kSilentStepLatency + stale;
-            if (g_aim_est.straight) { path.tau = 1.35F; path.horizon = 1.50F; }
-            else                    { path.tau = 0.80F; path.horizon = 0.90F; }
+            if (g_aim_est.straight) { path.tau = 0.0F;  path.horizon = 1.50F; }
+            else                    { path.tau = 1.60F; path.horizon = 0.90F; }
             if (box.aim_speed < 5.0F) {
                 path.accel = aim_ballistics::scale(
                     g_aim_est.accel, 0.25F * g_aim_est.confidence);

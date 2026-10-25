@@ -41,14 +41,10 @@
 //                                                  запущенной игры в benzware/dump/
 //   su -c /data/local/tmp/benzware skel             — диагностика конвейера костей
 //                                                  (почему нет скелетов)
-// Печатает: root/не root, ядро, семейство сокета FT-драйвера и класс маячка,
-// живые пробы команд по собственной памяти (оба известных протокола FT),
-// RT-Dev (/dev/[A-GNY]{1,6}), RT-Hook (перехваченный syscall ioctl),
-// выбранный протокол и коды чтения/записи, а в режиме скана — карту всех кодов
-// 0..0x7FF, которые двигают данные. Классы независимы: достаточно любого
-// подтверждённого. Коды выхода: 0 — какой-то кернел-транспорт готов,
-// 1 — не найдено НИЧЕГО, 2 — сокет FT есть, но коды не подтверждены
-// (режим всё равно включается и проверяется привязкой к игре).
+// Печатает: DitPro KPM detection + INIT/READ self-test, семейство FT-сокета,
+// RT-Dev/RT-Hook и живые пробы по собственной памяти. --scan-driver также
+// печатает карту кодов FT 0..0x7FF. Коды выхода: 0 — транспорт подтверждён,
+// 1 — драйвер не найден, 2 — обнаружен, но self-test/ABI не прошёл.
 namespace driver_check {
 
 static int Run(bool full_scan) {
@@ -60,9 +56,20 @@ static int Run(bool full_scan) {
     printf("uid / euid      : %d / %d%s\n", getuid(), geteuid(),
            geteuid() == 0 ? " (root)" : "  <-- НЕ ROOT");
     if (geteuid() != 0)
-        printf("!! кернел режим требует root: сокет драйвера создаётся только\n"
-               "   привилегированным процессом, без root маячок не виден.\n"
-               "   Запуск: su -c <путь>/benzware\n");
+        printf("!! кернел режим требует root: запусти команду через su.\n"
+               "   Запуск: su -c <путь>/benzware --check-driver\n");
+
+    errno = 0;
+    const long ditpro_probe = memio::ditpro_probe_result();
+    const int ditpro_probe_errno = errno;
+    printf("DitPro syscall 18: ");
+    if (ditpro_probe == 616)
+        printf("KPM обнаружен (ответ 616)\n");
+    else if (ditpro_probe == -616)
+        printf("ответ 616 на pointer-пробу; это не DitPro KPM\n");
+    else
+        printf("KPM не подтверждён (ответ %ld, errno %d)\n",
+               ditpro_probe, ditpro_probe_errno);
 
     // 1) Поиск семейства сокета FT-драйвера по маячку на пробе socket(fam, 6, 0):
     //    1338 — bing-класс, 126/ENOKEY — gongchuang-класс. Раннего выхода
@@ -215,8 +222,38 @@ static int Run(bool full_scan) {
         }
     }
 
+    // DitPro: additionally prove the KPM read ABI against this process's own
+    // stack memory. This diagnostic neither touches the game nor hides/uninstalls.
+    bool ditpro_ok = false;
+    if (ditpro_probe == 616) {
+        memio::KernelTransport dit;
+        if (dit.select_ditpro() && dit.open(getpid())) {
+            const uint64_t expected = 0xD17A0138C0DEC0DEULL;
+            uint64_t observed = 0;
+            errno = 0;
+            const ssize_t n = dit.read_once((uint64_t)(uintptr_t)&expected,
+                                            &observed, sizeof(observed));
+            const int read_errno = errno;
+            dit.close();
+            ditpro_ok = n == (ssize_t)sizeof(observed) && observed == expected;
+            if (ditpro_ok)
+                printf("DitPro read ABI : OK (init + чтение собственной памяти)\n");
+            else
+                printf("DitPro read ABI : ОШИБКА (read=%zd, errno=%d, value=%#llx)\n",
+                       n, read_errno, (unsigned long long)observed);
+        } else {
+            printf("DitPro read ABI : не удалось выполнить INIT для pid=%d\n",
+                   (int)getpid());
+        }
+    }
+
     // 5) Итог: чем чит будет ходить в память игры. Классы независимы —
     //    достаточно любого подтверждённого транспорта.
+    if (ditpro_ok) {
+        printf("итог            : DitPro KPM готов — syscall 18, чтение подтверждено;\n"
+               "                  /proc не участвует\n");
+        return 0;
+    }
     if (kt.map_known()) {
         printf("итог            : FT готов — протокол %s, чтение кодом 0x%03X,\n"
                "                  запись кодом 0x%03X; /proc не участвует\n",
@@ -232,6 +269,10 @@ static int Run(bool full_scan) {
                "                  ни сокета, ни /dev-узла; /proc не участвует\n");
         return 0;
     }
+    if (ditpro_probe == 616) {
+        printf("итог            : DitPro отвечает на check, но INIT/READ-тест не прошёл.\n");
+        return 2;
+    }
     if (ft_present) {
         printf("итог            : коды команд НЕ подтверждены. Включай кернел в меню —\n"
                "                  привязка к игре проверит транспорт по-настоящему;\n"
@@ -239,7 +280,7 @@ static int Run(bool full_scan) {
                "                  su -c <путь>/benzware --scan-driver\n");
         return 2;
     }
-    printf("итог            : НИ ОДИН класс драйвера не найден (FT/RT-Dev/RT-Hook).\n"
+    printf("итог            : НИ ОДИН класс драйвера не найден (DitPro/FT/RT-Dev/RT-Hook).\n"
            "   Прошей драйвер под СВОЮ версию ядра (uname -r) скриптом .sh\n"
            "   (drivers.7z — FT, rt dev Драйвера root cheat.zip — RT-Dev, RT-hook.7z — RT-Hook)\n"
            "   и повтори проверку. Драйверы не переживают перезагрузку —\n"

@@ -148,7 +148,8 @@ enum EspMemBackend {
     ESP_MEM_EXTERNAL = 0,   // /proc/<pid>/mem — «Прямое чтение»
     ESP_MEM_FT       = 1,   // сокет драйвера bing-класса — «FT-Драйвер»
     ESP_MEM_RT_DEV   = 2,   // /dev/[A-GNY]{1,6} RT-Dev — «RT-Dev»
-    ESP_MEM_RT_HOOK  = 3,   // syscall ioctl hookdd/gynhdd — «RT-Hook»
+    ESP_MEM_RT_HOOK  = 3,   // legacy syscall ioctl hookdd/gynhdd — «RT-Hook»
+    ESP_MEM_DITPRO   = 4,   // ditPro 138 KPM syscall transport
 };
 void          esp_set_mem_backend(int backend);
 int           esp_get_mem_backend();

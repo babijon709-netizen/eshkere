@@ -381,7 +381,7 @@ void RestoreLayout() {
 
 // KERNEL.md §6: выбранный на экране режим сохраняется в
 // /storage/emulated/0/benzware/.mode — оттуда его берут one-shot CLI
-// (dump/skel). Значения: external/kernel/rt-dev/rt-hook.
+// (dump/skel). Новые значения: external/ditpro/rt-dev; legacy: kernel/rt-hook.
 static const char* kModeDir() noexcept {
     static constexpr auto _s = xp::_mk("/storage/emulated/0/benzware/");
     return _s.d();
@@ -394,6 +394,7 @@ void CfgWriteMemBackend(int backend) {
     else if (backend == ESP_MEM_FT)       v = "kernel";
     else if (backend == ESP_MEM_RT_DEV)   v = "rt-dev";
     else if (backend == ESP_MEM_RT_HOOK)  v = "rt-hook";
+    else if (backend == ESP_MEM_DITPRO)   v = "ditpro";
     else return;
     mkdir(kModeDir(), 0777);
     FILE* f = fopen(ModeFilePath().c_str(), "w");
@@ -417,6 +418,7 @@ static int ParseModeFileValue(const char* s) {
     if (!strcmp(v, "kernel") || !strcmp(v, "ft"))    return ESP_MEM_FT;
     if (!strcmp(v, "rt-dev") || !strcmp(v, "rt"))    return ESP_MEM_RT_DEV;
     if (!strcmp(v, "rt-hook"))                       return ESP_MEM_RT_HOOK;
+    if (!strcmp(v, "ditpro"))                         return ESP_MEM_DITPRO;
     return -1;
 }
 
@@ -435,7 +437,7 @@ int CfgSavedMemBackend() {
         }
     }
     CfgUiTrailer t;
-    if (!ReadNewestUi(t) || t.mem_backend > 3) return -1;
+    if (!ReadNewestUi(t) || t.mem_backend > ESP_MEM_DITPRO) return -1;
     return (int)t.mem_backend;
 }
 

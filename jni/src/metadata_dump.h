@@ -1008,7 +1008,7 @@ static bool dump_blob(const Blob& b, const char* path, Log* log) {
     if (failed >= b.size) {
         remove(path);
         log->say("!! 0x%llx: страницы метаданных не читаются транспортом — "
-                 "попробуй другой режим (external/ft/rt-dev/rt-hook)",
+                 "попробуй другой режим (external/ditpro/rt-dev)",
                  (unsigned long long)b.addr);
         return false;
     }
@@ -1032,6 +1032,7 @@ static int saved_backend() {
 
 static const char* backend_name(int backend) {
     switch (backend) {
+        case ESP_MEM_DITPRO: return "DitPro 138";
         case ESP_MEM_FT: return "FT-Драйвер";
         case ESP_MEM_RT_DEV: return "RT-Dev";
         case ESP_MEM_RT_HOOK: return "RT-Hook";
@@ -1044,6 +1045,7 @@ static const char* backend_name(int backend) {
 static int ParseBackendArg(const char* mode_arg) {
     if (!mode_arg) return -1;
     if (!strcmp(mode_arg, "external") || !strcmp(mode_arg, "ext")) return ESP_MEM_EXTERNAL;
+    if (!strcmp(mode_arg, "ditpro"))                              return ESP_MEM_DITPRO;
     if (!strcmp(mode_arg, "ft") || !strcmp(mode_arg, "kernel"))    return ESP_MEM_FT;
     if (!strcmp(mode_arg, "rt-dev") || !strcmp(mode_arg, "rt"))    return ESP_MEM_RT_DEV;
     if (!strcmp(mode_arg, "rt-hook"))                             return ESP_MEM_RT_HOOK;
@@ -1056,7 +1058,8 @@ static int ParseBackendArg(const char* mode_arg) {
 // (см. KERNEL.md §2, §4.5). После этого bind только переиспользует
 // выученное, никаких детектов из чтения.
 static void PrepareOneShotBackend(int backend) {
-    if (backend == ESP_MEM_FT)           memio::driver_available(nullptr);
+    if (backend == ESP_MEM_DITPRO)       memio::kernel_transport().select_ditpro();
+    else if (backend == ESP_MEM_FT)      memio::driver_available(nullptr);
     else if (backend == ESP_MEM_RT_DEV)  memio::rt_dev_available();
     else if (backend == ESP_MEM_RT_HOOK) memio::rt_hook_available();
 }
@@ -1076,7 +1079,7 @@ static int Run(int argc, char* argv[]) {
             mode_arg = a;
         } else {
             printf("не понимаю аргумент: %s\n", a);
-            printf("использование: benzware dump [external|ft|rt-dev|rt-hook] [pid]\n");
+            printf("использование: benzware dump [external|ditpro|rt-dev] [pid]\n");
             return 1;
         }
     }
@@ -1085,7 +1088,7 @@ static int Run(int argc, char* argv[]) {
         backend = ParseBackendArg(mode_arg);
         if (backend < 0) {
             printf("неизвестный режим: %s "
-                   "(external | ft | rt-dev | rt-hook)\n", mode_arg);
+                   "(external | ditpro | rt-dev)\n", mode_arg);
             return 1;
         }
     } else {
@@ -1214,7 +1217,7 @@ static int Run(int argc, char* argv[]) {
     // ---- скан --------------------------------------------------------------
     if (regions.empty()) parse_regions(maps_text, &regions);
     const bool kernel_backend =
-        backend == ESP_MEM_FT || backend == ESP_MEM_RT_DEV ||
+        backend == ESP_MEM_DITPRO || backend == ESP_MEM_FT || backend == ESP_MEM_RT_DEV ||
         backend == ESP_MEM_RT_HOOK;
     std::vector<Region> cand;
     std::uint64_t cand_bytes = 0;

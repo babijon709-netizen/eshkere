@@ -60,7 +60,7 @@ static int Run(int argc, char* argv[]) {
             mode_arg = a;
         } else {
             printf("не понимаю аргумент: %s\n", a);
-            printf("использование: benzware skel [external|ft|rt-dev|rt-hook] [pid]\n");
+            printf("использование: benzware skel [external|ditpro|rt-dev|ft|rt-hook] [pid]\n");
             return 1;
         }
     }
@@ -68,7 +68,7 @@ static int Run(int argc, char* argv[]) {
     if (mode_arg) {
         backend = metadump::ParseBackendArg(mode_arg);
         if (backend < 0) {
-            printf("неизвестный режим: %s (external | ft | rt-dev | rt-hook)\n", mode_arg);
+            printf("неизвестный режим: %s (external | ditpro | ft | rt-dev | rt-hook)\n", mode_arg);
             return 1;
         }
     } else {

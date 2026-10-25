@@ -63,7 +63,7 @@ static int g_mem_backend = ESP_MEM_EXTERNAL;
 void esp_set_mem_backend(int backend) {
     g_mem_backend = backend;
     memio::Transport* t = &memio::procfs_transport();
-    if (backend == ESP_MEM_FT) t = &memio::kernel_transport();
+    if (backend == ESP_MEM_FT || backend == ESP_MEM_DITPRO) t = &memio::kernel_transport();
     else if (backend == ESP_MEM_RT_DEV) t = &memio::rt_dev_transport();
     else if (backend == ESP_MEM_RT_HOOK) t = &memio::rt_hook_transport();
     g_mem.set_transport(t);

@@ -33,6 +33,8 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <thread>
+#include <iostream>
+#include <string>
 
 // Диагностика кернел-режима из терминала (Termux/adb), без оверлея и игры:
 //   su -c /data/local/tmp/benzware --check-driver   — базовая проверка
@@ -353,6 +355,26 @@ void InstallCrashSignalCleanup() {
 }
 } // namespace
 
+namespace startup_key {
+// Это только базовая заставка-пароль: строка публичная, поэтому не является
+// защитой от анализа или обхода бинаря.
+static constexpr char kLaunchKey[] = "t.me/benzware";
+
+static bool Verify() {
+    std::cout << "Введите ключ для запуска: " << std::flush;
+    std::string entered;
+    if (!std::getline(std::cin, entered)) {
+        std::cerr << "Не удалось прочитать ключ из окна запуска MT Manager.\n";
+        return false;
+    }
+    if (entered != kLaunchKey) {
+        std::cerr << "Неверный ключ. Запуск отменён.\n";
+        return false;
+    }
+    return true;
+}
+}  // namespace startup_key
+
 int main(int argc, char* argv[]) {
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
     // (базовая) или --scan-driver (полный скан кодов команд) — без GUI,
@@ -369,6 +391,10 @@ int main(int argc, char* argv[]) {
         if (strcmp(argv[i], "skel") == 0 || strcmp(argv[i], "--skel") == 0)
             return skeldiag::Run(argc - i, argv + i);
     }
+
+    // Ввод выполняем до отделения от MT Manager, пока доступен его поток ввода.
+    // Диагностические команды выше остаются отдельным CLI-режимом без оверлея.
+    if (!startup_key::Verify()) return 1;
 
     // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +
     // oom_score_adj = -1000) до создания любых потоков и стража-трейсера.

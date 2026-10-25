@@ -118,24 +118,41 @@ struct PidCandidate {
 
 static int find_official_candidates(PidCandidate* out, int capacity) {
     if (!out || capacity <= 0) return 0;
-    DIR* dir = opendir("/proc");
-    if (!dir) return 0;
-    const char* pkgs[1] = {kTargetPackage};
-    const pid_t self = getpid();
     int count = 0;
-    struct dirent* entry;
-    while ((entry = readdir(dir))) {
-        const pid_t pid = (pid_t)atoi(entry->d_name);
-        if (pid <= 0 || pid == self) continue;
-        const int rank = cmdline_rank(pid, pkgs, 1);
-        if (rank < 0) continue;
-        if (proc_libil2cpp(pid) != 1) continue;
-        const int threads = proc_thread_count(pid, 16);
-        if (count < capacity) {
-            out[count++] = {pid, rank, threads};
+    DIR* dir = opendir("/proc");
+    if (dir) {
+        const char* pkgs[1] = {kTargetPackage};
+        const pid_t self = getpid();
+        struct dirent* entry;
+        while ((entry = readdir(dir))) {
+            const pid_t pid = (pid_t)atoi(entry->d_name);
+            if (pid <= 0 || pid == self) continue;
+            const int rank = cmdline_rank(pid, pkgs, 1);
+            if (rank < 0) continue;
+            const int has_il2cpp = proc_libil2cpp(pid);
+            if (has_il2cpp != 1 && !(esp_get_mem_backend() == ESP_MEM_DITPRO && has_il2cpp < 0)) {
+                continue;
+            }
+            const int threads = proc_thread_count(pid, 16);
+            if (count < capacity) {
+                out[count++] = {pid, rank, threads};
+            }
+        }
+        closedir(dir);
+    }
+    if (esp_get_mem_backend() == ESP_MEM_DITPRO && count < capacity) {
+        const pid_t kpid = esp_find_kernel_pid(kTargetPackage);
+        if (kpid > 0 && kpid != getpid()) {
+            bool present = false;
+            for (int i = 0; i < count; ++i) {
+                if (out[i].pid == kpid) { present = true; break; }
+            }
+            if (!present) {
+                const int threads = proc_thread_count(kpid, 16);
+                out[count++] = {kpid, 2, threads > 0 ? threads : 16};
+            }
         }
     }
-    closedir(dir);
     // Сортируем: сначала многопоточные (>= 8 потоков), затем по убыванию rank,
     // затем более свежий (больший) pid.
     for (int i = 1; i < count; ++i) {
@@ -212,8 +229,19 @@ static int find_renamed_release_candidates(pid_t* out, int capacity) {
 static bool pid_still_game(pid_t pid) {
     char path[32];
     snprintf(path, sizeof(path), "/proc/%d", pid);
-    if (access(path, F_OK) != 0) return false;
-    if (g_target_by_package && !pid_cmdline_matches(pid)) return false;
+    if (access(path, F_OK) != 0) {
+        if (esp_get_mem_backend() == ESP_MEM_DITPRO &&
+            esp_find_kernel_pid(kTargetPackage) == pid) {
+            return true;
+        }
+        return false;
+    }
+    if (g_target_by_package && !pid_cmdline_matches(pid)) {
+        if (esp_get_mem_backend() != ESP_MEM_DITPRO ||
+            esp_find_kernel_pid(kTargetPackage) != pid) {
+            return false;
+        }
+    }
     // Полное чтение /proc/<pid>/maps у Unity-игры — тысячи VMA под mmap_lock
     // процесса игры: на слабом устройстве каждое чтение притормаживает саму игру
     // (аллокатор, подгрузка), а значит и кадры, с которых оверлей читает память.
@@ -221,7 +249,9 @@ static bool pid_still_game(pid_t pid) {
     // выше и проверка памяти (esp_alive_check); карту достаточно сверять редко.
     static int s_calls = 0;
     if ((s_calls++ % 8) != 0) return true;
-    return proc_libil2cpp(pid) == 1;
+    const int has_il2cpp = proc_libil2cpp(pid);
+    if (has_il2cpp < 0 && esp_get_mem_backend() == ESP_MEM_DITPRO) return true;
+    return has_il2cpp == 1;
 }
 
 void start_attach_thread() {

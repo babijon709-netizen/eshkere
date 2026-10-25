@@ -62,15 +62,15 @@ static int Run(bool full_scan) {
                "   Запуск: su -c <путь>/benzware --check-driver\n");
 
     errno = 0;
-    const long ditpro_probe = memio::ditpro_probe_result();
+    long ditpro_probe = -1;
+    const memio::DitProAbi ditpro_abi = memio::ditpro_probe_abi(&ditpro_probe);
     const int ditpro_probe_errno = errno;
     printf("DitPro syscall 18: ");
-    if (ditpro_probe == 131 || ditpro_probe == 138)
-        printf("KPM обнаружен, протокол версии %ld\n", ditpro_probe);
-    else if (ditpro_probe == -616)
-        printf("ответ 616 на pointer-пробу; это не DitPro KPM\n");
+    if (ditpro_abi != memio::DITPRO_ABI_NONE)
+        printf("обнаружен %s (версия %ld)\n",
+               memio::ditpro_abi_name(ditpro_abi), ditpro_probe);
     else
-        printf("KPM не подтверждён (ответ %ld, errno %d)\n",
+        printf("KPM/KO не подтверждён (ответ %ld, errno %d)\n",
                ditpro_probe, ditpro_probe_errno);
 
     // 1) Поиск семейства сокета FT-драйвера по маячку на пробе socket(fam, 6, 0):

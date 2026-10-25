@@ -156,8 +156,11 @@ enum EspMemBackend {
 };
 void          esp_set_mem_backend(int backend);
 int           esp_get_mem_backend();
-// Какой режим активен: true для любого ядерного транспорта (FT/RT-Dev/RT-Hook).
+// Какой режим активен: true для любого ядерного транспорта (FT/RT-Dev/RT-Hook/DitPro).
 bool          esp_mem_backend_kernel();
+// Поиск PID процесса игры через ядерный драйвер (DitPro 0x300 / 0x61918),
+// если прямой обход /proc ограничен или не дал результата.
+pid_t         esp_find_kernel_pid(const char* pkg);
 // Последняя ошибка транспорта (errno): для тоста «почему привязка не идёт».
 int           esp_mem_last_errno();
 // Доступ из фонового потока сайлент-аима: строго через выбранный способ

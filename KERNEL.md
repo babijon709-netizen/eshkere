@@ -67,8 +67,8 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 | Режим | Класс драйвера | Механизм | Запрос | Коды |
 |---|---|---|---|---|
 | Прямое чтение | — | только `process_vm_readv`/`process_vm_writev` (raw syscall); `/proc/<pid>/mem` не используется совсем, фоллбэка нет; правки только по rw-памяти | — | — |
-| DitPro 138 | ditPro KPM 138 | syscall 18, version check `0x11`, fallback check `0x40000001` | `DitProRwReq` 0x18: addr,buffer,size | init 3, read 5, write 9 |
-| DitPro 131 | ditPro KPM 131 | syscall 18, version check `0x11` / check `0x332` | `DitPro131RwReq` 0x28: pid,addr,size,user_buf,reserved | read `0x100`, write `0x200` |
+| DitPro 138 | ditPro KPM 138 / dits.ko 138 | syscall 18 (`0x61629` -> u64 ver 138; KO bit 63 -> anon fd `0x61628` + ioctl) или legacy bitflag (`0x40000001` / pointer check) | `DitProRwReq` 0x28: pid,pad,addr,user_buf,size,flags (`rc == 0` при полном успехе) | read `0x61718` (bitflag `1\|4`), write `0x61818` (bitflag `1\|8`), pid `0x61918`, base `0x61a18` |
+| DitPro 131 | ditPro KPM 131 | syscall 18, version check `0x11` -> 131 / check `0x332` -> 616 | `DitProRwReq` 0x28: pid,pad,addr,user_buf,size,flags (`rc == 0` при полном успехе) | read `0x100`, write `0x200`, pid `0x300`, base `0x400` |
 | FT | bing_rw / gongchuang (drivers.7z) | socket(сем.,4,0); команды getsockopt ИЛИ ioctl (поколение 5.10) | `DriverRwReq` 0x28: pid,pad,addr,size,user_buf,magic=0x1337 | auth 0x300, read 0x301, write 0x302; gong: attach 2, vm 4, pte 5/6 |
 | RT-Dev | RTkernel (`rt dev Драйвера root cheat.zip`) | char-устройство `/dev/[A-GNY]{1,6}` + ioctl | `RtDevCopyMem` 0x20: pid,pad,addr,buffer,size (не через границу 4К — транспорт чанкует сам) | read 0x801, write 0x802; base 0x803 |
 | RT-Hook | hookdd/gynhdd (`RT-hook.7z`) | перехват syscall `ioctl`, без сокета и `/dev`-узла | `RtHookCopyMem` 0x20: pid,pad,addr,buffer,size (transport чанкует по 4К) | read 0x259, write 0x25a |

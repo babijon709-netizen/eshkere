@@ -532,6 +532,10 @@ private:
         if (raw_read(probe_addr_, magic, sizeof(magic), false)) {
             return magic[0] == 0x7F && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
         }
+        static constexpr auto is_user_ptr = [](uint64_t p) -> bool {
+            p = untag(p);
+            return p >= 0x10000ULL && p < kMaxUserAddress && (p & 0x7ULL) == 0;
+        };
         static constexpr uint64_t kHotTypeInfoPairs[][2] = {
             {0xE66DEE8ULL, 0xE669190ULL}, // Release 11978: PlayerManager, GameControllerBase
             {0xE66DEB0ULL, 0xE66D238ULL}, // Release 11978: PlayerLoopHelper, NetworkClient
@@ -544,10 +548,31 @@ private:
                 !raw_read(probe_addr_ + pair[1], &p1, sizeof(p1), false)) {
                 continue;
             }
-            p0 = untag(p0);
-            p1 = untag(p1);
-            if (p0 >= 0x10000ULL && p0 < kMaxUserAddress && (p0 & 0x7ULL) == 0 &&
-                p1 >= 0x10000ULL && p1 < kMaxUserAddress && (p1 & 0x7ULL) == 0) {
+            if (is_user_ptr(p0) && is_user_ptr(p1)) return true;
+        }
+        // Main-menu fallback: when page 0 (ELF header) is evicted under a PTE-walk
+        // driver and NetworkClient/PlayerManager are still null, verify any single
+        // live TypeInfo slot by dereferencing Il2CppClass::image at +0x0.
+        static constexpr uint64_t kHotTypeInfoSingles[] = {
+            0xE66DEB0ULL, // Release 11978: PlayerLoopHelper
+            0xE66A8B8ULL, // Release 11978: MainCamera
+            0xE66D238ULL, // Release 11978: NetworkClient
+            0xE66DEE8ULL, // Release 11978: PlayerManager
+            0xE669190ULL, // Release 11978: GameControllerBase
+            0xE647100ULL, // Beta 11977: PlayerLoopHelper
+            0xE6425F8ULL, // Beta 11977: MainCamera
+            0xE646398ULL, // Beta 11977: NetworkClient
+            0xE647138ULL, // Beta 11977: PlayerManager
+            0xE640C70ULL, // Beta 11977: GameControllerBase
+        };
+        for (uint64_t rva : kHotTypeInfoSingles) {
+            uint64_t klass = 0, image = 0;
+            if (!raw_read(probe_addr_ + rva, &klass, sizeof(klass), false) ||
+                !is_user_ptr(klass)) {
+                continue;
+            }
+            if (raw_read(untag(klass), &image, sizeof(image), false) &&
+                is_user_ptr(image)) {
                 return true;
             }
         }

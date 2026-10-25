@@ -64,7 +64,12 @@ static int g_mem_backend = ESP_MEM_EXTERNAL;
 void esp_set_mem_backend(int backend) {
     g_mem_backend = backend;
     memio::Transport* t = &memio::procfs_transport();
-    if (backend == ESP_MEM_FT || backend == ESP_MEM_DITPRO) t = &memio::kernel_transport();
+    if (backend == ESP_MEM_FT || backend == ESP_MEM_DITPRO) {
+        if (backend == ESP_MEM_DITPRO && !memio::kernel_transport().use_ditpro()) {
+            memio::kernel_transport().select_ditpro();
+        }
+        t = &memio::kernel_transport();
+    }
     else if (backend == ESP_MEM_RT_DEV) t = &memio::rt_dev_transport();
     else if (backend == ESP_MEM_RT_HOOK) t = &memio::rt_hook_transport();
     g_mem.set_transport(t);
@@ -72,6 +77,16 @@ void esp_set_mem_backend(int backend) {
 
 bool esp_mem_backend_kernel() { return g_mem_backend != ESP_MEM_EXTERNAL; }
 int  esp_get_mem_backend() { return g_mem_backend; }
+
+pid_t esp_find_kernel_pid(const char* pkg) {
+    if (g_mem_backend == ESP_MEM_DITPRO) {
+        if (!memio::kernel_transport().use_ditpro()) {
+            memio::kernel_transport().select_ditpro();
+        }
+        return memio::kernel_transport().ditpro_find_pid(pkg);
+    }
+    return -1;
+}
 
 // Последняя ошибка транспорта (errno открытия/чтения): для тоста «почему
 // привязка не идёт» — в кернеле это ответ драйвера, в экстернале /proc.
@@ -808,24 +823,41 @@ static void prune_player_text(const std::vector<uint64_t>& players) {
 // перезапуска игры образов в карте бывает несколько.
 static int get_base_candidates(const char* lib, uint64_t* out, int max) {
     if (g_pid <= 0 || !out || max <= 0) return 0;
+    int count = 0;
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/maps", g_pid);
     const int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
-    std::string text;
-    char chunk[8192];
-    for (;;) {
-        const ssize_t n = read(fd, chunk, sizeof(chunk));
-        if (n > 0) {
-            text.append(chunk, (size_t)n);
-            if (text.size() > (8u << 20)) break;
-            continue;
+    if (fd >= 0) {
+        std::string text;
+        char chunk[8192];
+        for (;;) {
+            const ssize_t n = read(fd, chunk, sizeof(chunk));
+            if (n > 0) {
+                text.append(chunk, (size_t)n);
+                if (text.size() > (8u << 20)) break;
+                continue;
+            }
+            if (n < 0 && errno == EINTR) continue;
+            break;
         }
-        if (n < 0 && errno == EINTR) continue;
-        break;
+        close(fd);
+        count = maps::lookup_library_bases(text, lib, out, max);
     }
-    close(fd);
-    return maps::lookup_library_bases(text, lib, out, max);
+    if (g_mem_backend == ESP_MEM_DITPRO && count < max) {
+        auto append_unique = [&](uint64_t base) {
+            if (!base || count >= max) return;
+            for (int i = 0; i < count; ++i) {
+                if (out[i] == base) return;
+            }
+            out[count++] = base;
+        };
+        const auto& kt = memio::kernel_transport();
+        append_unique(kt.ditpro_get_module_base(g_pid, lib));
+        if (strcmp(lib, "libil2cpp.so") == 0) {
+            append_unique(kt.ditpro_get_module_base(g_pid, "split_config.arm64_v8a.apk"));
+        }
+    }
+    return count;
 }
 
 // Похож ли адрес на Il2CppClass — по одной структуре, без чтения имён.

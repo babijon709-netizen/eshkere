@@ -22,11 +22,12 @@ static float simulated_miss_distance(const Vec3& origin,
     while (elapsed < solution.flight_time) {
         const float full_dt = kIntegratorStep;
         const float dt = std::min(full_dt, solution.flight_time - elapsed);
-        if (position.y >= 0.0f) velocity.y += kGravityY * params.gravity * full_dt;
-        const Vec3 with_gravity = velocity;
+        const Vec3 old_velocity = velocity;
+        Vec3 with_gravity = old_velocity;
+        if (position.y >= 0.0f) with_gravity.y += kGravityY * params.gravity * full_dt;
         const float drag = position.y >= 0.0f ? params.air_drag : params.underwater_drag;
-        velocity = scale(with_gravity, drag_scale(drag, full_dt));
-        velocity = scale(add(with_gravity, velocity), 0.5f);
+        const Vec3 damped_velocity = scale(with_gravity, drag_scale(drag, full_dt));
+        velocity = scale(add(old_velocity, damped_velocity), 0.5f);
         const Vec3 full_next = add(position, scale(velocity, full_dt));
         const Vec3 next = add(position, scale(sub(full_next, position), dt / full_dt));
         const Vec3 r0 = sub(position, add(target, scale(target_velocity, elapsed)));
@@ -72,15 +73,15 @@ int main() {
         assert(near(solution.direction.x / solution.direction.z, 0.05f, 0.002f));
     }
 
-    params.gravity = 1.0f;
+    params.gravity = 5.0f;
     assert(solve(origin, {0.0f, 1.5f, 100.0f}, {}, {}, params, solution));
-    assert(solution.direction.y > 0.02f);
+    assert(solution.direction.y > 0.01f);
     assert(solution.flight_time > 1.0f);
 
     // Check the solver against a second, forward-simulated game trajectory at
     // short and long range with drag, falling motion, target motion and owner
     // velocity all active together.
-    Parameters stress{150.0f, 0.65f, 0.025f, 0.75f, 0.0f, true};
+    Parameters stress{150.0f, 5.0f, 0.025f, 0.75f, 0.0f, true};
     const Vec3 moving{4.0f, 0.2f, -1.5f};
     const Vec3 owner{2.0f, 0.0f, 0.5f};
     for (float distance : {30.0f, 120.0f, 300.0f}) {
@@ -88,7 +89,7 @@ int main() {
         assert(solve(origin, point, moving, owner, stress, solution));
         assert(simulated_miss_distance(origin, point, moving, owner, stress, solution) < 0.35f);
     }
-    Parameters slow_projectile{40.0f, 0.4f, 0.01f, 0.0f, 1000.0f, true};
+    Parameters slow_projectile{40.0f, 2.5f, 0.01f, 0.0f, 1000.0f, true};
     const Vec3 far_target{0.0f, 1.5f, 250.0f};
     assert(solve(origin, far_target, {}, {}, slow_projectile, solution));
     assert(solution.flight_time > 4.0f && solution.flight_time < kMaxFlightSeconds);
@@ -99,16 +100,14 @@ int main() {
     assert(near(motion_confidence(0.4f), 0.0f, 1e-6f));
     assert(motion_age_lead(0.2f) > 0.12f && motion_age_lead(0.2f) < 0.2f);
 
-    // The game passes a gravity multiplier into BallisticIntegrator. Profile
-    // data is already a multiplier (5.0 for firearms, 1.0..3.5 for projectiles);
-    // raw acceleration values > 8.0 (9.81, 19.62) are normalized by 9.81.
+    // BallisticProfile.cQi and ShaftedProjectile.GetBallisticParams pass their
+    // gravity field (5.0 for firearms, 1.0..3.5 for projectiles) directly into
+    // BallisticIntegrator.Step, which multiplies Vector3.downVector by gravity * dt.
     assert(near(gravity_multiplier(0.65f), 0.65f, 1e-5f));
     assert(near(gravity_multiplier(-0.65f), 0.65f, 1e-5f));
     assert(near(gravity_multiplier(5.0f), 5.0f, 1e-5f));
     assert(near(gravity_multiplier(2.5f), 2.5f, 1e-5f));
-    assert(near(gravity_multiplier(9.81f), 1.0f, 1e-3f));
-    assert(near(gravity_multiplier(-9.81f), 1.0f, 1e-3f));
-    assert(near(gravity_multiplier(19.62f), 2.0f, 1e-3f));
+    assert(near(gravity_multiplier(-5.0f), 5.0f, 1e-5f));
 
     // Exact match against Oxide firearm (5.0x gravity) and projectile (Bow/Crossbow/Rocket/Spear)
     // BallisticIntegrator.Step (0xCA6AFA4) on a 6.6 m/s sprinting target (< 1 mm miss).
@@ -160,7 +159,7 @@ int main() {
                  params, solution));
     assert(solution.direction.x < 0.0f);
 
-    params.gravity = 1.0f;
+    params.gravity = 9.81f;
     params.air_drag = 0.0f;
     params.underwater_drag = 0.0f;
     assert(solve({0.0f, -2.0f, 0.0f}, {0.0f, -2.0f, 100.0f}, {}, {},

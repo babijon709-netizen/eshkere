@@ -9,7 +9,10 @@
 namespace aim_ballistics {
 
 constexpr float kIntegratorStep = 0.03125f;
-constexpr float kGravityY = -9.81f;
+// BallisticIntegrator.Step (RVA 0xCA6AFA4, file offset 0xCA66FA4) and
+// ShaftedProjectile.Move (RVA 0x6DC8A60, file offset 0x6DC4A60) multiply
+// Vector3.downVector (0, -1, 0) directly by p.Gravity * dt.
+constexpr float kGravityY = -1.0f;
 // ShaftedProjectile's game-side simulation limit is 400 integrator ticks.
 constexpr int kMaxSteps = 400;
 constexpr float kMaxFlightSeconds = kMaxSteps * kIntegratorStep;
@@ -91,15 +94,13 @@ inline float motion_age_lead(float age_seconds) {
     return kFreshSeconds + tail * (1.0f + motion_confidence(age_seconds)) * 0.5f;
 }
 
-// Aim params use a gravity multiplier: BallisticProfile stores that multiplier
-// (5.0 for firearms, 2.5 for flare gun; ShaftedProjectile stores 1.0..3.5),
-// while raw acceleration values (e.g. 9.81 or 19.62 in unit tests) are > 8.0.
-// Normalize raw m/s^2 values by 9.81 while preserving 5.0x firearm multipliers.
+// BallisticProfile.cQi (RVA 0x7BF07D8, file offset 0x7BEC7D8) and
+// ShaftedProjectile.GetBallisticParams (RVA 0x6DCD320, file offset 0x6DC9320)
+// pass their gravity field (5.0 for firearms, 2.5 for signal flare, 1.0..3.5
+// for arrows/bolts/spears/rockets) directly into BallisticParams.Gravity.
 inline float gravity_multiplier(float field_value) {
-    if (!finite(field_value)) return 1.0f;
-    float magnitude = field_value < 0.0f ? -field_value : field_value;
-    if (magnitude > 8.0f) magnitude /= -kGravityY;
-    return magnitude;
+    if (!finite(field_value)) return 0.0f;
+    return field_value < 0.0f ? -field_value : field_value;
 }
 
 inline Vec3 add(const Vec3& a, const Vec3& b) {
@@ -199,15 +200,16 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const float drag = above_surface ? params.air_drag : params.underwater_drag;
         const float damping = drag_scale(drag, dt);
 
-        // BallisticIntegrator.Step (RVA 0xCA6AFA4 in libil2cpp.so) adds
-        // gravity to s10 in-place (0xCA6B0A0: fadd s10, s10, s4), applies
-        // damping (0xCA6B0D4-EC), stores v_avg = 0.5 * (v_with_g + v_dragged)
-        // into state.velocity (0xCA6B0E4-100), and advances state.position +=
-        // v_avg * dt (0xCA6B0D8-F8).
-        if (above_surface) velocity.y += kGravityY * params.gravity * dt;
-        const Vec3 with_gravity = velocity;
-        velocity = scale(with_gravity, damping);
-        velocity = scale(add(with_gravity, velocity), 0.5f);
+        // BallisticIntegrator.Step (RVA 0xCA6AFA4, file offset 0xCA66FA4) and
+        // ShaftedProjectile.Move (RVA 0x6DC8A60, file offset 0x6DC4A60) save
+        // old_v BEFORE adding Vector3.downVector * (gravity * dt), compute
+        // damped = (old_v + g_delta) * damping, set state.velocity = 0.5f *
+        // (old_v + damped), and advance state.position += state.velocity * dt.
+        const Vec3 old_velocity = velocity;
+        Vec3 with_gravity = old_velocity;
+        if (above_surface) with_gravity.y += kGravityY * params.gravity * dt;
+        const Vec3 damped_velocity = scale(with_gravity, damping);
+        velocity = scale(add(old_velocity, damped_velocity), 0.5f);
         position = add(position, scale(velocity, dt));
         if (!finite(position) || !finite(velocity)) return false;
 
@@ -216,10 +218,9 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
             (factor_velocity + damped_factor_velocity) * 0.5f;
         const float next_factor = factor + next_factor_velocity * dt;
         const float gravity_delta = above_surface ? kGravityY * params.gravity * dt : 0.0f;
-        const float drop_velocity_with_gravity = drop_velocity + gravity_delta;
-        const float damped_drop_velocity = drop_velocity_with_gravity * damping;
+        const float damped_drop_velocity = (drop_velocity + gravity_delta) * damping;
         const float next_drop_velocity =
-            (drop_velocity_with_gravity + damped_drop_velocity) * 0.5f;
+            (drop_velocity + damped_drop_velocity) * 0.5f;
         const float next_drop = drop + next_drop_velocity * dt;
         const float time = static_cast<float>(index) * dt;
         const float current_residual = residual(time, next_factor, next_drop,
@@ -289,7 +290,7 @@ inline bool solve(const Vec3& origin, const Vec3& target,
     if (estimate > kMaxFlightSeconds) estimate = kMaxFlightSeconds;
     Vec3 guess = sub(add(target, target_offset(target_velocity, estimate, model)), origin);
     if (origin.y >= 0.0f && target.y >= 0.0f && params.gravity > 0.0f) {
-        guess.y -= 0.5f * kGravityY * params.gravity * estimate * estimate;
+        guess.y -= 0.25f * kGravityY * params.gravity * estimate * estimate;
     }
     float guess_length = length(guess);
     if (!finite(guess_length) || guess_length < 0.01f) return false;

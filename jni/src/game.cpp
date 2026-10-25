@@ -6437,10 +6437,14 @@ static bool player_authoritative_velocity(uint64_t player, Vec3& out) {
     if (!valid_obj(player)) return false;
     const PlayerAux& aux = player_aux(player);
     if (valid_obj(aux.kcc)) {
-        Vec3 rv{};
+        Vec3 pos{}, rv{};
+        const bool have_pos =
+            rd_exact(aux.kcc + KCC_MOVE + 0x0C, pos) &&
+            vec3_is_finite(pos) && !position_near_world_origin(pos);
         if (rd_exact(aux.kcc + KCC_MOVE + KCC_MOVE_REAL_VELOCITY, rv) && vec3_is_finite(rv)) {
             const float s2 = rv.x * rv.x + rv.y * rv.y + rv.z * rv.z;
-            if (s2 > 0.0025F && s2 < 625.0F) {
+            if (s2 < 625.0F && (s2 > 0.0025F || have_pos)) {
+                if (s2 <= 0.0025F) rv = {};
                 out = rv;
                 return true;
             }
@@ -6505,11 +6509,24 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
             if (have_auth && auth_speed2 > 0.0025F) {
                 const float prev2 = track.vel.x * track.vel.x + track.vel.z * track.vel.z;
                 const float dot_xz = track.vel.x * auth_vel.x + track.vel.z * auth_vel.z;
-                const float alpha = (prev2 < 0.04F || dot_xz < 0.0F) ? 0.90F : 0.75F;
+                const float alpha = (prev2 < 0.04F || dot_xz < 0.0F) ? 1.0F : 0.85F;
                 track.vel.x = track.vel.x * (1.0F - alpha) + auth_vel.x * alpha;
                 track.vel.y = track.vel.y * (1.0F - alpha) + auth_vel.y * alpha;
                 track.vel.z = track.vel.z * (1.0F - alpha) + auth_vel.z * alpha;
                 if (moved > 0.0002F || span >= 0.03125) {
+                    track.vel_ref = position;
+                    track.vel_ref_t = now;
+                }
+            } else if (have_auth && auth_speed2 <= 0.0025F) {
+                // KCC.Move.RealVelocity says the player is stopped: damp out
+                // immediately so prediction never overshoots a stopped target.
+                track.vel.x *= 0.25F;
+                track.vel.y *= 0.25F;
+                track.vel.z *= 0.25F;
+                if (track.vel.x * track.vel.x + track.vel.y * track.vel.y +
+                        track.vel.z * track.vel.z < 0.0225F ||
+                    span >= 0.03125) {
+                    track.vel = {};
                     track.vel_ref = position;
                     track.vel_ref_t = now;
                 }
@@ -6530,7 +6547,7 @@ static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
                     }
                     track.vel_ref = position; track.vel_ref_t = now;
                 }
-            } else if ((have_auth && auth_speed2 <= 0.0025F && span > 0.075) || span > 0.22) {
+            } else if (span > 0.22) {
                 track.vel = {};
                 track.vel_ref = position; track.vel_ref_t = now;
             }
@@ -7160,11 +7177,10 @@ static Vec3 g_aim_inherited_velocity{};
 // LS fit over observed position changes, see target_predictor.h). Reset to
 // invalid for bots / between frames so a stale player estimate never leaks.
 static tgtpred::Estimate g_aim_est{};
-// Extra target-motion time for silent (network delay + interpolation), s.
-// Set from the menu slider through esp_set_silent_lead().
-// Default 15 ms matches the mean FixedUpdate (0.02s) -> BallisticIntegrator
-// (0.03125s) step phase on the client (jF.FixedUpdate 0x7BF7ED4 -> jX.vLO 0x7BEAC38).
-static float g_silent_lead_seconds = 0.015F;
+// FixedUpdate (0.02s -> 10 ms mean) + BallisticIntegrator (0.03125s -> 8 ms
+// mean) client step phase before jX.vLO (0x7BEAC38) raycasts and FPHitscan.LOU
+// (0x6D5029C) sends wiY to HitBoxRecorderRoot.mJ (0x5F91800).
+static constexpr float kSilentStepLatency = 0.018F;
 static std::unordered_map<uint64_t, tgtpred::Track> g_tgt_track;
 static aim_ballistics::Parameters g_aim_ballistic_params{};
 
@@ -7616,19 +7632,7 @@ void esp_set_screen_stretch(float factor) {
     if (!(factor >= 0.75F && factor <= 2.0F)) factor = 1.0F;
     g_screen_stretch_x = factor;
 }
-static float g_aim_predict_scale = 1.0F;
 
-void esp_set_silent_lead(float seconds) {
-    if (!(seconds >= 0.0F)) seconds = 0.0F;
-    if (seconds > 0.25F) seconds = 0.25F;
-    g_silent_lead_seconds = seconds;
-}
-void esp_set_aim_predict(float scale) {
-    if (!std::isfinite(scale)) scale = 1.0F;
-    if (scale < 0.0F) scale = 0.0F;
-    if (scale > 2.0F) scale = 2.0F;
-    g_aim_predict_scale = scale;
-}
 void esp_set_aim_lead(float seconds) {
     // Автоматическая задержка контура для touch/memory; это не flight time.
     // Баллистический flight time считается solver-ом из оружия и дистанции.
@@ -7649,31 +7653,14 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         if (aim_ballistics::finite(d) && d > 0.01f) dist = d;
     }
 
-    // Distance-dependent lead scaling: in Oxide FixedUpdate steps by 0.02s,
-    // so a 350–600 m/s firearm bullet raycasts 7–12m on the very first tick.
-    // On foot (horiz_speed <= 7 m/s), keep extra control lead at 0 inside 5m
-    // and ramp smoothly to 1.0 over 5–25m (no extra ramp beyond 25m because
-    // aim_ballistics::solve already models projectile flight time + drag).
     const float horiz_speed = std::sqrt(
         g_aim_velocity.x * g_aim_velocity.x + g_aim_velocity.z * g_aim_velocity.z);
     const bool vehicle_speed = aim_ballistics::finite(horiz_speed) && horiz_speed > 7.0f;
-    float lead_dist_scale = 0.0f;
-    if (aim_ballistics::finite(dist)) {
-        if (vehicle_speed) {
-            if (dist > 2.0f) {
-                lead_dist_scale = (dist <= 12.0f) ? ((dist - 2.0f) / 10.0f) : 1.0f;
-            }
-        } else if (dist > 5.0f) {
-            lead_dist_scale = (dist <= 25.0f) ? ((dist - 5.0f) / 20.0f) : 1.0f;
-        }
-    }
-    const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale * g_aim_predict_scale);
 
     // Silent has no finger/camera control lag, and in Touch/Memory modes any
     // artificial pre-lead shifts the crosshair off the bone whenever the
     // target strafes or animates. Keep pre_lead at zero so the crosshair stays
     // locked on the bone; projectile flight time is handled by the solver.
-    (void)scaled_lead;
     const bool silent_mode = g_state.aim_mode == AIM_MODE_SILENT;
     const Vec3 pre_lead{};
     Vec3 world{world_in.x, world_in.y, world_in.z};
@@ -7691,35 +7678,60 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             params.max_range = 200.0f;
             params.valid = true;
         }
-        float ballistic_vel_scale = g_aim_predict_scale;
+        float ballistic_vel_scale = 1.0f;
         if (!vehicle_speed && aim_ballistics::finite(dist)) {
             if (silent_mode || params.muzzle_speed < 250.0f) {
-                if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
-                else if (dist < 8.5f) ballistic_vel_scale *= (dist - 3.5f) / 5.0f;
+                if (dist <= 1.5f) ballistic_vel_scale = 0.0f;
+                else if (dist < 3.5f) ballistic_vel_scale = (dist - 1.5f) * 0.5f;
             } else {
                 // Touch / Memory with firearms: keep the crosshair glued hard
                 // to the bone inside 35m (flight time < 70 ms, inside hitbox)
                 // so left-right strafes never pull the aim off the bone.
                 if (dist <= 35.0f) ballistic_vel_scale = 0.0f;
-                else if (dist < 60.0f) ballistic_vel_scale *= (dist - 35.0f) / 25.0f;
+                else if (dist < 60.0f) ballistic_vel_scale = (dist - 35.0f) / 25.0f;
             }
         }
         // Silent uses its own motion estimate (LS fit over observed position
         // changes: velocity + acceleration + fit confidence + sample staleness,
-        // see target_predictor.h), blended with authoritative KCC velocity when
-        // available so network tick bursts cannot overshoot sprint speed (6.6 m/s).
+        // see target_predictor.h), fused with authoritative KCC.Move.RealVelocity
+        // (KCC + 0x1AC + 0x18) so stops, strafe reversals, and jump apexes
+        // respond on the very first network tick without overshooting 6.6 m/s.
         const bool use_est = silent_mode && g_aim_est.valid && !vehicle_speed;
         Vec3 solve_vel = aim_ballistics::scale(g_aim_velocity, ballistic_vel_scale);
         float effective_horiz_speed = aim_ballistics::finite(horiz_speed) ? horiz_speed : 0.0F;
         if (use_est) {
             const float trust = 0.45F + 0.55F * g_aim_est.confidence;
             Vec3 base_vel = aim_ballistics::scale(g_aim_est.vel, trust);
-            if (aim_ballistics::finite(horiz_speed) && horiz_speed > 0.25F) {
-                // g_aim_velocity comes directly from KCC.Move.RealVelocity
-                // (KCC + 0x1AC + 0x18), which is the exact server-sent velocity
-                // from ObserverMove that drives client KCC interpolation (0x5F14D7C).
-                base_vel.x = 0.70F * g_aim_velocity.x + 0.30F * base_vel.x;
-                base_vel.z = 0.70F * g_aim_velocity.z + 0.30F * base_vel.z;
+            if (!aim_ballistics::finite(horiz_speed) || horiz_speed <= 0.20F) {
+                // KCC.Move.RealVelocity is zero: if no new position step just
+                // arrived, the target has stopped — kill residual polynomial
+                // velocity immediately.
+                if (g_aim_est.sample_age > 0.045F) {
+                    base_vel.x = 0.0F;
+                    base_vel.z = 0.0F;
+                } else {
+                    base_vel.x *= 0.35F;
+                    base_vel.z *= 0.35F;
+                }
+            } else {
+                const float dot_xz =
+                    g_aim_velocity.x * base_vel.x + g_aim_velocity.z * base_vel.z;
+                if (dot_xz < 0.0F) {
+                    // Strafe reversal: KCC.Move.RealVelocity already flipped to
+                    // the new heading while the history fit still carries the old one.
+                    base_vel.x = g_aim_velocity.x;
+                    base_vel.z = g_aim_velocity.z;
+                } else {
+                    base_vel.x = 0.80F * g_aim_velocity.x + 0.20F * base_vel.x;
+                    base_vel.z = 0.80F * g_aim_velocity.z + 0.20F * base_vel.z;
+                }
+            }
+            if (aim_ballistics::finite(g_aim_velocity.y)) {
+                if (fabsf(g_aim_velocity.y) > 0.35F || g_aim_velocity.y * base_vel.y < 0.0F) {
+                    base_vel.y = g_aim_velocity.y;
+                } else {
+                    base_vel.y = 0.80F * g_aim_velocity.y + 0.20F * base_vel.y;
+                }
             }
             const float bh = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
             if (bh > 6.6F) {
@@ -7737,10 +7749,9 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         // -> jump vy0 = sqrt(2*20*1.35) = 7.35 m/s, airtime 0.73 s. Sprint 6.6 m/s.
         constexpr float kTargetGravity = 20.0F;
         aim_ballistics::TargetModel path{};
-        path.tau = vehicle_speed ? 3.0F : 1.05F;
-        path.horizon = vehicle_speed ? 5.0F : 1.25F;
+        path.tau = vehicle_speed ? 3.0F : 1.35F;
+        path.horizon = vehicle_speed ? 5.0F : 1.50F;
         path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
-        const float kSilentNetLatency = g_silent_lead_seconds;   // menu slider, see esp_set_silent_lead
         box.aim_speed = effective_horiz_speed;
         if (use_est) {
             // KCC remote interpolation (0x5F14D14 / 0x5F14D7C) advances over a
@@ -7749,16 +7760,16 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             // the client hit timestamp wiY to HitBoxRecorderRoot.mJ (0x5F91800).
             const float stale = (g_aim_est.sample_age < 0.03125F ? g_aim_est.sample_age : 0.03125F)
                               * 0.5F * g_aim_est.confidence;
-            path.latency = (kSilentNetLatency + stale) * g_aim_predict_scale;
-            if (g_aim_est.straight) { path.tau = 1.15F; path.horizon = 1.35F; }
-            else                    { path.tau = 0.75F; path.horizon = 0.85F; }
+            path.latency = kSilentStepLatency + stale;
+            if (g_aim_est.straight) { path.tau = 1.35F; path.horizon = 1.50F; }
+            else                    { path.tau = 0.80F; path.horizon = 0.90F; }
             if (box.aim_speed < 5.0F) {
                 path.accel = aim_ballistics::scale(
-                    g_aim_est.accel, 0.25F * g_aim_est.confidence * g_aim_predict_scale);
+                    g_aim_est.accel, 0.25F * g_aim_est.confidence);
                 path.accel_time = 0.10F;
             }
         } else if (silent_mode) {
-            path.latency = kSilentNetLatency * g_aim_predict_scale;
+            path.latency = kSilentStepLatency;
         }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
@@ -9545,7 +9556,7 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
             g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
             if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
             else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
-            const float catchup_dt = (age < kBotPosLeadMax ? age : kBotPosLeadMax) * g_aim_predict_scale;
+            const float catchup_dt = (age < kBotPosLeadMax ? age : kBotPosLeadMax);
             bot_catchup = aim_ballistics::scale(g_aim_velocity, catchup_dt);
             if (bot_catchup.y > 0.20f) bot_catchup.y = 0.20f;
             else if (bot_catchup.y < -0.20f) bot_catchup.y = -0.20f;

@@ -154,25 +154,20 @@ float TabContent(int tab, float dt, float cW) {
             ToggleRow("##ta6", XS("Только в прицеле"), &g_state.aim_scope_only, g_state.a_aim_scope, false);
             ToggleRow("##ta7", XS("Только при стрельбе"), &g_state.aim_fire_only, g_state.a_aim_fire, true);
         }
-        char aimSummary[64];
-        snprintf(aimSummary, sizeof(aimSummary), XS("%.0f° · %.0f · %.0f%%"),
-                 g_state.gun_fov, g_state.gun_str, g_state.aim_predict);
+        char aimSummary[48];
+        snprintf(aimSummary, sizeof(aimSummary), XS("%.0f° · %.0f"),
+                 g_state.gun_fov, g_state.gun_str);
         if (SettingsHeader("##aim_tuning", XS("Наводка"), aimSummary)) {
-            CardBg(Layout::SliderH * 3.f + Layout::RowH);
+            CardBg(Layout::SliderH * 2.f + Layout::RowH);
             SliderRow("##afov", XS("Радиус"), &g_state.gun_fov, 5.f, 180.f, XS("%.0f°"), false, true, g_state.sl_gun_fov, dt);
             SliderRow("##asmt", XS("Скорость"), &g_state.gun_str, 1.f, 10.f, "%.0f", false, false, g_state.sl_gun_str, dt);
-            SliderRow("##apred", XS("Предикт"), &g_state.aim_predict, 0.f, 200.f, "%.0f%%", false, false, g_state.sl_aim_predict, dt);
             ToggleRow("##ta3", XS("Круг FOV"), &g_state.aim_special, g_state.a_aim_spec, true, false, &cfg::aim::fov_col);
         }
 
         if (g_state.aim_mode == AIM_MODE_SILENT &&
             SettingsHeader("##aim_silent", XS("Сайлент"), g_state.silent_auto_zone ? XS("Авто-зона") : XS("Ручная зона"))) {
-            CardBg(Layout::SliderH * 2.f + Layout::RowH);
-            SliderRow("##sipred", XS("Предикт"), &g_state.aim_predict, 0.f, 200.f, "%.0f%%",
-                      false, true, g_state.sl_aim_predict, dt);
-            SliderRow("##silead", XS("Упреждение"), &g_state.silent_lead_ms, 0.f, 200.f, XS("%.0f мс"),
-                      false, false, g_state.sl_silent_lead, dt);
-            ToggleRow("##tsz", XS("Авто-зона (грудь на бегу)"), &g_state.silent_auto_zone, g_state.a_silent_zone, true);
+            CardBg(Layout::RowH);
+            ToggleRow("##tsz", XS("Авто-зона (грудь на бегу)"), &g_state.silent_auto_zone, g_state.a_silent_zone, true, true);
         }
 
         // ---- Тач-зона аима -------------------------------------------------

@@ -32,14 +32,6 @@ struct AppState {
     // Shared target priority for Touch, Memory, and Silent modes.
     // 0 = smart distance/alignment balance, 1 = crosshair-first, 2 = nearest.
     int   aim_priority = 0;
-    // Overall target-motion prediction multiplier (%), 0 = off, 100 = 1.0x, 200 = 2.0x.
-    float aim_predict = 100.f;
-    // Silent: extra lead for FixedUpdate (0.02s) -> BallisticIntegrator (0.03125s)
-    // step phase, ms (session, not persisted). Hit detection in jX.vLO (0x7BEAC38)
-    // raycasts against client colliders and FPHitscan.LOU (0x6D5029C) sends the
-    // client hit timestamp wiY to HitBoxRecorderRoot.mJ (0x5F91800) for server
-    // rewind, so full network RTT must not be added by default.
-    float silent_lead_ms = 15.f;
     bool  silent_auto_zone = true;
     float a_silent_zone = 0;
     bool  esp_box = false, esp_name = false, esp_wall = false, esp_chams = false;
@@ -178,7 +170,7 @@ struct AppState {
     float a_fakelag_btn_show = 0;
     float a_fps_90 = 0, a_fps_120 = 0, a_fps_144 = 0, a_fps_rst = 0;
 
-    SliderAnim sl_aim_predict, sl_silent_lead, sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_screen_stretch;
+    SliderAnim sl_gun_str, sl_gun_fov, sl_esp_thick, sl_gun_trig, sl_marker_dist, sl_farm_range, sl_xray, sl_freecam, sl_freecam_look_radius, sl_freecam_joy_size, sl_screen_stretch;
     SliderAnim sl_esp_arrow_ring;
     SliderAnim sl_esp_radar_size, sl_esp_radar_range;
 };

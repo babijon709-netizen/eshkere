@@ -433,6 +433,7 @@ static const LangPair kVisualEn[] = {
     {"Револьвер Питон", "Python Revolver"},
     {"Редкий ящик", "Rare Crate"},
     {"Рука", "Hand"},
+    {"Руки", "Hands"},
     {"Рыба", "Fish"},
     {"Рюкзак", "Backpack"},
     {"С4", "C4"},

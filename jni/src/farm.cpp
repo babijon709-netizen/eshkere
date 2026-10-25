@@ -180,17 +180,17 @@ constexpr float kWalkOffHold    = 0.25f; // гистерезис отпуска�
 constexpr float kSwingHoldMs = 60.f;     // зажатие атаки (память),
 constexpr float kSwingIdleMs = 540.f;    // пауза до следующего (600 мс цикл)
 
-constexpr float kSettleTime    = 0.25f;  // пауза при смене узла (пальцы подняты)
-constexpr float kLostHold      = 0.60f;  // цель может мигнуть на рескане реестра
+constexpr float kSettleTime    = 0.08f;  // пауза при смене узла (пальцы подняты)
+constexpr float kLostHold      = 0.35f;  // цель может мигнуть на рескане реестра
 // Смена узла тоже дебаунсится: новый обязан продержаться «лучшим» несколько
 // кадров подряд. Лог 14.09.2026 — узел в 20 м перехватывал цель ровно на один
 // кадр 9 раз за 150 с, и каждая смена в обе стороны стоила 0.7 с паузы
 // (kSettleTime): 854 кадра простоя. Если цель так и прыгает туда-сюда дольше
 // kFlickerGiveUp, переключаемся по-настоящему — иначе бот застыл бы навсегда.
-constexpr int   kNodeDebounce  = 3;      // кадров подряд на новом узле
+constexpr int   kNodeDebounce  = 2;      // кадров подряд на новом узле
 constexpr float kFlickerGiveUp = 1.0f;   // с прыжков — больше не держимся
-constexpr float kDepletedFrac  = 0.03f;
-constexpr int   kDepletedFrames = 10;    // дебаунс сырого чтения остатка
+constexpr float kDepletedFrac  = 0.005f;
+constexpr int   kDepletedFrames = 2;     // дебаунс чтения остатка
 constexpr float kStuckTime     = 2.20f;  // нет продвижения к точке подхода
 constexpr float kEvadeTime     = 1.70f;  // ~0.6 назад + ~1.1 вбок
 constexpr int   kEvadeMax      = 4;
@@ -281,6 +281,7 @@ static void UpdateFarmInner(float dt) {
     auto releaseAll = [&]() {
         farmjoy::release();
         s_moveDown = false;
+        s_joyX = 0.f; s_joyY = 0.f;
         s_camTurn = false; s_memPend = false;
         if (s_swingOn)  { farmjoy::attack(false); s_swingOn = false; }
         s_memWait = 0.f;
@@ -289,6 +290,7 @@ static void UpdateFarmInner(float dt) {
     };
     auto resetNode = [&]() {
         s_nodeId = 0;
+        s_joyX = 0.f; s_joyY = 0.f;
         s_mineTime = 0.f; s_fracStart = -1.f; s_bestStreak = 0;
         s_healthStart = -1.f; s_blockedTime = 0.f; s_clearTime = 0.f;
         s_depletedFrames = 0;
@@ -359,8 +361,10 @@ static void UpdateFarmInner(float dt) {
         if (s_nodeId != 0 && s_lostTime < kLostHold) {
             s_lostTime += dt;
             if (s_swingOn) { farmjoy::attack(false); s_swingOn = false; } // вслепую не машем
+            if (s_moveDown) { farmjoy::release(); s_joyX = 0.f; s_joyY = 0.f; s_moveDown = false; }
+            s_evadeTime = 0.f;
             s_camTurn = false; s_memPend = false; s_memWait = 0.f;
-            return; // палец движения оставляем, где был
+            return;
         }
         g_farmActive = false;
         releaseAll();
@@ -426,11 +430,17 @@ static void UpdateFarmInner(float dt) {
         // сбрасывается, иначе каждое мигание стоило бы 0.7 с паузы.
         if (tgt.id == s_candId) ++s_candFrames;
         else { s_candId = tgt.id; s_candFrames = 1; s_flickerTime = 0.f; }
-        if (s_nodeId != 0 && s_candFrames < kNodeDebounce && s_flickerTime < kFlickerGiveUp) {
+        const bool wasHarvestingPrev = (g_farmPhase == 3) || (s_mineTime > 0.f);
+        if (s_nodeId != 0 && !wasHarvestingPrev &&
+            s_candFrames < kNodeDebounce && s_flickerTime < kFlickerGiveUp) {
             s_flickerTime += dt;
             if (s_swingOn)  { farmjoy::attack(false); s_swingOn = false; }   // вслепую не машем
+            if (s_evadeTime > 0.f && s_moveDown) {
+                farmjoy::release(); s_joyX = 0.f; s_joyY = 0.f; s_moveDown = false;
+                s_evadeTime = 0.f;
+            }
             s_camTurn = false; s_memPend = false; s_memWait = 0.f;
-            return;   // палец движения оставляем, где был
+            return;
         }
         s_candId = 0; s_candFrames = 0; s_flickerTime = 0.f;
         // Смена узла: поднять все пальцы и постоять. Иначе старые вводные
@@ -448,11 +458,11 @@ static void UpdateFarmInner(float dt) {
 
     // Уже добытый узел уходит в чёрный список на месте, а не обходится кругами:
     // подборщик вернулся бы к нему, только когда в радиусе ничего нет, а танцы
-    // вокруг пустого пня никому не нужны. С дебаунсом: fraction — сырое чтение,
-    // и один мусорный кадр (значение посреди апдейта, сбой чтения) раньше
-    // бросал наполовину срубленное дерево — считается только устойчивое «пусто».
-    if (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac) {
-        if (++s_depletedFrames >= kDepletedFrames) {
+    // вокруг пустого пня никому не нужны.
+    const bool healthDepleted =
+        (tgt.node_health_max > 0.5f && tgt.node_health >= 0.f && tgt.node_health <= 0.001f);
+    if (healthDepleted || (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac)) {
+        if (healthDepleted || ++s_depletedFrames >= kDepletedFrames) {
             esp_farm_blacklist(tgt.id, 120.f);
             releaseAll();
             resetNode();
@@ -887,7 +897,7 @@ static void UpdateFarmInner(float dt) {
         // по мёртвому узлу и не считать его крестик своим.
         const bool nodeDying =
             (tgt.node_health >= 0.f && tgt.node_health_max > 0.f &&
-             tgt.node_health <= 0.02f * tgt.node_health_max);
+             tgt.node_health <= 0.001f);
         // Можно ли бить по лучу игры:
         //   ray_self — можно: игра сама подтверждает, что линия удара стоит
         //     в САМОМ узле (поддерево трансформов / коллайдер крестика);

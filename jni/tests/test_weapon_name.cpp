@@ -56,6 +56,17 @@ int main() {
         assert(!strcmp(buf, "MysteryGun"));
     }
 
+    // -- MaleBody / FemaleBody / MaleHead / FemaleHead -> «Руки» / «Hands».
+    assert(!strcmp(label_of("MaleBody", false), "Руки"));
+    assert(!strcmp(label_of("MaleBody", true), "Hands"));
+    assert(!strcmp(label_of("FemaleBody", false), "Руки"));
+    assert(!strcmp(label_of("MaleBody (Clone)", false), "Руки"));
+    assert(!strcmp(label_of("MaleHead", false), "Руки"));
+    assert(!strcmp(label_of("FemaleHead", true), "Hands"));
+    assert(is_held_utility("MaleBody"));
+    assert(is_held_utility("FemaleBody"));
+    assert(is_held_utility("MaleHead"));
+
     // -- Ключи таблицы обязаны быть в нормализованной форме (только [a-z0-9]),
     //    иначе строка никогда не совпадёт точно и молча деградирует до подстроки.
     for (const Name& entry : kNames) {

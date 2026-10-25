@@ -133,6 +133,69 @@ void farm_scan_reset() {
     g_farm_next_scan = 0.0;
 }
 
+static constexpr uint64_t kMineableObjectToHide = 0xB8; // GameObject objectToHide (MineableObject)
+
+static void farm_purge_entity(uint64_t id) {
+    if (!id) return;
+    g_farm_entities.erase(
+        std::remove_if(g_farm_entities.begin(), g_farm_entities.end(),
+                       [id](const FarmEntity& e) { return e.identity == id; }),
+        g_farm_entities.end());
+    g_farm_scan_stage.erase(
+        std::remove_if(g_farm_scan_stage.begin(), g_farm_scan_stage.end(),
+                       [id](const FarmEntity& e) { return e.identity == id; }),
+        g_farm_scan_stage.end());
+}
+
+// Проверяет, жив ли ещё узел добычи, и вычисляет его здоровье и долю остатка.
+// MineableObject.fractionRemaining (+0xD0) — серверное поле (не SyncVar) и на
+// клиенте всегда остаётся 1.0f; реальный остаток на клиенте считаем через
+// SyncVar-поля m_CurrentHealth (+0x78) и m_MaxHealth (+0xC0).
+// При финальном ударе MineableObject.LAn выключает objectToHide (+0xB8), а
+// MineableTree.cRb/Lpx сразу выключает коллайдеры и откладывает DestroyNow() на
+// 1.0 с (и даже после Destroy управляемая обёртка держится в куче до GC с
+// обнулённым m_CachedPtr +0x10).
+static bool farm_node_is_alive(uint64_t identity, uint64_t component,
+                               float* out_hp = nullptr,
+                               float* out_hp_max = nullptr,
+                               float* out_fraction = nullptr) {
+    if (out_hp) *out_hp = -1.0F;
+    if (out_hp_max) *out_hp_max = -1.0F;
+    if (out_fraction) *out_fraction = -1.0F;
+    if (!valid_obj(component)) return false;
+    const uint64_t klass = rd_ptr(component);
+    if (!valid_obj(klass) || marker_class_of(klass) != MARKER_CLASS_MINEABLE)
+        return false;
+    if (!managed_object_native(component)) return false;
+    if (identity && !managed_object_native(identity)) return false;
+
+    const uint64_t obj_to_hide = rd_ptr(component + kMineableObjectToHide);
+    if (valid_obj(obj_to_hide) && !managed_object_native(obj_to_hide))
+        return false;
+
+    float hp = -1.0F, hp_max = -1.0F;
+    const bool have_hp = rd_exact(component + MINEABLE_CURRENT_HEALTH, hp) &&
+                         std::isfinite(hp) && hp >= -1.0F && hp < 1000000.0F;
+    const bool have_max = rd_exact(component + MINEABLE_MAX_HEALTH, hp_max) &&
+                          std::isfinite(hp_max) && hp_max > 0.5F && hp_max < 1000000.0F;
+    if (have_hp) {
+        if (hp <= 0.001F) return false;
+        if (out_hp) *out_hp = hp;
+    }
+    if (have_max && out_hp_max) *out_hp_max = hp_max;
+
+    float frac = -1.0F;
+    if (have_hp && have_max) {
+        frac = std::clamp(hp / hp_max, 0.0F, 1.0F);
+    } else {
+        const float raw_frac = rd<float>(component + MINEABLE_FRACTION);
+        if (std::isfinite(raw_frac) && raw_frac >= 0.0F && raw_frac <= 1.001F)
+            frac = std::clamp(raw_frac, 0.0F, 1.0F);
+    }
+    if (out_fraction) *out_fraction = frac;
+    return true;
+}
+
 // Вердикт по одной записи реестра:
 //   0 — структурно не узел добычи; behaviours — её список компонентов (по нему
 //       запись потом сверяется одним чтением вместо полной классификации);
@@ -144,6 +207,7 @@ void farm_scan_reset() {
 static int farm_classify_identity(uint64_t identity, uint64_t identity_class,
                                   FarmEntity& entity, uint64_t& behaviours) {
     behaviours = 0;
+    if (g_farm_blacklist.count(identity)) return 1;
     if (identity_class && rd_ptr(identity) != identity_class) return 3;
     uint64_t array = rd_ptr(identity + NETID_BEHAVIOURS);
     if (!valid_obj(array)) return 3;
@@ -178,9 +242,15 @@ static int farm_classify_identity(uint64_t identity, uint64_t identity_class,
     if (kind < 0) return 1;     // узел, но ресурс не опознан (сбой чтения)
     if (!(g_farm_mask & (1u << kind))) return 1;   // маску меняют на лету
 
+    float node_hp = -1.0F, node_hp_max = -1.0F, node_frac = -1.0F;
+    if (!farm_node_is_alive(identity, component, &node_hp, &node_hp_max, &node_frac))
+        return 1;               // уже срублен / доживает 1 с до DestroyNow
+
     entity.identity = identity;
     entity.component = component;
     entity.kind = kind;
+    entity.fraction = (node_frac >= 0.0F) ? node_frac : 1.0F;
+    entity.frac_age = 60;
     entity.transform = native_component_transform(managed_object_native(component));
     if (!entity.transform)
         entity.transform = native_component_transform(managed_object_native(identity));
@@ -340,12 +410,9 @@ void esp_farm_blacklist(unsigned long long id, float seconds) {
     int frames = (int)(seconds * 60.0F);
     if (frames < 60) frames = 60;
     g_farm_blacklist[(uint64_t)id] = frames;
-    // Remove the depleted node immediately and request a scan on the next
-    // frame. Waiting for the normal rescan delay left the bot with stale farm
-    // targets around the just-harvested spot.
-    for (auto it = g_farm_entities.begin(); it != g_farm_entities.end(); ++it) {
-        if (it->identity == (uint64_t)id) { g_farm_entities.erase(it); break; }
-    }
+    // Remove the depleted node immediately from both active and staged scan
+    // lists so a mid-flight scan never puts a harvested node back.
+    farm_purge_entity((uint64_t)id);
     const double next_frame = mono_seconds();
     if (g_farm_next_scan > next_frame) g_farm_next_scan = next_frame;
 }
@@ -768,101 +835,82 @@ bool esp_farm_get_target(FarmTarget& out) {
     const FarmEntity* best = nullptr;
     float best_score = 1e18F;
     float best_dist = 0.0F;
-    for (const FarmEntity& entity : g_farm_entities) {
-        if (!(g_farm_mask & (1u << entity.kind))) continue;
-        if (!entity.pos_valid) continue;
-        if (g_farm_blacklist.count(entity.identity)) continue;
+    float best_hp = -1.0F;
+    float best_hp_max = -1.0F;
+    float best_fraction = -1.0F;
 
-        // Узел, который нечем взять текущим орудием, целью не становится:
-        // сравнение побитовое, тип у обоих полей один (FPTool.ToolPurpose).
-        // Без этого бот с киркой в руках вечно кружил вокруг дерева (и
-        // наоборот), теряя на каждый узел весь give-up таймер.
-        if (have_reach && reach.purposes_valid && entity.required_purpose != 0 &&
-            (reach.tool_purposes & entity.required_purpose) == 0) {
-            tool_need |= entity.required_purpose;
-            continue;
-        }
+    for (int pick_attempt = 0; pick_attempt < 8; ++pick_attempt) {
+        best = nullptr;
+        best_score = 1e18F;
+        best_dist = 0.0F;
+        tool_need = 0;
+        for (const FarmEntity& entity : g_farm_entities) {
+            if (!(g_farm_mask & (1u << entity.kind))) continue;
+            if (!entity.pos_valid) continue;
+            if (g_farm_blacklist.count(entity.identity)) continue;
 
-        // Дистанция по горизонтали (в Unity ось Y вверх). Контроллер сравнивает
-        // её с дальностью удара, а пивот высокого дерева сидит в метрах над
-        // землёй — 3D-дистанция до него никогда не опускается до порога, из-за
-        // чего бот вечно кружил вокруг тонких стволов.
-        const float dx = entity.pos.x - g_frame_local_pos.x;
-        const float dy = entity.pos.y - g_frame_local_pos.y;
-        const float dz = entity.pos.z - g_frame_local_pos.z;
-        const float dist = sqrtf(dx * dx + dz * dz);
-        if (!std::isfinite(dist) || dist > kMaxFarmDistance) continue;
-        // Узлы на другом вертикальном уровне (скала сверху/снизу) не берём.
-        if (!std::isfinite(dy) || fabsf(dy) > 30.0F) continue;
-
-        float score = dist;
-        // Похоже добытые узлы отправляются в конец очереди, а не отсеиваются
-        // сразу: точный смысл fractionRemaining на всех сборках не гарантирован,
-        // и ошибочная догадка здесь оставила бы фарм вообще без целей. Если
-        // оценка неверна, watchdog контроллера всё равно снимет узел за
-        // секунды. Для ТЕКУЩЕЙ цели не делаем никогда: один мусорный замер
-        // остатка в середине работы отправлял её в конец очереди, и метка
-        // прыгала на другой узел, хотя этот был ещё наполовину полон.
-        if (entity.identity != s_last_identity) {
-            // Освежаем кешированный остаток не чаще раза в секунду на узел —
-            // иначе один ближний узел стоил по syscall'у на узел каждый кадр.
-            FarmEntity& mut = const_cast<FarmEntity&>(entity);
-            if (--mut.frac_age <= 0) {
-                // 120 кадров: «раз в секунду» задумывалось при 60 fps, а на
-                // 118 fps выходило вдвое чаще — по syscall'у на каждый ближний
-                // узел дважды в секунду.
-                mut.frac_age = 120;
-                mut.fraction = rd<float>(entity.component + MINEABLE_FRACTION);
+            if (have_reach && reach.purposes_valid && entity.required_purpose != 0 &&
+                (reach.tool_purposes & entity.required_purpose) == 0) {
+                tool_need |= entity.required_purpose;
+                continue;
             }
-            if (std::isfinite(mut.fraction) && mut.fraction >= 0.0F &&
-                mut.fraction <= 1.001F && mut.fraction < 0.03F)
-                score += 1000.0F;
-        } else {
-            score *= 0.6F; // липкость
+
+            const float dx = entity.pos.x - g_frame_local_pos.x;
+            const float dy = entity.pos.y - g_frame_local_pos.y;
+            const float dz = entity.pos.z - g_frame_local_pos.z;
+            const float dist = sqrtf(dx * dx + dz * dz);
+            if (!std::isfinite(dist) || dist > kMaxFarmDistance) continue;
+            if (!std::isfinite(dy) || fabsf(dy) > 30.0F) continue;
+
+            float score = dist;
+            if (entity.identity != s_last_identity) {
+                FarmEntity& mut = const_cast<FarmEntity&>(entity);
+                if (--mut.frac_age <= 0) {
+                    mut.frac_age = 120;
+                    float hp = -1.0F, hp_max = -1.0F, frac = -1.0F;
+                    if (!farm_node_is_alive(entity.identity, entity.component, &hp, &hp_max, &frac)) {
+                        mut.fraction = 0.0F;
+                    } else if (frac >= 0.0F) {
+                        mut.fraction = frac;
+                    }
+                }
+                if (std::isfinite(mut.fraction) && mut.fraction >= 0.0F &&
+                    mut.fraction <= 1.001F && mut.fraction < 0.03F)
+                    score += 1000.0F;
+            } else {
+                score *= 0.6F; // липкость
+            }
+            if (score < best_score) { best_score = score; best = &entity; best_dist = dist; }
         }
-        if (score < best_score) { best_score = score; best = &entity; best_dist = dist; }
+        if (!best) {
+            s_last_identity = 0;
+            g_farm_tool_need = tool_need;
+            g_farm_idle_reason = tool_need ? 6 : (g_farm_entities.empty() ? 3 : 4);
+            return false;
+        }
+        if (farm_node_is_alive(best->identity, best->component,
+                               &best_hp, &best_hp_max, &best_fraction)) {
+            break;
+        }
+        // Выбранный узел уже добыт / уничтожен (m_CurrentHealth <= 0, выключен
+        // objectToHide или обнулён m_CachedPtr): немедленно выкидываем его из
+        // обоих списков (рабочего и фонового скана) и в этом же кадре берём
+        // следующий живой узел, чтобы бот не бегал вокруг пня.
+        const uint64_t dead_id = best->identity;
+        g_farm_blacklist[dead_id] = 360;
+        farm_purge_entity(dead_id);
+        if (s_last_identity == dead_id) s_last_identity = 0;
+        best = nullptr;
     }
     if (!best) {
         s_last_identity = 0;
-        g_farm_tool_need = tool_need;
-        // 6 — рядом есть узлы, но текущим орудием они не добываются.
-        g_farm_idle_reason = tool_need ? 6 : (g_farm_entities.empty() ? 3 : 4);
+        g_farm_idle_reason = g_farm_entities.empty() ? 3 : 4;
         return false;
     }
     g_farm_tool_need = 0;
     s_last_identity = best->identity;
     FarmEntity& node = const_cast<FarmEntity&>(*best);
-
-    // ---- Жив ли ещё выбранный узел --------------------------------------------
-    // Добытый узел игра уничтожает, а освободившуюся память аллокатор тут же
-    // отдаёт под новые объекты — вплоть до коллайдера и GameObject ПОСТРОЙКИ.
-    // Тогда проверки «луч упёрся в свой узел» (поддерево трансформов,
-    // GameObject узла, коллайдер крестика) получают ложное подтверждение по
-    // переиспользованным адресам, и бот со спокойной совестью бьёт по
-    // постройке, в которую упёрся. Класс компонента у живого MineableObject
-    // не меняется никогда: смена класса или невалидный объект = узел умер.
-    // С дебаунсом (единичный сбой чтения не выкидывает живой узел) и БЕЗ
-    // чёрного списка: ошиблись — следующий проход скана (2 с) вернёт узел.
-    {
-        static uint64_t s_alive_id = 0;
-        static int      s_alive_bad = 0;
-        if (best->identity != s_alive_id) { s_alive_id = best->identity; s_alive_bad = 0; }
-        bool alive = false;
-        if (valid_obj(node.component)) {
-            const uint64_t klass = rd_ptr(node.component);
-            alive = valid_obj(klass) && marker_class_of(klass) == MARKER_CLASS_MINEABLE;
-        }
-        if (alive) {
-            s_alive_bad = 0;
-        } else if (++s_alive_bad >= 10) {
-            for (auto it = g_farm_entities.begin(); it != g_farm_entities.end(); ++it) {
-                if (it->identity == best->identity) { g_farm_entities.erase(it); break; }
-            }
-            s_last_identity = 0;
-            g_farm_idle_reason = 7;   // узел умер: память уже чужая
-            return false;
-        }
-    }
+    if (best_fraction >= 0.0F) node.fraction = best_fraction;
 
     // ---- Крестик -------------------------------------------------------------
     Vec3 spot{};
@@ -1325,16 +1373,11 @@ bool esp_farm_get_target(FarmTarget& out) {
         }
     }
     // Состояние самого узла. Здоровье — самый тонкий признак того, что удары
-    // доходят: fractionRemaining сдвигается на проценты, а m_CurrentHealth
-    // падает уже от первого попадания.
+    // доходят: fractionRemaining на клиенте не синхронизируется (не SyncVar),
+    // а m_CurrentHealth / m_MaxHealth — SyncVar и падают от каждого попадания.
     {
-        float hp = 0.0F, hp_max = 0.0F;
-        if (rd_exact(best->component + MINEABLE_CURRENT_HEALTH, hp) &&
-            std::isfinite(hp) && hp >= 0.0F && hp < 1000000.0F)
-            out.node_health = hp;
-        if (rd_exact(best->component + MINEABLE_MAX_HEALTH, hp_max) &&
-            std::isfinite(hp_max) && hp_max > 0.0F && hp_max < 1000000.0F)
-            out.node_health_max = hp_max;
+        out.node_health = best_hp;
+        out.node_health_max = best_hp_max;
         int32_t xp = 0;
         if (rd_exact(best->component + MINEABLE_EXPERIENCE, xp) && xp >= 0 && xp < 1000000)
             out.node_experience = (int)xp;
@@ -1352,8 +1395,7 @@ bool esp_farm_get_target(FarmTarget& out) {
     out.walk_yaw = walk_yaw;
     out.walk_dist = walk_dist;
     out.node_dist = best_dist;
-    const float fraction = rd<float>(best->component + MINEABLE_FRACTION);
-    out.fraction = (std::isfinite(fraction) && fraction >= 0.0F && fraction <= 1.001F)
-                 ? fraction : -1.0F;
+    out.fraction = (best_fraction >= 0.0F && best_fraction <= 1.001F)
+                 ? best_fraction : -1.0F;
     return true;
 }

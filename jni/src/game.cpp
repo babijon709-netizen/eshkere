@@ -2952,7 +2952,7 @@ static bool discover_transform_hierarchy_layout(const std::vector<uint64_t>& pla
 }
 
 static bool position_is_sky_parked(const Vec3& v) {
-    if (fabsf(v.y) > 400.0F) return true;
+    if (fabsf(v.y) > 900.0F) return true;
     // KCC.TK (0x7C60228) parks inactive/culled transforms at (4.41568, y, 52.58677) in mid-air.
     const float dx_tk = v.x - 4.41568F;
     const float dz_tk = v.z - 52.58677F;

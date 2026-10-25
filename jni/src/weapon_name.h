@@ -100,9 +100,11 @@ inline const Name kNames[] = {
     {"spear",                 "Spear",               "Копьё"},
     {"fists",                 "Fists",               "Кулаки"},
     {"unarmed",               "Fists",               "Кулаки"},
-    // Пустые руки игра называет головой модели («MaleHead»).
-    {"malehead",              "Hand",                "Рука"},
-    {"femalehead",            "Hand",                "Рука"},
+    // Пустые руки игра называет головой или телом модели («MaleHead», «MaleBody»).
+    {"malehead",              "Hands",               "Руки"},
+    {"femalehead",            "Hands",               "Руки"},
+    {"malebody",              "Hands",               "Руки"},
+    {"femalebody",            "Hands",               "Руки"},
     // ---- Tools ----
     {"stonehatchet",          "Stone Hatchet",   "Каменный топор"},
     {"hatchet",               "Hatchet",         "Топор"},
@@ -191,6 +193,7 @@ inline bool is_held_utility(const char* label) {
     static const char* const kKeys[] = {
         "torch", "flashlight", "flaslight", "medkit", "bandage", "buildingplan",
         "waterbottle", "cctvcamera", "binoculars", "fishingrod", "fireworks",
+        "malehead", "femalehead", "malebody", "femalebody",
     };
     char key[48];
     normalize(label, key, sizeof(key));

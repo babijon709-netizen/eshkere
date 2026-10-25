@@ -320,9 +320,19 @@ static void apply_ore_cfg(MarkerLook& look, int which) {
 // they can be recognised. They belong to the loot toggle all the same.
 static const MarkerLook kBarrel    {ESP_MARKER_SCRAP, "Бочка",  true,  false, {80, 200, 255}};
 static const MarkerLook kSmashBox  {ESP_MARKER_LOOT, "Ящик",   false, false, {255, 255, 255}};
+static const MarkerLook kAirdrop   {ESP_MARKER_LOOT, "Аирдроп", true, false, {255,  85,  85}};
 // Дорожный знак — та же дробимая семья, что бочки и ящики: висит на тумблере
 // «Ящики», но подпись у него своя (раньше тонул в общей «Ящик»).
 static const MarkerLook kRoadSign  {ESP_MARKER_SCRAP, "Дорожный знак", false, false, {255, 255, 255}};
+
+static bool is_airdrop_entity(const MarkerEntity& entity) {
+    return entity.label && strcmp(entity.label, "Аирдроп") == 0;
+}
+
+static bool is_airdrop_marker(const EspMarker& marker) {
+    return marker.kind == ESP_MARKER_LOOT &&
+           (strcmp(marker.name, "Аирдроп") == 0 || strcmp(marker.name, "Airdrop") == 0);
+}
 
 // Animals: the game's own EntityType only covers some of them, the rest (wolf,
 // rat, ...) are recognised by the prefab name below.
@@ -371,7 +381,7 @@ static bool marker_for_entity_type(int32_t type, MarkerLook& look) {
         case MineableEntityType::Lootbox:  look = kSmashBox;  return true;
         // Air-drop balloon crates, new in this game build.
         case MineableEntityType::LootboxBaloon:
-        case MineableEntityType::LootboxBaloonBig: look = kSmashBox; return true;
+        case MineableEntityType::LootboxBaloonBig: look = kAirdrop; return true;
         case MineableEntityType::RoadSign: look = kRoadSign;  return true;
         case MineableEntityType::Human:    look = bot_look("Зомби"); return true;
         case MineableEntityType::Bear:     look = animal_look("Медведь");  return true;
@@ -845,8 +855,10 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
         {"epic",         "Элитный ящик",     4, true},
         {"legendary",    "Элитный ящик",     4, true},
         {"rare",         "Редкий ящик",      4, false},
-        {"airdrop",    "Аирдроп",            3, false},
-        {"supply",     "Аирдроп",            3, false},
+        {"airdrop",    "Аирдроп",            4, false},
+        {"supply",     "Аирдроп",            4, false},
+        {"supplydrop", "Аирдроп",            4, false},
+        {"carepackage","Аирдроп",            4, false},
         {"medical",    "Мед. ящик",          3, false},
         {"medkit",     "Мед. ящик",          3, false},
         {"ammo",       "Ящик патронов",      3, false},
@@ -881,6 +893,8 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
         default:
             break;
     }
+    bool saw_air = false;
+    bool saw_drop = false;
     for_each_name_token(raw, [&](const char* word) {
         // Слово-исключение больше не останавливает разбор: после него имя может
         // ещё сказать «box»/«large» (например «storage box»), а ящик в доме мы
@@ -892,6 +906,12 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
                 break;
             }
         if (strcmp(word, "box") == 0) info.saw_box = true;
+        if (strcmp(word, "air") == 0) saw_air = true;
+        if (strcmp(word, "drop") == 0) saw_drop = true;
+        if (strcmp(word, "baloon") == 0 || strcmp(word, "balloon") == 0) {
+            saw_air = true;
+            saw_drop = true;
+        }
         for (const char* size : kSizeWords)
             if (strcmp(word, size) == 0) { info.saw_size = true; break; }
         if (strcmp(word, "large") == 0 || strcmp(word, "big") == 0) info.saw_big = true;
@@ -909,7 +929,15 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
         }
         return false;
     });
-    if (info.saw_box && info.saw_size) info.player_box = true;
+    if (saw_air && saw_drop && info.rank < 4) {
+        info.rank = 4;
+        info.label = "Аирдроп";
+        info.rainbow = false;
+        info.player_box = false;
+    }
+    if (info.saw_box && info.saw_size &&
+        !(info.label && strcmp(info.label, "Аирдроп") == 0))
+        info.player_box = true;
     // Бочка перебивает «loot/crate/lootbox» (ранг 2), но не военные/элитные
     // ящики (ранг 4) — таких бочек в игре нет, но порядок честный.
     if (info.scrap) {
@@ -919,12 +947,58 @@ static void scan_loot_name(const char* raw, LootNameInfo& info) {
     }
 }
 
+static bool is_airdrop_name(const char* raw) {
+    if (!raw || !raw[0]) return false;
+    char low[64];
+    size_t n = 0;
+    for (const char* p = raw; *p && n + 1 < sizeof(low); ++p) {
+        char c = *p;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        low[n++] = c;
+    }
+    low[n] = '\0';
+    if (strstr(low, "airdropproxy") || strstr(low, "airdropconfig") ||
+        strstr(low, "airdropfleet") || strstr(low, "airdropairplane") ||
+        strstr(low, "airmarker") || strstr(low, "tacticalair"))
+        return false;
+    return strstr(low, "airdrop") != nullptr ||
+           strstr(low, "air_drop") != nullptr ||
+           strstr(low, "air-drop") != nullptr ||
+           strstr(low, "air drop") != nullptr ||
+           strstr(low, "supplydrop") != nullptr ||
+           strstr(low, "supply_drop") != nullptr ||
+           strstr(low, "supply-drop") != nullptr ||
+           strstr(low, "supply drop") != nullptr ||
+           strstr(low, "supplycrate") != nullptr ||
+           strstr(low, "supply_crate") != nullptr ||
+           strstr(low, "carepackage") != nullptr ||
+           strstr(low, "care_package") != nullptr ||
+           strstr(low, "lootboxbaloon") != nullptr ||
+           strstr(low, "lootboxballoon") != nullptr;
+}
+
+static bool airdrop_look_from_object_name(const char* raw_name, MarkerLook& look) {
+    if (!is_airdrop_name(raw_name)) return false;
+    look = kAirdrop;
+    return true;
+}
+
 static bool loot_marker(uint64_t component, const char* object_name, const char* root_name,
                         const char* panel, MarkerLook& look) {
     if (is_vehicle_structure_name(object_name) ||
         is_vehicle_structure_name(root_name) ||
         is_vehicle_structure_name(panel)) {
         return false;
+    }
+    if (airdrop_look_from_object_name(object_name, look) ||
+        airdrop_look_from_object_name(root_name, look) ||
+        airdrop_look_from_object_name(panel, look)) {
+        return true;
+    }
+    char sound_key[40] = {};
+    if (read_managed_string(rd_ptr(component + 0xE8), sound_key, sizeof(sound_key)) &&
+        airdrop_look_from_object_name(sound_key, look)) {
+        return true;
     }
     // Контейнер, встроенный в постройку, — поставлен игроком. Раньше такие
     // скрывались целиком; теперь ЯЩИКИ в домах показываются («Большой
@@ -1384,7 +1458,9 @@ uint8_t marker_class_of(uint64_t klass) {
         else if (name.rfind("Mineable", 0) == 0 ||
                  recovered_name == manes_aim_source::EntityName::CompositeStone)
             kind = MARKER_CLASS_MINEABLE;
-        else if (name == "LootObject")
+        else if (name == "LootObject" ||
+                 name == "AirdropLootBox" ||
+                 name == "LootBoxBalloon")
             kind = MARKER_CLASS_LOOT;
         else if (recovered_name == manes_aim_source::EntityName::ItemPickup)
             kind = MARKER_CLASS_PICKUP;
@@ -1599,21 +1675,34 @@ static MarkerScanResult rebuild_marker_entities() {
                 if (!managed_component_gameobject_name(component, none_name, sizeof(none_name)) ||
                     !(sleeper_look_from_object_name(none_name, look) ||
                       backpack_look_from_object_name(none_name, look) ||
+                      (g_markers_loot_enabled &&
+                       airdrop_look_from_object_name(none_name, look)) ||
                       (g_markers_pumpkin_enabled && !id_emitted_pumpkin &&
                        pumpkin_look_from_object_name(none_name, look, false))))
                     continue;
-                known = true;   // рюкзак/спящий/тыква с переименованным классом
+                known = true;   // рюкзак/спящий/аирдроп/тыква с переименованным классом
             }
             // Имя класса компонента может быть недоступно (см. marker_class_of):
             // тогда семейство неизвестно, и объект опознаётся по имени GameObject —
             // оно лежит в куче игры и читается всегда. Пробуем семейства по порядку.
             const bool family_unknown = (component_class == MARKER_CLASS_UNKNOWN);
+            const bool is_airdrop_behaviour =
+                (component_class == MARKER_CLASS_LOOT) &&
+                (object_class_or_parent_name_is(component, "AirdropLootBox") ||
+                 object_class_or_parent_name_is(component, "LootBoxBalloon"));
             // «Дорогой» компонент: имя GameObject, трансформ и позиция — это
             // десятки обращений к памяти игры, поэтому время порции проверяется
             // снаружи, между узлами.
             managed_component_gameobject_name(component, object_name, sizeof(object_name));
             managed_component_gameobject_name(identity, root_name, sizeof(root_name));
-            if (component_class == MARKER_CLASS_TURRET) {
+            if (is_airdrop_behaviour) {
+                if (g_markers_loot_enabled) {
+                    look = kAirdrop;
+                    known = true;
+                } else {
+                    continue;
+                }
+            } else if (component_class == MARKER_CLASS_TURRET) {
                 look = special_look(ESP_MARKER_TURRET, "Турель");
                 known = true;
             } else if (component_class == MARKER_CLASS_SLEEPER) {
@@ -1930,13 +2019,14 @@ static MarkerScanResult rebuild_marker_entities() {
             } else {
                 entity.position_valid = false;
             }
-            if (entity.transform) g_marker_scan_pending.push_back(entity);
-            if (g_marker_scan_pending.size() >= kMarkerEntityLimit) break;
+            if (entity.transform &&
+                (g_marker_scan_pending.size() < kMarkerEntityLimit || is_airdrop_entity(entity))) {
+                g_marker_scan_pending.push_back(entity);
+            }
         }
-        if (g_marker_scan_pending.size() >= kMarkerEntityLimit) break;
     }
 
-    if (i < count && g_marker_scan_pending.size() < kMarkerEntityLimit) {
+    if (i < count) {
         // Порция израсходована (вышло время), цикл не закончен — продолжим на
         // следующем кадре с этого же узла.
         g_marker_scan_cursor = i;
@@ -2057,7 +2147,8 @@ static void marker_track_bot_head(MarkerEntity& entity, double now) {
 // cooldown simply ticks twice and far bots re-read twice as often — harmless.
 static void marker_track_position(MarkerEntity& entity) {
     bool want_read = !entity.position_valid;
-    if (entity.kind == ESP_MARKER_BOT) {
+    const bool is_airdrop = is_airdrop_entity(entity);
+    if (entity.kind == ESP_MARKER_BOT || is_airdrop) {
         want_read = true;
         entity.pos_cooldown = 1;
     } else if (entity.kind == ESP_MARKER_ANIMAL || entity.kind == ESP_MARKER_VEHICLE) {
@@ -2077,9 +2168,12 @@ static void marker_track_position(MarkerEntity& entity) {
             // pose while the networked object is being reparented. Do not let
             // that one sample move a label under the terrain; accept it only
             // after the normal time filter gets another coherent read.
-            !(entity.position_valid && sampled.y < entity.position.y - 1.25F &&
-              ((sampled.x - entity.position.x) * (sampled.x - entity.position.x) +
-               (sampled.z - entity.position.z) * (sampled.z - entity.position.z)) < 4.0F)) {
+            // Falling airdrops descend vertically by design and must never be
+            // blocked by this vertical drop check.
+            (is_airdrop ||
+             !(entity.position_valid && sampled.y < entity.position.y - 1.25F &&
+               ((sampled.x - entity.position.x) * (sampled.x - entity.position.x) +
+                (sampled.z - entity.position.z) * (sampled.z - entity.position.z)) < 4.0F))) {
             const Vec3 prev_pos = entity.position;
             const bool had_prev = entity.position_valid;
             entity.position = sampled;
@@ -2090,7 +2184,7 @@ static void marker_track_position(MarkerEntity& entity) {
             // отрисовка продвигает устаревший отсчёт между редкими чтениями
             // (см. kMarkerPositionLeadMax). У ботов она вдобавок идёт в аим.
             if (entity.kind == ESP_MARKER_BOT || entity.kind == ESP_MARKER_ANIMAL ||
-                entity.kind == ESP_MARKER_VEHICLE) {
+                entity.kind == ESP_MARKER_VEHICLE || is_airdrop) {
                 botlead::update(entity.lead, entity.position, entity.position_last_ok);
             }
             if (entity.kind == ESP_MARKER_BOT) {
@@ -2364,7 +2458,7 @@ std::vector<EspMarker> esp_get_markers() {
         // и, если оценка старше своего окна, точка остаётся как есть.
         Vec3 tracked_position = entity.position;
         if (entity.kind == ESP_MARKER_ANIMAL || entity.kind == ESP_MARKER_BOT ||
-            entity.kind == ESP_MARKER_VEHICLE) {
+            entity.kind == ESP_MARKER_VEHICLE || is_airdrop_entity(entity)) {
             const double now = mono_seconds();
             const double age = now - entity.position_last_ok;
             if (age > 0.0 && botlead::fresh(entity.lead, now)) {
@@ -2383,7 +2477,7 @@ std::vector<EspMarker> esp_get_markers() {
         float distance = sqrtf(dx * dx + dy * dy + dz * dz);
         // Supply drops are global map objectives: keep their ESP visible
         // regardless of the ordinary marker-distance slider.
-        const bool is_airdrop = entity.label && strcmp(entity.label, "Аирдроп") == 0;
+        const bool is_airdrop = is_airdrop_entity(entity);
         if (!std::isfinite(distance) || (!is_airdrop && distance > max_distance)) {
             marker_watch_observe(entity, false, "DISTANCE", distance, 0.0F, 0.0F);
             continue;
@@ -2460,7 +2554,12 @@ std::vector<EspMarker> esp_get_markers() {
     // Порядок стабильный: ничьи (перечитываемый шум зверей/ботов или два узла
     // на одной глубине) держат порядок сканирования реестра, а не тасуются
     // каждый кадр — иначе прореживание ниже прыгало бы между соседними пилюлями.
+    // Аирдропы всегда идут первыми, чтобы лимит в 64 метки на экране никогда не
+    // срезал далёкий дроп из-за ближней руды/ящиков.
     std::stable_sort(result.begin(), result.end(), [](const EspMarker& a, const EspMarker& b) {
+        const bool a_air = is_airdrop_marker(a);
+        const bool b_air = is_airdrop_marker(b);
+        if (a_air != b_air) return a_air;
         return floorf(a.distance * 2.0F) < floorf(b.distance * 2.0F);
     });
 

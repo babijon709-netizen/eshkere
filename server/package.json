@@ -1,0 +1,12 @@
+{
+  "name": "eshkere-control-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Small control API for the eshkere client",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

@@ -338,10 +338,11 @@ float TabContent(int tab, float dt, float cW) {
 {"##vtr", XS("Линии"),      &g_state.esp_tracer,       &g_state.a_esp_tracer,       &cfg::esp::tracer_col},
 {"##vsk", XS("Скелеты"),    &g_state.esp_skeleton,     &g_state.a_esp_skeleton,     &cfg::esp::skeleton_col},
 {"##var", XS("Броня"),      &g_state.esp_armor,        &g_state.a_esp_armor,        nullptr},
+{"##vmh", XS("Мапхак"),     &g_state.esp_maphack,      &g_state.a_esp_maphack,      nullptr},
 {"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
         };
-        if (group("##esp_players", XS("Игроки"), players, 10)) {
-            drawRows(players, 10);
+        if (group("##esp_players", XS("Игроки"), players, 11)) {
+            drawRows(players, 11);
             SHdr(XS("Линии и боксы"), 8.f);
             CardBg(Layout::SliderH * 2.f);
             SliderRow("##esp_stretch", XS("Растяг экрана"), &g_state.screen_stretch_x,
@@ -1439,6 +1440,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_bots,   g_state.esp_bots,           dt);
     Tick(g_state.a_esp_arrows, g_state.esp_arrows,         dt);
     Tick(g_state.a_esp_radar,  g_state.esp_radar,          dt);
+    Tick(g_state.a_esp_maphack, g_state.esp_maphack,       dt);
     Tick(g_state.a_esp_arrows_off, g_state.esp_arrows_offscreen, dt);
     Tick(g_state.a_esp_arrows_dist, g_state.esp_arrows_dist, dt);
     Tick(g_state.a_esp_vehicles, g_state.esp_vehicles,     dt);

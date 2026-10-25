@@ -9173,6 +9173,159 @@ bool esp_box_frame_transient() { return g_box_frame_transient; }
 void esp_set_bearings_enabled(bool enabled) { g_bearings_requested = enabled; }
 const std::vector<EspBearing>& esp_get_bearings() { return g_frame_bearings; }
 
+// ---- Мапхак: проекция игроков на открытую карту MapView.map ----------------
+static bool g_maphack_requested = false;
+static bool g_frame_map_open = false;
+static std::vector<EspMapPlayer> g_frame_map_players;
+static float g_cached_map_zry = 0.0F;
+
+void esp_set_maphack_enabled(bool enabled) {
+    g_maphack_requested = enabled;
+    if (!enabled) {
+        g_frame_map_open = false;
+        g_frame_map_players.clear();
+    }
+}
+bool esp_map_is_open() { return g_frame_map_open; }
+const std::vector<EspMapPlayer>& esp_get_map_players() { return g_frame_map_players; }
+
+static bool resolve_ui_transform_arrays(uint64_t managed_or_native_rt,
+                                        uint64_t& matrices,
+                                        uint64_t& indices,
+                                        int32_t& index) {
+    matrices = 0;
+    indices = 0;
+    index = -1;
+    if (!valid_obj(managed_or_native_rt)) return false;
+    uint64_t native_tr = resolve_native_transform(managed_or_native_rt);
+    if (!valid_obj(native_tr)) native_tr = managed_or_native_rt;
+
+    auto try_layout = [&](uint64_t data_off, uint64_t idx_off,
+                          uint64_t mat_off, uint64_t ind_off,
+                          bool mat_indir, bool ind_indir) -> bool {
+        const uint64_t data = rd_ptr(native_tr + data_off);
+        const int32_t idx = rd<int32_t>(native_tr + idx_off);
+        if (!valid_obj(data) || idx < 0 || idx > 100000) return false;
+        uint64_t m = rd_ptr(data + mat_off);
+        uint64_t n = rd_ptr(data + ind_off);
+        if (mat_indir && valid_obj(m)) m = rd_ptr(m);
+        if (ind_indir && valid_obj(n)) n = rd_ptr(n);
+        if (!valid_obj(m) || !valid_obj(n)) return false;
+        Matrix34 probe{};
+        if (!rd_exact(m + (uint64_t)idx * sizeof(Matrix34), probe) || !matrix34_is_valid(probe))
+            return false;
+        matrices = m;
+        indices = n;
+        index = idx;
+        return true;
+    };
+
+    if (try_layout(TRANSFORM_HIERARCHY_DATA, TRANSFORM_HIERARCHY_INDEX,
+                   TRANSFORM_HIERARCHY_MATRICES, TRANSFORM_HIERARCHY_INDICES,
+                   false, false)) {
+        return true;
+    }
+    if (g_transform_hierarchy_layout_valid &&
+        try_layout(g_transform_hierarchy_layout.data_offset,
+                   g_transform_hierarchy_layout.index_offset,
+                   g_transform_hierarchy_layout.matrices_offset,
+                   g_transform_hierarchy_layout.indices_offset,
+                   g_transform_hierarchy_layout.matrices_indirect,
+                   g_transform_hierarchy_layout.indices_indirect)) {
+        return true;
+    }
+    if (g_skeleton_layout_valid &&
+        try_layout(g_skeleton_layout.data_offset,
+                   g_skeleton_layout.index_offset,
+                   g_skeleton_layout.matrices_offset,
+                   g_skeleton_layout.indices_offset,
+                   g_skeleton_layout.matrices_indirect,
+                   g_skeleton_layout.indices_indirect)) {
+        return true;
+    }
+    return false;
+}
+
+static bool read_ui_transform_local_pos(uint64_t managed_rt, Vec3& out) {
+    uint64_t matrices = 0, indices = 0;
+    int32_t index = -1;
+    if (!resolve_ui_transform_arrays(managed_rt, matrices, indices, index)) return false;
+    Matrix34 m{};
+    if (!rd_exact(matrices + (uint64_t)index * sizeof(Matrix34), m) || !matrix34_is_valid(m))
+        return false;
+    out = {m.translation.x, m.translation.y, m.translation.z};
+    return vec3_is_finite(out);
+}
+
+static bool read_ui_transform_world_trs_and_root(uint64_t managed_rt,
+                                                 Vec3& pos,
+                                                 Vec4& rot,
+                                                 Vec3& scale,
+                                                 Vec3& root_pos) {
+    uint64_t matrices = 0, indices = 0;
+    int32_t index = -1;
+    if (!resolve_ui_transform_arrays(managed_rt, matrices, indices, index)) return false;
+    Matrix34 m{};
+    if (!rd_exact(matrices + (uint64_t)index * sizeof(Matrix34), m) || !matrix34_is_valid(m))
+        return false;
+    pos = {m.translation.x, m.translation.y, m.translation.z};
+    rot = m.rotation;
+    scale = {m.scale.x, m.scale.y, m.scale.z};
+    root_pos = pos;
+    if (!normalize_quaternion(rot)) return false;
+    int32_t parent = -2, previous = index;
+    if (!rd_exact(indices + (uint64_t)index * sizeof(int32_t), parent)) return false;
+    int depth = 0;
+    while (parent >= 0 && depth++ < 128) {
+        if (parent > 100000 || parent == previous) return false;
+        Matrix34 p{};
+        if (!rd_exact(matrices + (uint64_t)parent * sizeof(Matrix34), p) || !matrix34_is_valid(p))
+            return false;
+        Vec4 pr = p.rotation;
+        if (!normalize_quaternion(pr)) return false;
+        const Vec3 scaled = {pos.x * p.scale.x, pos.y * p.scale.y, pos.z * p.scale.z};
+        const Vec3 turned = rotate_vector(pr, scaled);
+        pos = {p.translation.x + turned.x, p.translation.y + turned.y, p.translation.z + turned.z};
+        rot = multiply_quaternion(pr, rot);
+        if (!normalize_quaternion(rot)) return false;
+        scale = {p.scale.x * scale.x, p.scale.y * scale.y, p.scale.z * scale.z};
+        root_pos = {p.translation.x, p.translation.y, p.translation.z};
+        previous = parent;
+        if (!rd_exact(indices + (uint64_t)parent * sizeof(int32_t), parent)) return false;
+    }
+    if (parent != -1 || depth >= 128) return false;
+    return vec3_is_finite(pos) && std::isfinite(scale.x) && fabsf(scale.x) > 1e-5F &&
+           std::isfinite(scale.y) && fabsf(scale.y) > 1e-5F;
+}
+
+struct MapProjection {
+    bool  valid = false;
+    Vec3  map_pos{};
+    Vec4  map_rot{0.0F, 0.0F, 0.0F, 1.0F};
+    Vec3  map_scale{1.0F, 1.0F, 1.0F};
+    float canvas_w = 0.0F;
+    float canvas_h = 0.0F;
+    float zry = 0.0F;
+    float vp_min_x = 0.0F;
+    float vp_min_y = 0.0F;
+    float vp_max_x = 0.0F;
+    float vp_max_y = 0.0F;
+
+    bool project(const Vec3& world, float sw, float sh, float& sx, float& sy) const {
+        if (!valid || !(zry > 0.15F) || !(canvas_w > 10.0F) || !(canvas_h > 10.0F)) return false;
+        const float local_x = world.x / zry;
+        const float local_y = world.z / zry;
+        const Vec3 scaled = {local_x * map_scale.x, local_y * map_scale.y, 0.0F};
+        const Vec3 turned = rotate_vector(map_rot, scaled);
+        const float cx = map_pos.x + turned.x;
+        const float cy = map_pos.y + turned.y;
+        sx = (cx / canvas_w) * sw;
+        sy = (1.0F - (cy / canvas_h)) * sh;
+        if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
+        return sx >= vp_min_x && sx <= vp_max_x && sy >= vp_min_y && sy <= vp_max_y;
+    }
+};
+
 // Горизонтальный пеленг от точки камеры к мировой точке. fwd/right проецируются
 // на мировую горизонталь (в Unity вверх = Y) и ортогонализуются друг к другу,
 // поэтому угол зависит только от рысканья камеры. Отказ (false) — камера
@@ -9304,6 +9457,7 @@ void esp_reset() {
     // Сиды были набраны в прошлом процессе: их адреса в новом ничего не значат.
     g_skeleton_layout_seeds.clear();
     g_frame_vp_valid = false; g_frame_local_valid = false;
+    g_frame_map_open = false; g_frame_map_players.clear(); g_cached_map_zry = 0.0F;
     reset_marker_caches();
     reset_vis_caches();
 }
@@ -9629,6 +9783,164 @@ static void reset_vis_caches() {
     s_vis_local_player        = 0;
     s_view_occlusion_mod.clear();
     s_view_probe_slot.clear();
+}
+
+static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
+    out = MapProjection{};
+    const uint64_t statics = game_controller_statics();
+    if (!statics) return false;
+    const uint64_t gc = rd_ptr(statics + GAME_CONTROLLER_STATIC_SELF_FIELD);
+    if (!valid_obj(gc)) return false;
+    const uint64_t map_mgr = rd_ptr(gc + GAME_CONTROLLER_MAP_MANAGER);
+    if (!valid_obj(map_mgr)) return false;
+
+    const uint64_t map_view = rd_ptr(map_mgr + MAP_MANAGER_MAP_VIEW);
+    uint64_t map_pres = rd_ptr(map_mgr + MAP_MANAGER_MAP_PRESENTER);
+    if (!valid_obj(map_pres) && valid_obj(map_view)) {
+        const uint64_t act = rd_ptr(map_view + MAP_VIEW_ON_ENABLE_ACTION);
+        if (valid_obj(act)) map_pres = rd_ptr(act + 0x20);
+    }
+
+    const bool open_mgr = rd<uint8_t>(map_mgr + game_offsets::MAP_MANAGER_IS_OPEN) != 0;
+    const bool open_pres = valid_obj(map_pres) && rd<uint8_t>(map_pres + game_offsets::MAP_PRESENTER_IS_OPEN) != 0;
+    if (!open_mgr && !open_pres) return false;
+
+    uint64_t map_rt = valid_obj(map_view) ? rd_ptr(map_view + game_offsets::MAP_VIEW_MAP_RT) : 0;
+    const uint64_t static_interest = rd_ptr(map_mgr + game_offsets::MAP_MANAGER_STATIC_INTEREST);
+    if (!valid_obj(map_rt) && valid_obj(static_interest))
+        map_rt = rd_ptr(static_interest + game_offsets::STATIC_INTEREST_RECT);
+    if (!valid_obj(map_rt)) return false;
+
+    Vec3 root_pos{};
+    if (!read_ui_transform_world_trs_and_root(map_rt, out.map_pos, out.map_rot, out.map_scale, root_pos))
+        return false;
+
+    if (std::isfinite(root_pos.x) && std::isfinite(root_pos.y) &&
+        root_pos.x > 100.0F && root_pos.y > 100.0F &&
+        root_pos.x < 10000.0F && root_pos.y < 10000.0F) {
+        out.canvas_w = root_pos.x * 2.0F;
+        out.canvas_h = root_pos.y * 2.0F;
+    } else {
+        out.canvas_w = sw;
+        out.canvas_h = sh;
+    }
+
+    float best_zry = 0.0F;
+    float best_span = 0.0F;
+    auto consider_pair = [&](float world_coord, float local_coord) {
+        const float aw = fabsf(world_coord);
+        const float al = fabsf(local_coord);
+        if (!std::isfinite(aw) || !std::isfinite(al) || aw < 4.0F || al < 0.5F) return;
+        const float ratio = world_coord / local_coord;
+        if (std::isfinite(ratio) && ratio > 0.15F && ratio < 25.0F && aw > best_span) {
+            best_span = aw;
+            best_zry = ratio;
+        }
+    };
+
+    if (valid_obj(static_interest)) {
+        const uint64_t rects_list = rd_ptr(static_interest + game_offsets::STATIC_INTEREST_RECTS_LIST);
+        const uint64_t pos_list   = rd_ptr(static_interest + game_offsets::STATIC_INTEREST_POS_LIST);
+        if (valid_obj(rects_list) && valid_obj(pos_list)) {
+            const uint64_t r_items = rd_ptr(rects_list + IL2CPP_LIST_ITEMS);
+            const int32_t  r_cnt   = rd<int32_t>(rects_list + IL2CPP_LIST_SIZE);
+            const uint64_t p_items = rd_ptr(pos_list + IL2CPP_LIST_ITEMS);
+            const int32_t  p_cnt   = rd<int32_t>(pos_list + IL2CPP_LIST_SIZE);
+            const int32_t  cnt     = std::min(r_cnt, p_cnt);
+            if (cnt > 0 && cnt <= 128 && valid_obj(r_items) && valid_obj(p_items)) {
+                for (int32_t k = 0; k < cnt && k < 24; ++k) {
+                    const uint64_t pin_rt = rd_ptr(r_items + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)k * 8);
+                    Vec3 wpos{}, lpos{};
+                    if (!valid_obj(pin_rt) ||
+                        !rd_exact(p_items + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)k * sizeof(Vec3), wpos) ||
+                        !read_ui_transform_local_pos(pin_rt, lpos))
+                        continue;
+                    consider_pair(wpos.x, lpos.x);
+                    consider_pair(wpos.z, lpos.y);
+                }
+            }
+        }
+    }
+
+    if (best_zry <= 0.0F && valid_obj(map_pres)) {
+        const uint64_t views_dict = rd_ptr(map_pres + game_offsets::MAP_PRESENTER_VIEWS_DICT);
+        if (valid_obj(views_dict)) {
+            const uint64_t entries = rd_ptr(views_dict + DICT_ENTRIES);
+            const int32_t  d_cnt   = rd<int32_t>(views_dict + DICT_COUNT);
+            if (d_cnt > 0 && d_cnt <= 256 && valid_obj(entries)) {
+                for (int32_t k = 0; k < d_cnt && k < 32; ++k) {
+                    const uint64_t entry = entries + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)k * DICT_ENTRY_STRIDE;
+                    if (rd<int32_t>(entry) < 0) continue;
+                    const uint64_t marker = rd_ptr(entry + 0x08);
+                    const uint64_t view   = rd_ptr(entry + DICT_ENTRY_VALUE);
+                    if (!valid_obj(marker) || !valid_obj(view)) continue;
+                    const uint64_t mdata   = rd_ptr(marker + MARKER_DATA);
+                    const uint64_t view_rt = rd_ptr(view + game_offsets::MAP_MARKER_VIEW_RT);
+                    Vec3 wpos{}, lpos{};
+                    if (!valid_obj(mdata) || !valid_obj(view_rt) ||
+                        !rd_exact(mdata + MARKER_DATA_WORLD_POS, wpos) ||
+                        !read_ui_transform_local_pos(view_rt, lpos))
+                        continue;
+                    consider_pair(wpos.x, lpos.x);
+                    consider_pair(wpos.z, lpos.y);
+                }
+            }
+        }
+    }
+
+    if (best_zry > 0.0F) {
+        g_cached_map_zry = best_zry;
+        out.zry = best_zry;
+    } else if (g_cached_map_zry > 0.15F) {
+        out.zry = g_cached_map_zry;
+    } else {
+        return false;
+    }
+
+    out.vp_min_x = 0.0F;
+    out.vp_min_y = 0.0F;
+    out.vp_max_x = sw;
+    out.vp_max_y = sh;
+    if (valid_obj(map_view)) {
+        const uint64_t scroll_rect = rd_ptr(map_view + game_offsets::MAP_VIEW_SCROLL_RECT);
+        if (valid_obj(scroll_rect)) {
+            uint64_t view_rt = rd_ptr(scroll_rect + game_offsets::SCROLL_RECT_VIEW_RECT);
+            if (!valid_obj(view_rt)) view_rt = rd_ptr(scroll_rect + game_offsets::SCROLL_RECT_VIEWPORT);
+            Vec3 vb_center{}, vb_extents{};
+            Vec3 vp_pos{}, vp_scale{}, vp_root{};
+            Vec4 vp_rot{};
+            if (valid_obj(view_rt) &&
+                rd_exact(scroll_rect + game_offsets::SCROLL_RECT_VIEW_BOUNDS_CENTER, vb_center) &&
+                rd_exact(scroll_rect + game_offsets::SCROLL_RECT_VIEW_BOUNDS_EXTENTS, vb_extents) &&
+                vb_extents.x > 20.0F && vb_extents.y > 20.0F &&
+                read_ui_transform_world_trs_and_root(view_rt, vp_pos, vp_rot, vp_scale, vp_root)) {
+                auto proj_vp = [&](float lx, float ly, float& ox, float& oy) {
+                    const Vec3 sc = {lx * vp_scale.x, ly * vp_scale.y, 0.0F};
+                    const Vec3 tr = rotate_vector(vp_rot, sc);
+                    const float cx = vp_pos.x + tr.x;
+                    const float cy = vp_pos.y + tr.y;
+                    ox = (cx / out.canvas_w) * sw;
+                    oy = (1.0F - (cy / out.canvas_h)) * sh;
+                };
+                float x0 = 0.0F, y0 = 0.0F, x1 = 0.0F, y1 = 0.0F;
+                proj_vp(vb_center.x - vb_extents.x, vb_center.y - vb_extents.y, x0, y0);
+                proj_vp(vb_center.x + vb_extents.x, vb_center.y + vb_extents.y, x1, y1);
+                const float min_x = std::min(x0, x1), max_x = std::max(x0, x1);
+                const float min_y = std::min(y0, y1), max_y = std::max(y0, y1);
+                if (std::isfinite(min_x) && std::isfinite(max_x) &&
+                    std::isfinite(min_y) && std::isfinite(max_y) &&
+                    (max_x - min_x) > 80.0F && (max_y - min_y) > 80.0F) {
+                    out.vp_min_x = std::max(0.0F, min_x);
+                    out.vp_min_y = std::max(0.0F, min_y);
+                    out.vp_max_x = std::min(sw, max_x);
+                    out.vp_max_y = std::min(sh, max_y);
+                }
+            }
+        }
+    }
+
+    out.valid = true;
+    return true;
 }
 
 struct NearbyPlayerOccSample {
@@ -11221,6 +11533,8 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     // Пеленги живут ровно один кадр: ранний выход обязан оставить пустой
     // список, иначе оверлей дорисовал бы прошлогодние стрелки новой камерой.
     g_frame_bearings.clear();
+    g_frame_map_open = false;
+    g_frame_map_players.clear();
 
     if (g_pid <= 0 || !g_il2cpp_base) {
             return result;
@@ -11230,7 +11544,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     no_grass_tick();
 
     // Фрикам — до всех ранних выходов: сводки и покадровая запись нужны и в
-    // пустой местности (раньше тик стоял за выходом «нет игроков» и там не
+    // пустой местности (раньше тик стоял за ранним выходом «нет игроков» и там не
     // бежал вовсе — остаточные мерцания было нечем смотреть), а сами
     // early-out'ы тику не помеха (у него свои проверки живости трансформа).
     freecam_tick();
@@ -11243,6 +11557,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     if (!std::isfinite(sh) || sh < 100.0F || sh > 10000.0F) sh = 2400.0F;
     g_last_overlay_sw = sw;
     g_last_overlay_sh = sh;
+
+    MapProjection map_proj{};
+    if (g_maphack_requested) {
+        g_frame_map_open = resolve_map_projection(sw, sh, map_proj);
+    }
 
     std::vector<uint64_t>& s_transforms = g_frame_transforms;
     bool player_list_ok = false;
@@ -12180,6 +12499,78 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (live_track != g_player_track.end()) {
             live_track->second.corpse = false;
             live_track->second.corpse_at = 0.0;
+        }
+    }
+
+    if (g_frame_map_open && map_proj.valid) {
+        g_frame_map_players.reserve(s_transforms.size());
+        for (size_t i = 0; i < s_transforms.size(); ++i) {
+            if (i == local_entity_index) continue;
+            const uint64_t player = s_transforms[i];
+            if (!player || !position_ok[i]) continue;
+
+            {
+                auto track_it = g_player_track.find(player);
+                if (track_it != g_player_track.end() && track_it->second.uid[0]) {
+                    uint64_t& pick = g_player_track_pick[track_it->second.uid];
+                    if (pick && pick != player) {
+                        bool pick_alive = false;
+                        for (uint64_t p : s_transforms) if (p == pick) { pick_alive = true; break; }
+                        const bool pick_corpse = pick_alive && player_track_is_corpse(pick);
+                        const bool candidate_corpse = player_track_is_corpse(player);
+                        if (pick_alive && !(pick_corpse && !candidate_corpse)) continue;
+                    }
+                    pick = player;
+                }
+            }
+
+            if (player_is_dead_early(player) || player_track_is_corpse(player)) continue;
+            uint8_t resp_flag = 0;
+            if (PLAYER_MANAGER_RESPAWNING != 0 &&
+                rd_exact(player + PLAYER_MANAGER_RESPAWNING, resp_flag) && resp_flag != 0)
+                continue;
+            const PlayerAux& aux = player_aux(player);
+            uint8_t move_state = 0;
+            if (aux.kcc && rd_exact(aux.kcc + KCC_MOVE + 0x00, move_state) &&
+                move_state == KCC_MOVE_STATE_DEAD)
+                continue;
+
+            const Vec3 feet = positions[i];
+            float sx = 0.0F, sy = 0.0F;
+            if (!map_proj.project(feet, sw, sh, sx, sy)) continue;
+
+            PlayerTextCache& tc = g_player_text[player];
+            if (!tc.has_name || ++tc.revalidate >= 30) {
+                tc.revalidate = 0;
+                char tmp[32] = {};
+                if (player_display_name(player, tmp, sizeof(tmp))) {
+                    memcpy(tc.name, tmp, sizeof(tc.name));
+                    tc.has_name = true;
+                }
+                PlayerGroup group;
+                read_player_group(player, group);
+                tc.ally = local_group_valid && groups_are_allied(local_group, group);
+                snprintf(tc.tag, sizeof(tc.tag), "%s", group.tag);
+                tc.has_tag = tc.tag[0] != '\0';
+            }
+
+            EspMapPlayer mp{};
+            mp.id = player;
+            mp.x = sx;
+            mp.y = sy;
+            if (has_local_position) {
+                const float dx = feet.x - local.x;
+                const float dy = feet.y - local.y;
+                const float dz = feet.z - local.z;
+                const float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (std::isfinite(d)) mp.distance = d;
+            }
+            mp.ally = tc.ally;
+            mp.has_name = tc.has_name;
+            if (tc.has_name) memcpy(mp.name, tc.name, sizeof(mp.name));
+            mp.has_tag = tc.has_tag;
+            if (tc.has_tag) memcpy(mp.tag, tc.tag, sizeof(mp.tag));
+            g_frame_map_players.push_back(mp);
         }
     }
 

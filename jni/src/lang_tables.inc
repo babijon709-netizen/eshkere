@@ -111,6 +111,7 @@ static const LangPair kUiEn[] = {
     {"Лимит FPS", "FPS limit"},
     {"Линии", "Lines"},
     {"Линии и боксы", "Lines and boxes"},
+    {"Мапхак", "Maphack"},
     {"Машины", "Vehicles"},
     {"Мемори-аим: камера не отвечает", "Memory aim: camera not responding"},
     {"Мемори-аим: не найден MouseLook", "Memory aim: MouseLook not found"},

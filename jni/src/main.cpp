@@ -62,15 +62,13 @@ static int Run(bool full_scan) {
                "   Запуск: su -c <путь>/benzware --check-driver\n");
 
     errno = 0;
-    long ditpro_probe = -1;
-    const memio::DitProAbi ditpro_abi = memio::ditpro_probe_abi(&ditpro_probe);
+    const long ditpro_probe = memio::ditpro_probe_result();
     const int ditpro_probe_errno = errno;
     printf("DitPro syscall 18: ");
-    if (ditpro_abi != memio::DITPRO_ABI_NONE)
-        printf("обнаружен %s (версия %ld)\n",
-               memio::ditpro_abi_name(ditpro_abi), ditpro_probe);
+    if (ditpro_probe == 131)
+        printf("KPM 131 обнаружен (0x100/0x200)\n");
     else
-        printf("KPM/KO не подтверждён (ответ %ld, errno %d)\n",
+        printf("KPM 131 не подтверждён (ответ %ld, errno %d)\n",
                ditpro_probe, ditpro_probe_errno);
 
     // 1) Поиск семейства сокета FT-драйвера по маячку на пробе socket(fam, 6, 0):
@@ -224,13 +222,13 @@ static int Run(bool full_scan) {
         }
     }
 
-    // DitPro: additionally prove the KPM read ABI against this process's own
+    // DitPro 131: additionally prove the KPM read ABI against this process's own
     // stack memory. This diagnostic neither touches the game nor hides/uninstalls.
     bool ditpro_ok = false;
-    if (ditpro_probe == 131 || ditpro_probe == 138) {
+    if (ditpro_probe == 131) {
         memio::KernelTransport dit;
         if (dit.select_ditpro() && dit.open(getpid())) {
-            const uint64_t expected = 0xD17A0138C0DEC0DEULL;
+            const uint64_t expected = 0xD17A0131C0DEC0DEULL;
             uint64_t observed = 0;
             errno = 0;
             const ssize_t n = dit.read_once((uint64_t)(uintptr_t)&expected,
@@ -252,7 +250,7 @@ static int Run(bool full_scan) {
     // 5) Итог: чем чит будет ходить в память игры. Классы независимы —
     //    достаточно любого подтверждённого транспорта.
     if (ditpro_ok) {
-        printf("итог            : DitPro KPM готов — syscall 18, чтение подтверждено;\n"
+        printf("итог            : DitPro KPM 131 готов — syscall 18, чтение подтверждено;\n"
                "                  /proc не участвует\n");
         return 0;
     }
@@ -271,8 +269,8 @@ static int Run(bool full_scan) {
                "                  ни сокета, ни /dev-узла; /proc не участвует\n");
         return 0;
     }
-    if (ditpro_probe == 131 || ditpro_probe == 138) {
-        printf("итог            : DitPro отвечает на check, но INIT/READ-тест не прошёл.\n");
+    if (ditpro_probe == 131) {
+        printf("итог            : DitPro 131 отвечает на check, но READ-тест не прошёл.\n");
         return 2;
     }
     if (ft_present) {

@@ -43,7 +43,7 @@ namespace modesel {
 
 enum Mode {
     MODE_EXTERNAL = 0,   // process_vm — «Прямое чтение»
-    MODE_DITPRO   = 1,   // ditPro 138 KPM syscall
+    MODE_DITPRO   = 1,   // ditPro 131 KPM syscall
     MODE_RT_DEV   = 2,   // /dev/[A-GNY]{1,6} RT-Dev
 };
 
@@ -236,7 +236,7 @@ static bool RunModeSelect() {
                         PlaySound(SND_SUCCESS);
                     } else {
                         PlaySound(SND_CLICK);
-                        ShowToast(XS("DitPro не найден — проверь модуль 138"));
+                        ShowToast(XS("DitPro не найден — проверь модуль 131"));
                     }
                 }
             }

@@ -71,6 +71,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -91,48 +92,16 @@ constexpr int kDriverCmdWrite    = 0x302;   // запись  {pid,addr,size,buf,
 constexpr int kDriverAuthReqSize = 0x31;    // размер буфера авторизации
 constexpr uint32_t kDriverMagic  = 0x1337;
 
-// ditPro KPM / KO ABIs:
-//   1. ditPro_kpm(131).kpm:
-//      syscall(18, cmd, arg): 0x11 -> 131, 0x332 -> 616,
-//      0x100 read(&DitProRwReq), 0x200 write(&DitProRwReq),
-//      0x300 pid(name_128b), 0x400 mod_base(&DitProBaseReq).
-//   2. ditPro_kpm(138).kpm:
-//      syscall(18, 0x61618 + cmd, arg): 0x61629 -> writes u64(138) to *arg & returns 0,
-//      0x61718 read(&DitProRwReq), 0x61818 write(&DitProRwReq),
-//      0x61918 pid(name_128b), 0x61a18 mod_base(&DitProBaseReq).
-//   3. dits_ko(138).sh (dits.ko):
-//      syscall(18, 0x61629, &ver) -> writes (1ULL<<63)|138 & returns 0,
-//      fd = syscall(18, 0x61628, 0) -> anon_inode:[dispatch_ioctl],
-//      ioctl(fd, 0x61718/0x61818/0x61918/0x61a18, arg).
-//   4. Legacy 138 bitflag sample (dit驱动(138)/main.cpp):
-//      KPM: syscall(18, 1ULL | op, arg) where CHECK=1<<30 (-> 616), INIT=1<<1 (-> 0),
-//      READ=1<<2, WRITE=1<<3, PID=1<<10, MOD_BASE=1<<11.
-//      KO:  syscall(18, &check_1shl30) -> 616, fd = syscall(18, &flags_616),
-//      ioctl(fd, op, arg).
-// All variants use the same 0x28-byte DitProRwReq and return 0 on full copy
-// (or >0 uncopied bytes on partial/failed copy).
-// Process hiding and module uninstall operations are deliberately not called.
-constexpr long kDitProSyscall = 18;
-
-// 138 KPM / dits.ko (0x61618 + subcmd)
-constexpr long kDitPro138Base       = 0x61618L;
-constexpr long kDitPro138CmdOpenFd  = 0x61628L; // 0x61618 + 0x10
-constexpr long kDitPro138CmdVersion = 0x61629L; // 0x61618 + 0x11
-constexpr long kDitPro138CmdRead    = 0x61718L; // 0x61618 + 0x100
-constexpr long kDitPro138CmdWrite   = 0x61818L; // 0x61618 + 0x200
-constexpr long kDitPro138CmdPid     = 0x61918L; // 0x61618 + 0x300
-constexpr long kDitPro138CmdModBase = 0x61a18L; // 0x61618 + 0x400
-
-// 138 bitflag ABI (dit驱动(138)/main.cpp)
-constexpr long     kDitProCheck   = 1L << 30;
-constexpr uint64_t kDitProFlag    = 1ULL;
-constexpr uint64_t kDitProInit    = 1ULL << 1;
-constexpr uint64_t kDitProRead    = 1ULL << 2;
-constexpr uint64_t kDitProWrite   = 1ULL << 3;
-constexpr uint64_t kDitProPid     = 1ULL << 10;
-constexpr uint64_t kDitProModBase = 1ULL << 11;
-
-// 131 KPM ABI (ditPro_kpm(131).kpm)
+// ditPro KPM 131 ABI (ditPro_kpm(131).kpm):
+//   syscall(18, cmd, arg):
+//     0x11  -> returns 131 (0x83)
+//     0x332 -> returns 616 (0x268)
+//     0x100 -> process_virtual_memory_read(&DitProRwReq)  (returns 0 on full copy)
+//     0x200 -> process_virtual_memory_write(&DitProRwReq) (returns 0 on full copy)
+//     0x300 -> get_process_pid(name_128b)                 (returns pid > 0 or -1)
+//     0x400 -> get_module_base(&DitProBaseReq)            (returns 0 on success)
+// Process hiding (0x600/0x610) is deliberately not called.
+constexpr long kDitProSyscall       = 18;
 constexpr long kDitPro131CmdVersion = 0x11L;
 constexpr long kDitPro131CmdCheck   = 0x332L;
 constexpr long kDitPro131Read       = 0x100L;
@@ -159,85 +128,20 @@ struct DitProBaseReq {
 };
 #pragma pack(pop)
 using DitPro131RwReq = DitProRwReq;
-static_assert(sizeof(DitProRwReq) == 0x28, "ditPro request ABI changed");
-static_assert(sizeof(DitProBaseReq) == 0x20, "ditPro base request ABI changed");
-
-enum DitProAbi {
-    DITPRO_ABI_NONE            = 0,
-    DITPRO_ABI_131_KPM         = 1, // ditPro_kpm(131).kpm: syscall(18, 0x100/0x200, &req)
-    DITPRO_ABI_138_KPM         = 2, // ditPro_kpm(138).kpm: syscall(18, 0x61718/0x61818, &req)
-    DITPRO_ABI_138_KO          = 3, // dits_ko(138).sh: fd=syscall(18, 0x61628), ioctl(fd, 0x61718/0x61818, &req)
-    DITPRO_ABI_138_BITFLAG_KPM = 4, // 138 main.cpp KPM: syscall(18, 1|(1<<2)/(1<<3), &req)
-    DITPRO_ABI_138_BITFLAG_KO  = 5, // 138 main.cpp KO: fd=syscall(18, &616), ioctl(fd, (1<<2)/(1<<3), &req)
-};
-
-inline const char* ditpro_abi_name(DitProAbi abi) {
-    switch (abi) {
-        case DITPRO_ABI_131_KPM:         return "ditPro 131 KPM (0x100/0x200)";
-        case DITPRO_ABI_138_KPM:         return "ditPro 138 KPM (0x61718/0x61818)";
-        case DITPRO_ABI_138_KO:          return "dits.ko 138 ioctl (0x61718/0x61818)";
-        case DITPRO_ABI_138_BITFLAG_KPM: return "ditPro 138 bitflag KPM";
-        case DITPRO_ABI_138_BITFLAG_KO:  return "dits.ko 138 bitflag ioctl";
-        default:                         return "none";
-    }
-}
-
-inline DitProAbi ditpro_probe_abi(long* out_version = nullptr) {
-    // 1. ditPro_kpm(138).kpm and dits_ko(138).sh: command 0x61629 writes u64
-    //    version (138) to *arg1 and returns 0. dits.ko sets bit 63.
-    uint64_t ver138 = 0;
-    errno = 0;
-    if (syscall(kDitProSyscall, kDitPro138CmdVersion, &ver138, 0L) == 0 &&
-        (ver138 & 0x7fffffffULL) == 138ULL) {
-        if (out_version) *out_version = 138;
-        return (ver138 >> 63) ? DITPRO_ABI_138_KO : DITPRO_ABI_138_KPM;
-    }
-
-    // 2. ditPro_kpm(131).kpm: command 0x11 returns 131 directly; 0x332 returns 616.
-    errno = 0;
-    const long v131 = syscall(kDitProSyscall, kDitPro131CmdVersion, 0L, 0L);
-    if (v131 == 131) {
-        if (out_version) *out_version = 131;
-        return DITPRO_ABI_131_KPM;
-    }
-    if (v131 == 138) {
-        if (out_version) *out_version = 138;
-        errno = 0;
-        if (syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck, 0L, 0L) == 616)
-            return DITPRO_ABI_138_BITFLAG_KPM;
-        return DITPRO_ABI_138_KPM;
-    }
-    errno = 0;
-    if (syscall(kDitProSyscall, kDitPro131CmdCheck, 0L, 0L) == 616) {
-        if (out_version) *out_version = 131;
-        return DITPRO_ABI_131_KPM;
-    }
-
-    // 3. Legacy 138 bitflag ABI (dit驱动(138)/main.cpp): KPM scalar check or KO pointer check.
-    errno = 0;
-    if (syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck, 0L, 0L) == 616) {
-        if (out_version) *out_version = 138;
-        return DITPRO_ABI_138_BITFLAG_KPM;
-    }
-    uint64_t check = (uint64_t)kDitProCheck;
-    errno = 0;
-    if (syscall(kDitProSyscall, &check, 0L, 0L) == 616) {
-        if (out_version) *out_version = 138;
-        return DITPRO_ABI_138_BITFLAG_KO;
-    }
-
-    if (out_version) *out_version = -1;
-    return DITPRO_ABI_NONE;
-}
+static_assert(sizeof(DitProRwReq) == 0x28, "ditPro 131 request ABI changed");
+static_assert(sizeof(DitProBaseReq) == 0x20, "ditPro 131 base request ABI changed");
 
 inline long ditpro_probe_result() {
-    long version = -1;
-    const DitProAbi abi = ditpro_probe_abi(&version);
-    return abi != DITPRO_ABI_NONE ? version : -1;
+    errno = 0;
+    const long v = syscall(kDitProSyscall, kDitPro131CmdVersion, 0L, 0L);
+    if (v == 131) return 131;
+    errno = 0;
+    if (syscall(kDitProSyscall, kDitPro131CmdCheck, 0L, 0L) == 616) return 131;
+    return -1;
 }
 
 inline bool ditpro_available() {
-    return ditpro_probe_abi() != DITPRO_ABI_NONE;
+    return ditpro_probe_result() == 131;
 }
 
 // ---- класс 2: gongchuang (публичный референс) -----------------------------
@@ -332,10 +236,6 @@ enum DriverProto {
 
 class KernelTransport : public Transport {
 public:
-    ~KernelTransport() override {
-        if (ditpro_fd_ >= 0) { ::close(ditpro_fd_); ditpro_fd_ = -1; }
-    }
-
     const char* name() const override { return "kernel (драйвер)"; }
 
     // Привязка к процессу: поднимаем сокеты и переиспользуем выученное.
@@ -347,12 +247,7 @@ public:
     bool open(pid_t pid) override {
         if (pid <= 0) return false;
         if (ditpro_) {
-            if (ditpro_abi_ == DITPRO_ABI_NONE && !select_ditpro()) return false;
-            if ((ditpro_abi_ == DITPRO_ABI_138_KO || ditpro_abi_ == DITPRO_ABI_138_BITFLAG_KO) &&
-                ditpro_fd_ < 0 && !select_ditpro()) {
-                return false;
-            }
-            pid_ = (int)pid;
+            pid_ = (int)pid;  // DitPro 131 includes pid in each request
             return true;
         }
         if (!ensure_socket()) return false;
@@ -372,11 +267,9 @@ public:
     void invalidate() {
         if (sock_ >= 0) { ::close(sock_); sock_ = -1; }
         if (gong_sock_ >= 0) { ::close(gong_sock_); gong_sock_ = -1; }
-        if (ditpro_fd_ >= 0) { ::close(ditpro_fd_); ditpro_fd_ = -1; }
         family_ = -1;
         ditpro_ = false;
         ditpro_version_ = 0;
-        ditpro_abi_ = DITPRO_ABI_NONE;
         proto_ = PROTO_BING;
         read_cmd_ = kDriverCmdRead;
         write_cmd_ = kDriverCmdWrite;
@@ -409,7 +302,6 @@ public:
     bool connected() const { return ditpro_ || sock_ >= 0 || gong_sock_ >= 0; }
     bool use_ditpro() const { return ditpro_; }
     int  ditpro_version() const { return ditpro_version_; }
-    DitProAbi ditpro_abi() const { return ditpro_abi_; }
 
     // Поднять рабочий сокет bing-класса (если ещё не поднят).
     int connect() {
@@ -418,68 +310,25 @@ public:
         return sock_;
     }
     bool select_ditpro() {
-        long version = -1;
-        const DitProAbi abi = ditpro_probe_abi(&version);
-        if (abi == DITPRO_ABI_NONE) return false;
-        if (ditpro_fd_ >= 0) { ::close(ditpro_fd_); ditpro_fd_ = -1; }
-        if (abi == DITPRO_ABI_138_KO) {
-            errno = 0;
-            ditpro_fd_ = (int)syscall(kDitProSyscall, kDitPro138CmdOpenFd, 0L, 0L);
-            if (ditpro_fd_ < 0) return false;
-        } else if (abi == DITPRO_ABI_138_BITFLAG_KPM) {
-            errno = 0;
-            if (syscall(kDitProSyscall, kDitProFlag | kDitProInit, 0L, 0L) != 0)
-                return false;
-        } else if (abi == DITPRO_ABI_138_BITFLAG_KO) {
-            int flags = 616;
-            errno = 0;
-            ditpro_fd_ = (int)syscall(kDitProSyscall, &flags, 0L, 0L);
-            if (ditpro_fd_ < 0) return false;
-            if (ioctl(ditpro_fd_, (unsigned long)kDitProInit, 0L) != 0) {
-                ::close(ditpro_fd_);
-                ditpro_fd_ = -1;
-                return false;
-            }
-        }
+        const long version = ditpro_probe_result();
+        if (version != 131) return false;
         ditpro_ = true;
-        ditpro_abi_ = abi;
-        ditpro_version_ = (int)version;
+        ditpro_version_ = 131;
         map_known_ = true;
         return true;
     }
 
-    // Kernel task-list lookup by process comm/cmdline (supported on all DitPro variants).
+    // Kernel task-list lookup by process comm/cmdline (DitPro 131 0x300).
     pid_t ditpro_find_pid(const char* proc_name) const {
         if (!ditpro_ || !proc_name || !proc_name[0]) return -1;
         char name_buf[128] = {};
         strncpy(name_buf, proc_name, sizeof(name_buf) - 1);
-        long rc = -1;
         errno = 0;
-        switch (ditpro_abi_) {
-            case DITPRO_ABI_131_KPM:
-                rc = syscall(kDitProSyscall, kDitPro131CmdPid, name_buf, 0L);
-                break;
-            case DITPRO_ABI_138_KPM:
-                rc = syscall(kDitProSyscall, kDitPro138CmdPid, name_buf, 0L);
-                break;
-            case DITPRO_ABI_138_KO:
-                if (ditpro_fd_ >= 0)
-                    rc = ioctl(ditpro_fd_, (unsigned long)kDitPro138CmdPid, name_buf);
-                break;
-            case DITPRO_ABI_138_BITFLAG_KPM:
-                rc = syscall(kDitProSyscall, kDitProFlag | kDitProPid, name_buf, 0L);
-                break;
-            case DITPRO_ABI_138_BITFLAG_KO:
-                if (ditpro_fd_ >= 0)
-                    rc = ioctl(ditpro_fd_, (unsigned long)kDitProPid, name_buf);
-                break;
-            default:
-                break;
-        }
+        const long rc = syscall(kDitProSyscall, kDitPro131CmdPid, name_buf, 0L);
         return rc > 0 ? (pid_t)rc : -1;
     }
 
-    // Kernel mm->mmap lookup for a module's base address (supported on all DitPro variants).
+    // Kernel mm->mmap lookup for a module's base address (DitPro 131 0x400).
     uint64_t ditpro_get_module_base(pid_t pid, const char* mod_name,
                                     bool bss = false, uint64_t* out_end = nullptr) const {
         if (!ditpro_ || pid <= 0 || !mod_name || !mod_name[0]) return 0;
@@ -490,29 +339,8 @@ public:
         req.name_ptr = (uint64_t)(uintptr_t)name_buf;
         req.start    = bss ? 1ULL : 0ULL;
         req.end      = 0ULL;
-        long rc = -1;
         errno = 0;
-        switch (ditpro_abi_) {
-            case DITPRO_ABI_131_KPM:
-                rc = syscall(kDitProSyscall, kDitPro131CmdModBase, &req, 0L);
-                break;
-            case DITPRO_ABI_138_KPM:
-                rc = syscall(kDitProSyscall, kDitPro138CmdModBase, &req, 0L);
-                break;
-            case DITPRO_ABI_138_KO:
-                if (ditpro_fd_ >= 0)
-                    rc = ioctl(ditpro_fd_, (unsigned long)kDitPro138CmdModBase, &req);
-                break;
-            case DITPRO_ABI_138_BITFLAG_KPM:
-                rc = syscall(kDitProSyscall, kDitProFlag | kDitProModBase, &req, 0L);
-                break;
-            case DITPRO_ABI_138_BITFLAG_KO:
-                if (ditpro_fd_ >= 0)
-                    rc = ioctl(ditpro_fd_, (unsigned long)kDitProModBase, &req);
-                break;
-            default:
-                break;
-        }
+        const long rc = syscall(kDitProSyscall, kDitPro131CmdModBase, &req, 0L);
         if (rc != 0 || req.start == 0) return 0;
         if (out_end) *out_end = req.end;
         return req.start & kAddressTagMask;
@@ -754,7 +582,7 @@ public:
     // Полный self-test (диагностика): карта выучена и подтверждена.
     bool self_test() {
         if (ditpro_) {
-            if (ditpro_abi_ == DITPRO_ABI_NONE && !select_ditpro()) return false;
+            if (!ditpro_available()) return false;
             uint64_t pat[2]    = { 0x1234567890ABCDEFULL, 0x0F1E2D3C4B5A6978ULL };
             uint64_t mirror[2] = { 0, 0 };
             if (ditpro_rw_pid((int)getpid(), true, (uint64_t)(uintptr_t)pat, mirror, sizeof(pat)) != (ssize_t)sizeof(pat))
@@ -776,50 +604,69 @@ public:
     }
 
 private:
-    long ditpro_dispatch_rw(bool is_read, DitProRwReq& req) const {
-        errno = 0;
-        switch (ditpro_abi_) {
-            case DITPRO_ABI_131_KPM:
-                return syscall(kDitProSyscall, is_read ? kDitPro131Read : kDitPro131Write, &req, 0L);
-            case DITPRO_ABI_138_KPM:
-                return syscall(kDitProSyscall, is_read ? kDitPro138CmdRead : kDitPro138CmdWrite, &req, 0L);
-            case DITPRO_ABI_138_KO:
-                if (ditpro_fd_ < 0) { errno = EBADF; return -1; }
-                return ioctl(ditpro_fd_, (unsigned long)(is_read ? kDitPro138CmdRead : kDitPro138CmdWrite), &req);
-            case DITPRO_ABI_138_BITFLAG_KPM:
-                return syscall(kDitProSyscall, kDitProFlag | (is_read ? kDitProRead : kDitProWrite), &req, 0L);
-            case DITPRO_ABI_138_BITFLAG_KO:
-                if (ditpro_fd_ < 0) { errno = EBADF; return -1; }
-                return ioctl(ditpro_fd_, (unsigned long)(is_read ? kDitProRead : kDitProWrite), &req);
-            default:
-                errno = ENOSYS;
-                return -1;
+    static bool ditpro131_user_buf_ok(uintptr_t ptr, size_t chunk) {
+        const uint64_t u40 = (uint64_t)ptr & 0xffffffffffULL;
+        return u40 >= 0x1000000000ULL && u40 < 0x7fffffffffULL &&
+               chunk <= (0x7fffffffffULL - u40);
+    }
+
+    static uint8_t* ditpro131_bounce_page() {
+        static thread_local uint8_t* s_page = nullptr;
+        if (!s_page) {
+            void* m = mmap((void*)0x2000000000ULL, 0x1000,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (m != MAP_FAILED) s_page = (uint8_t*)m;
         }
+        return s_page;
     }
 
     ssize_t ditpro_rw_pid(int target_pid, bool is_read, uint64_t addr, void* buf, size_t len) {
         if (target_pid <= 0 || !buf || !len) { errno = EBADF; return -1; }
-        if (ditpro_abi_ == DITPRO_ABI_NONE && !select_ditpro()) { errno = ENOSYS; return -1; }
         uint8_t* p = (uint8_t*)buf;
         uint64_t a = addr & kAddressTagMask;
         size_t done = 0;
+        const long op = is_read ? kDitPro131Read : kDitPro131Write;
+        uint8_t stack_bounce[4096];
         while (done < len) {
             const uint64_t page_left = 0x1000 - (a & 0xfff);
             const size_t chunk = (uint64_t)(len - done) < page_left
                                ? len - done : (size_t)page_left;
+            // ditPro_kpm(131).kpm (_before @ 0x8a64..0x8ac0) rejects 0x100 reads
+            // when (req.user_buf & 0xffffffffff) is outside [0x1000000000, 0x7fffffffff).
+            // On ARM64 kernels where PIE (.bss g_mem.blocks_) is mapped near 4 GiB
+            // (< 0x1000000000), bounce through the stack or an mmap page at 0x2000000000.
+            uint8_t* user_ptr = p;
+            bool bounced = false;
+            if (!ditpro131_user_buf_ok((uintptr_t)user_ptr, chunk)) {
+                if (ditpro131_user_buf_ok((uintptr_t)stack_bounce, chunk)) {
+                    user_ptr = stack_bounce;
+                    bounced = true;
+                } else if (uint8_t* bp = ditpro131_bounce_page();
+                           bp && ditpro131_user_buf_ok((uintptr_t)bp, chunk)) {
+                    user_ptr = bp;
+                    bounced = true;
+                }
+                if (bounced && !is_read) {
+                    memcpy(user_ptr, p, chunk);
+                }
+            }
             DitProRwReq req{};
             req.pid      = (uint32_t)target_pid;
             req.addr     = a;
-            req.user_buf = (uint64_t)(uintptr_t)p;
+            req.user_buf = (uint64_t)(uintptr_t)user_ptr;
             req.size     = (uint64_t)chunk;
             req.flags    = 0;
-            // All DitPro variants (131 KPM, 138 KPM, 138 KO, 138 bitflag)
-            // return 0 on full success, or the number of uncopied bytes (>0) /
-            // negative error code on failure.
-            const long rc = ditpro_dispatch_rw(is_read, req);
+            // ditPro_kpm(131).kpm returns 0 on full copy, or the number of
+            // uncopied bytes (>0) / error code (10 = no task/mm) on failure.
+            errno = 0;
+            const long rc = syscall(kDitProSyscall, op, &req, 0L);
             if (rc != 0) {
                 if (rc > 0) errno = EIO;
                 return done ? (ssize_t)done : -1;
+            }
+            if (bounced && is_read) {
+                memcpy(p, user_ptr, chunk);
             }
             done += chunk;
             a += chunk;
@@ -957,8 +804,6 @@ private:
 
     bool ditpro_ = false;
     int ditpro_version_ = 0;
-    DitProAbi ditpro_abi_ = DITPRO_ABI_NONE;
-    int ditpro_fd_ = -1;
     int sock_   = -1;   // рабочий сокет bing-класса (тип 4)
     int gong_sock_ = -1;// сокет gongchuang-класса (SOCK_RAW, 0x090419)
     int family_ = -1;   // найденное семейство

@@ -152,13 +152,13 @@ enum EspMemBackend {
     ESP_MEM_FT       = 1,   // сокет драйвера bing-класса — «FT-Драйвер»
     ESP_MEM_RT_DEV   = 2,   // /dev/[A-GNY]{1,6} RT-Dev — «RT-Dev»
     ESP_MEM_RT_HOOK  = 3,   // legacy syscall ioctl hookdd/gynhdd — «RT-Hook»
-    ESP_MEM_DITPRO   = 4,   // ditPro 138 KPM syscall transport
+    ESP_MEM_DITPRO   = 4,   // ditPro 131 KPM syscall transport
 };
 void          esp_set_mem_backend(int backend);
 int           esp_get_mem_backend();
 // Какой режим активен: true для любого ядерного транспорта (FT/RT-Dev/RT-Hook/DitPro).
 bool          esp_mem_backend_kernel();
-// Поиск PID процесса игры через ядерный драйвер (DitPro 0x300 / 0x61918),
+// Поиск PID процесса игры через ядерный драйвер (DitPro 131 0x300),
 // если прямой обход /proc ограничен или не дал результата.
 pid_t         esp_find_kernel_pid(const char* pkg);
 // Последняя ошибка транспорта (errno): для тоста «почему привязка не идёт».

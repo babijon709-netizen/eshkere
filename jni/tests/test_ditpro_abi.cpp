@@ -73,20 +73,13 @@ int main() {
     static_assert(offsetof(memio::DitProBaseReq, start) == 0x10, "base start offset mismatch");
     static_assert(offsetof(memio::DitProBaseReq, end) == 0x18, "base end offset mismatch");
 
-    // 3. Verify command constants for 131 and 138.
+    // 3. Verify command constants for DitPro 131.
     static_assert(memio::kDitPro131CmdVersion == 0x11L);
     static_assert(memio::kDitPro131CmdCheck == 0x332L);
     static_assert(memio::kDitPro131Read == 0x100L);
     static_assert(memio::kDitPro131Write == 0x200L);
     static_assert(memio::kDitPro131CmdPid == 0x300L);
     static_assert(memio::kDitPro131CmdModBase == 0x400L);
-
-    static_assert(memio::kDitPro138CmdOpenFd == 0x61628L);
-    static_assert(memio::kDitPro138CmdVersion == 0x61629L);
-    static_assert(memio::kDitPro138CmdRead == 0x61718L);
-    static_assert(memio::kDitPro138CmdWrite == 0x61818L);
-    static_assert(memio::kDitPro138CmdPid == 0x61918L);
-    static_assert(memio::kDitPro138CmdModBase == 0x61a18L);
 
     // 4. Verify Reader::bind succeeds in the main menu when page 0 (ELF header)
     //    is evicted and only PlayerLoopHelper_TypeInfo is initialized.

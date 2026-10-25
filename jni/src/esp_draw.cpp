@@ -280,7 +280,7 @@ void DrawEspOverlay() {
                 char dist_buf[24];
                 snprintf(dist_buf, sizeof(dist_buf), "%.0fm", mp.distance);
                 EspPill(mp.x, mp.y + pin_r + 3.f, dist_buf,
-                        ColU32(mp.ally ? cfg::esp::ally_col : cfg::esp::dist_col), 0.78f);
+                        ColU32(mp.ally ? cfg::esp::ally_col : cfg::esp::distance_col), 0.78f);
             }
         }
         return;

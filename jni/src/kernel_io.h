@@ -91,6 +91,27 @@ constexpr int kDriverCmdWrite    = 0x302;   // запись  {pid,addr,size,buf,
 constexpr int kDriverAuthReqSize = 0x31;    // размер буфера авторизации
 constexpr uint32_t kDriverMagic  = 0x1337;
 
+// ditPro KPM ABI (dit驱动(138)/main.cpp). This module exposes a private
+// syscall rather than a socket/device node. Only INIT/READ/WRITE are used;
+// process hiding and module uninstall operations are deliberately not called.
+constexpr long kDitProSyscall = 18;
+constexpr long kDitProCheck = 1L << 30;
+constexpr uint64_t kDitProFlag = 1ULL;
+constexpr uint64_t kDitProInit = 1ULL << 1;
+constexpr uint64_t kDitProRead = 1ULL << 2;
+constexpr uint64_t kDitProWrite = 1ULL << 3;
+struct DitProRwReq {
+    uint64_t addr;
+    void* buffer;
+    uint64_t size;
+};
+static_assert(sizeof(DitProRwReq) == 0x18, "ditPro request ABI changed");
+
+inline bool ditpro_available() {
+    errno = 0;
+    return syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck) == 616;
+}
+
 // ---- класс 2: gongchuang (публичный референс) -----------------------------
 constexpr int kGongSockType    = 3;        // SOCK_RAW
 constexpr int kGongSockProto   = 0x090419; // магия протокола в create()
@@ -193,6 +214,12 @@ public:
     // pte-протокола цепляемся к pid сокетом (ATTACH_PROCESS).
     bool open(pid_t pid) override {
         if (pid <= 0) return false;
+        if (ditpro_) {
+            if (syscall(kDitProSyscall, kDitProFlag | kDitProInit, (long)pid) <= 0)
+                return false;
+            pid_ = (int)pid;
+            return true;
+        }
         if (!ensure_socket()) return false;
         if (use_ioctl_) send_auth();   // 5.10: без пароля команды молчат
         if (proto_ == PROTO_GONG_PTE && !gong_attach((int)pid)) return false;
@@ -211,6 +238,7 @@ public:
         if (sock_ >= 0) { ::close(sock_); sock_ = -1; }
         if (gong_sock_ >= 0) { ::close(gong_sock_); gong_sock_ = -1; }
         family_ = -1;
+        ditpro_ = false;
         proto_ = PROTO_BING;
         read_cmd_ = kDriverCmdRead;
         write_cmd_ = kDriverCmdWrite;
@@ -221,6 +249,7 @@ public:
     }
 
     ssize_t read_once(uint64_t addr, void* out, size_t len) override {
+        if (ditpro_) return ditpro_rw(true, addr, out, len);
         switch (proto_) {
             case PROTO_GONG_VM:  return gong_vm_rw(true, addr, out, len);
             case PROTO_GONG_PTE: return gong_pte_rw(true, addr, out, len);
@@ -229,6 +258,7 @@ public:
     }
 
     ssize_t write_once(uint64_t addr, const void* in, size_t len) override {
+        if (ditpro_) return ditpro_rw(false, addr, const_cast<void*>(in), len);
         switch (proto_) {
             case PROTO_GONG_VM:  return gong_vm_rw(false, addr, const_cast<void*>(in), len);
             case PROTO_GONG_PTE: return gong_pte_rw(false, addr, const_cast<void*>(in), len);
@@ -238,12 +268,20 @@ public:
 
     int  family() const { return family_; }
     int  socket_fd() const { return sock_; }
-    bool connected() const { return sock_ >= 0 || gong_sock_ >= 0; }
+    bool connected() const { return ditpro_ || sock_ >= 0 || gong_sock_ >= 0; }
+    bool use_ditpro() const { return ditpro_; }
 
     // Поднять рабочий сокет bing-класса (если ещё не поднят).
     int connect() {
+        if (ditpro_) return 0;
         if (!ensure_socket()) return -1;
         return sock_;
+    }
+    bool select_ditpro() {
+        if (!ditpro_available()) return false;
+        ditpro_ = true;
+        map_known_ = true;
+        return true;
     }
 
     // Выученное: протокол и коды команд (после detect_protocol).
@@ -481,6 +519,7 @@ public:
 
     // Полный self-test (диагностика): карта выучена и подтверждена.
     bool self_test() {
+        if (ditpro_) return ditpro_available();
         detect_protocol();
         if (!map_known_) return false;
         switch (proto_) {
@@ -496,6 +535,31 @@ public:
     }
 
 private:
+    ssize_t ditpro_rw(bool is_read, uint64_t addr, void* buf, size_t len) {
+        if (pid_ <= 0 || !buf || !len) { errno = EBADF; return -1; }
+        uint8_t* p = (uint8_t*)buf;
+        uint64_t a = addr & kAddressTagMask;
+        size_t done = 0;
+        while (done < len) {
+            const uint64_t page_left = 0x1000 - (a & 0xfff);
+            const size_t chunk = (uint64_t)(len - done) < page_left
+                               ? len - done : (size_t)page_left;
+            DitProRwReq req = {a, p, (uint64_t)chunk};
+            const uint64_t op = kDitProFlag | (is_read ? kDitProRead : kDitProWrite);
+            const long rc = syscall(kDitProSyscall, op, &req);
+            // The provided ditPro wrapper treats a zero syscall result as
+            // success (its typed read returns the value only when read()==0).
+            if (rc != 0) {
+                if (rc > 0) errno = EIO;
+                return done ? (ssize_t)done : -1;
+            }
+            done += chunk;
+            a += chunk;
+            p += chunk;
+        }
+        return (ssize_t)done;
+    }
+
     // bing: собрать 0x28-запрос и позвать getsockopt/ioctl с разбиением по
     // границам 4К-страниц (одностраничный PTE-walk драйвера не должен читать
     // через границу физической страницы).
@@ -619,6 +683,7 @@ private:
         return true;
     }
 
+    bool ditpro_ = false;
     int sock_   = -1;   // рабочий сокет bing-класса (тип 4)
     int gong_sock_ = -1;// сокет gongchuang-класса (SOCK_RAW, 0x090419)
     int family_ = -1;   // найденное семейство
@@ -1035,6 +1100,10 @@ inline KernelTransport& kernel_transport() {
 // --check-driver/--scan-driver (KERNEL.md §4.5).
 inline bool driver_available(int* family_out = nullptr) {
     KernelTransport& t = kernel_transport();
+    if (!t.connected() && t.select_ditpro()) {
+        if (family_out) *family_out = -1;
+        return true;
+    }
     if (!t.connected() && t.connect() < 0 && t.gong_connect() < 0) return false;
     if (family_out) *family_out = t.family();
     if (!t.map_known()) t.detect_protocol();

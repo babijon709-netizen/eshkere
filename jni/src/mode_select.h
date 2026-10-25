@@ -37,7 +37,7 @@
 #include "hud.h"                     // VisibleScreen
 #include "audio.h"                   // PlaySound
 #include "str.h"                     // XS()
-#include "ui_util.h"                 // EaseInOut, WasTappedHere
+#include "ui_util.h"                 // WasTappedHere
 
 namespace modesel {
 
@@ -90,14 +90,10 @@ static bool RunVersionSelect() {
     RestoreAccent();
     ApplyTheme();
 
-    float fade = 0.f;
     int picked = -1;
 
     while (main_thread_flag.load() && picked < 0) {
         drawBegin();
-        auto& io = ImGui::GetIO();
-        float dt = ImMin(io.DeltaTime, 0.1f);
-        fade = ImMin(fade + dt * 1.6f, 1.f);
 
         float vw = 0.f, vh = 0.f;
         VisibleScreen(vw, vh);
@@ -115,8 +111,6 @@ static bool RunVersionSelect() {
             auto* dl = ImGui::GetWindowDrawList();
             ImFont* fn = ImGui::GetFont();
             const float fs = ImGui::GetFontSize();
-            const float t = EaseInOut(fade);
-            const float slide = (1.f - t) * -30.f;
             const char* title = XS("Версия игры");
             const float tfs = fs * 1.55f;
             const ImVec2 ts = fn->CalcTextSizeA(tfs, FLT_MAX, 0.f, title);
@@ -125,7 +119,7 @@ static bool RunVersionSelect() {
             const float btnW = ImMin((vw - 36.f - gap) / 2.f, 300.f);
             const float titleGap = fs * 1.3f;
             const float blockH = tfs + titleGap + btnH;
-            const float ty = (vh - blockH) * 0.5f + slide;
+            const float ty = (vh - blockH) * 0.5f;
             const float tx = (vw - ts.x) * 0.5f;
 
             dl->AddText(fn, tfs, {tx + 2.f, ty + 2.f}, IM_COL32(0, 0, 0, 110), title);
@@ -174,15 +168,10 @@ static bool RunModeSelect() {
     bool rt_dev = memio::rt_dev_available();     // RT-Dev найден и отвечает
     bool rt_hook = memio::rt_hook_available();   // RT-Hook: хук ioctl отвечает
 
-    float fade = 0.f;          // появление 0..1
     int   picked = -1;         // -1 — ещё не выбрали
 
     while (main_thread_flag.load() && picked < 0) {
         drawBegin();
-        auto& io = ImGui::GetIO();
-        float dt = io.DeltaTime;
-        if (dt > 0.1f) dt = 0.1f;
-        fade = ImMin(fade + dt * 1.6f, 1.f);
 
         float vw = 0.f, vh = 0.f;
         VisibleScreen(vw, vh);
@@ -204,8 +193,6 @@ static bool RunModeSelect() {
             ImFont* fn = ImGui::GetFont();
             const float fs = ImGui::GetFontSize();
 
-            const float t = EaseInOut(fade);
-            const float slide = (1.f - t) * -30.f;   // въезжает сверху
 
             // Заголовок + кнопки — единый блок ровно по центру экрана
             // (по горизонтали и по вертикали): без фона, только текст
@@ -219,7 +206,7 @@ static bool RunModeSelect() {
             const float btnW = ImMin((vw - 36.f - gap) / 2.f, 300.f);
             const float tGap = fs * 1.3f;                 // заголовок -> кнопки
             const float blockH = tfs + tGap + btnH * 2.f + gap;
-            const float ty = (vh - blockH) * 0.5f + slide;   // центр по вертикали
+            const float ty = (vh - blockH) * 0.5f;          // центр по вертикали
             const float tx = (vw - ts.x) * 0.5f;
             dl->AddText(fn, tfs, {tx + 2.f, ty + 2.f}, IM_COL32(0, 0, 0, 110), title);
             dl->AddText(fn, tfs, {tx, ty}, C::U(C::Txt()), title);
@@ -240,7 +227,7 @@ static bool RunModeSelect() {
 
             ImGui::SetCursorScreenPos({bx + btnW + gap, by});
             if (ModeButton("##mode_ft", btnW, btnH,
-                           XS("FT-Драйвер"), drv, true, fs)) {
+                           XS("Кернел-драйвер"), drv, true, fs)) {
                 // Тап по FT-Драйверу. Никаких проб команд здесь НЕТ (слепая
                 // проба неизвестного кода может потревожить драйвер перед
                 // привязкой). Порядок:
@@ -253,7 +240,7 @@ static bool RunModeSelect() {
                 //      libil2cpp ЧЕРЕЗ ДРАЙВЕР, результат виден тостом.
                 if (geteuid() != 0) {
                     PlaySound(SND_CLICK);
-                    ShowToast(XS("FT-Драйвер: нет root — запусти чит от su"));
+                    ShowToast(XS("Кернел-драйвер: нет root — запусти чит от su"));
                 } else if (!drv) {
                     memio::kernel_transport().invalidate();
                     drv = memio::driver_available(&fam);

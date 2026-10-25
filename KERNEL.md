@@ -38,7 +38,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
         │                    вообще (ни на чтение, ни на запись); запрет
         │                    syscall политикой = доступа нет, bind отклонён —
         │                    фоллбэка на pread/pwrite нет)
-        ├── KernelTransport   «FT-Драйвер»     сокет bing/gongchuang (kernel_io.h)
+        ├── KernelTransport   «Кернел-драйвер» ditPro KPM syscall или FT socket (kernel_io.h)
         ├── RtDevTransport    «RT-Dev»          /dev/[A-GNY]{1,6}, ioctl 0x801/0x802
         └── RtHookTransport   «RT-Hook»         syscall ioctl(-1, 0x259/0x25a)
 ```
@@ -67,6 +67,7 @@ memio::Transport (интерфейс: open/close/read_once/write_once)
 | Режим | Класс драйвера | Механизм | Запрос | Коды |
 |---|---|---|---|---|
 | Прямое чтение | — | только `process_vm_readv`/`process_vm_writev` (raw syscall); `/proc/<pid>/mem` не используется совсем, фоллбэка нет; правки только по rw-памяти | — | — |
+| Kernel / ditPro | ditPro KPM (`dit驱动(138).zip`) | приватный syscall 18, поиск по флагу `0x40000001` | `DitProRwReq` 0x18: addr,buffer,size | init 3, read 5, write 9 |
 | FT | bing_rw / gongchuang (drivers.7z) | socket(сем.,4,0); команды getsockopt ИЛИ ioctl (поколение 5.10) | `DriverRwReq` 0x28: pid,pad,addr,size,user_buf,magic=0x1337 | auth 0x300, read 0x301, write 0x302; gong: attach 2, vm 4, pte 5/6 |
 | RT-Dev | RTkernel (`rt dev Драйвера root cheat.zip`) | char-устройство `/dev/[A-GNY]{1,6}` + ioctl | `RtDevCopyMem` 0x20: pid,pad,addr,buffer,size (не через границу 4К — транспорт чанкует сам) | read 0x801, write 0x802; base 0x803 |
 | RT-Hook | hookdd/gynhdd (`RT-hook.7z`) | перехват syscall `ioctl`, без сокета и `/dev`-узла | `RtHookCopyMem` 0x20: pid,pad,addr,buffer,size (transport чанкует по 4К) | read 0x259, write 0x25a |

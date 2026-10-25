@@ -331,8 +331,12 @@ void DrawEspOverlay() {
 
         if (g_state.esp_armor && g_armor_atlas_texture) {
             const float boxH = by2 - by1;
-            const float iconSize = ImClamp(boxH * 0.17f, 12.f, 24.f);
-            const float gap = ImMax(2.f, iconSize * 0.08f);
+            float iconSize = ImMin(48.f, ImMax(12.f, boxH * 0.23f));
+            float gap = (boxH - 4.f * iconSize) / 3.f;
+            if (gap < 1.f) {
+                gap = 1.f;
+                iconSize = ImMax(10.f, (boxH - 3.f) * 0.25f);
+            }
             const float x = bx1 - iconSize - 4.f;
             for (int slot = 0; slot < 4; ++slot) {
                 const unsigned icon = box.armor_icons[slot];

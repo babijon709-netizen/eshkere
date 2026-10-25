@@ -163,12 +163,10 @@ int main() {
 
     // --- PlayerWeapon и вьюха третьего лица ---
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
+    assert(go_active::MODELINFO_EQUIPMENT_HOLDER == 0x38);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
-    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
-    assert(go_active::PLAYERWEAPON_STATE == 0x14C);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
-    assert(go_active::WEAPONVIEW_PIECE == 0x58);
     assert(go_active::WEAPONVIEW_ROOT_TRANSFORM == 0x70);
     assert(go_active::WEAPONVIEW_INNER == 0x10);
 
@@ -182,55 +180,12 @@ int main() {
     assert(go_active::FPSPEAR_MIN_THROW_PERIOD == 0x170);
     assert(go_active::FPSPEAR_CACHED_THROW_PERIOD == 0x1C0);
 
-    // --- Скины: WeaponPiece вырос, остальная цепочка совпала с релизом ---
-    // Oxide.WeaponPiece 10228 в dump.cs 11977: Enabled 0x0, Number 0x2,
-    // Skin 0x4, SkinLevel 0x6, Loaded 0x7, Mods 0x8, EmptyHands 0x10.
-    // Структура стала 0x18 байт, значит передаётся по ссылке, а не одним
-    // 64-битным регистром, как в релизе (см. EN.XLy в game_offsets.h).
-    assert(go_active::WEAPONPIECE_SIZE == 0x18);
-    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
-    assert(go_active::WEAPONPIECE_SKIN == 0x4);
-    assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x6);
-    assert(go_active::WEAPONPIECE_LOADED == 0x7);
-    // SkinData и все наследники в 11977 поимённо и по адресам те же.
-    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
-    assert(go_active::SKINDATA_ID == 0x18);
-    assert(go_active::SKINDATA_BASE_ID == 0x20);
-    assert(go_active::WEAPONSKIN_FP_REF == 0x58);
-    assert(go_active::WEAPONSKIN_PROG_FP_REFS == 0x70);
-    assert(go_active::EQUIPSKIN_FP_OBJECT_REF == 0x58);
-    assert(go_active::ASSETREF_GUID == 0x10);
-    assert(go_active::ASSETREF_OPERATION == 0x28);
-    // PlayerWeapon 11977: перед viewReference вставлены поля, FP-вьюха уехала.
-    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
-    assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xC0);
-    assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
-    // WeaponPiece 0x18 байт — CancellationTokenSource сдвинулся с 0x38.
-    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
-    // §4.22: детектор панциря и карантин. FPObject в 11977 совпал с релизом
-    // (dump.cs 11977: bool <cqS>k__BackingField @0x38 — обфусцированное uhq,
-    // Item @0x40, Player @0xC0), ItemData.m_Id @0x58 тоже на месте.
+    // --- Oxide.WeaponPiece: Enabled/Number, ItemData (бета совпала с релизом) ---
+    assert(go_active::WEAPONPIECE_ENABLED == 0x00);
+    assert(go_active::WEAPONPIECE_NUMBER == 0x02);
     assert(go_active::FPOBJECT_SHOWN == 0x38);
     assert(go_active::FPOBJECT_ITEM == 0x40);
     assert(go_active::ITEMDATA_ID == 0x58);
-    // TypeInfo-слоты классов скинов (script.json 11977). EG в списке беты нет:
-    // 0 означает «резолвить по имени в рантайме», а не «слот нулевой».
-    assert(go_active::EG_TYPEINFO_RVA == 0);
-    assert(go_active::EN_TYPEINFO_RVA == 0xE63FC68);
-    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA == 0xE64BA08);
-    assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE64B9E0);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0xE64B9F8);
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 0xE64B9F0);
-    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 0xE64B9E8);
-    assert(go_active::EQUIPSKINDATA_TYPEINFO_RVA == 0xE640018);
-    assert(go_active::EQUIPOBJECTSKIN_TYPEINFO_RVA == 0xE640010);
-    assert(go_active::EQUIPRECOLORSKIN_TYPEINFO_RVA == 0xE640020);
-    // Слоты прогрессии и превью лежат между object и recolor, шаг 8 байт —
-    // та же картина, что у TypeInfo-слотов UniTask-промисов.
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA -
-               go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0x10);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA -
-               go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 8);
 
     // --- Возврат в релизный профиль (11978) обязан восстановить всё ---
     go_active::Select(GameVersion::Release);
@@ -251,39 +206,9 @@ int main() {
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
     assert(go_active::RAGDOLL_BONES_ARRAY == 0x90);
 
-    // --- Скины в релизном профиле (dump11978 + script.json 11978) ---
-    // Oxide.WeaponPiece: Skin 0x4 (short), SkinLevel 0x6 (byte), EmptyHands
-    // 0x10 (bool) — структура 0x18 байт, как в бете 11977.
-    assert(go_active::WEAPONPIECE_SIZE == 0x18);
-    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
-    assert(go_active::WEAPONPIECE_SKIN == 0x4);
-    assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x6);
-    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
-    assert(go_active::SKINDATA_ID == 0x18);
-    assert(go_active::WEAPONSKIN_RIGHT_HAND_REF == 0x48);
-    assert(go_active::WEAPONSKIN_FP_REF == 0x58);
-    assert(go_active::WEAPONSKIN_RECOLOR_MATERIAL == 0x48);
-    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
-    assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xC0);
-    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
-    // §4.22 в релизе: FPObject.<KHI> @0x38 (11966: uhq), ItemData.m_Id @0x58.
+    // --- ItemData/FPObject в релизном профиле ---
     assert(go_active::FPOBJECT_SHOWN == 0x38);
     assert(go_active::ITEMDATA_ID == 0x58);
-    assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
-    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
-    assert(go_active::EG_TYPEINFO_RVA == 0xE673558);
-    assert(go_active::EN_TYPEINFO_RVA == 0);
-    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA == 0xE6727D8);
-    assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE6727B0);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0xE6727C8);
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 0xE6727C0);
-    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 0xE6727B8);
-    assert(go_active::EQUIPSKINDATA_TYPEINFO_RVA == 0xE668500);
-    assert(go_active::EQUIPOBJECTSKIN_TYPEINFO_RVA == 0xE6684F8);
-    assert(go_active::EQUIPRECOLORSKIN_TYPEINFO_RVA == 0xE668508);
-    // Пределы индекса/уровня общие для обоих профилей.
-    assert(go_active::SKIN_INDEX_MAX == 63);
-    assert(go_active::SKIN_LEVEL_MAX == 7);
 
     // Split APK mapping fallback (when extractNativeLibs="false" maps libil2cpp.so
     // directly from split_config.arm64_v8a.apk or base.apk!/lib/arm64-v8a/libil2cpp.so

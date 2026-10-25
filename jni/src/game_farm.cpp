@@ -340,14 +340,14 @@ void esp_farm_blacklist(unsigned long long id, float seconds) {
     int frames = (int)(seconds * 60.0F);
     if (frames < 60) frames = 60;
     g_farm_blacklist[(uint64_t)id] = frames;
-    // Drop it from the cache right away and rescan soon: keeping a dead
-    // node around until the next 2 s rescan is what made the bot jerk the
-    // camera at garbage coordinates after finishing a tree.
+    // Remove the depleted node immediately and request a scan on the next
+    // frame. Waiting for the normal rescan delay left the bot with stale farm
+    // targets around the just-harvested spot.
     for (auto it = g_farm_entities.begin(); it != g_farm_entities.end(); ++it) {
         if (it->identity == (uint64_t)id) { g_farm_entities.erase(it); break; }
     }
-    const double soon = mono_seconds() + 0.25;
-    if (g_farm_next_scan > soon) g_farm_next_scan = soon;
+    const double next_frame = mono_seconds();
+    if (g_farm_next_scan > next_frame) g_farm_next_scan = next_frame;
 }
 
 // ---- Крестик: читаем из памяти, а не угадываем ------------------------------

@@ -38,6 +38,8 @@ struct EspBox {
     char  name[32] = {};
     bool  has_weapon = false;
     char  weapon[48] = {}; // localized, UTF-8 (Russian names are wider)
+    // Sprite ids for the remotely observed equipment rig: head, torso, legs, feet.
+    uint8_t armor_icons[4] = {};
 
     // Team / clan. `ally` is true when this player shares the local player's
     // team name or clan id; `tag` is the clan tag, shown next to the name.

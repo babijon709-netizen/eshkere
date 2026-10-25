@@ -215,10 +215,7 @@ inline constexpr std::uint64_t FPOBJECT_ITEM = game_offsets::FPOBJECT_ITEM;
 inline constexpr std::uint64_t FPOBJECT_SHOWN = game_offsets::FPOBJECT_SHOWN;
 inline constexpr std::uint64_t ITEM_DATA = game_offsets::ITEM_DATA;
 // Oxide.Item в бете 11977 побайтово совпадает с релизом (dumpbeta11977:
-// cOk int @0x30 skin, cOR byte @0x34 skinLevel, cOq short @0x38, mods @0x40,
-// stack @0x48) — имена обфусцированы иначе, раскладка та же.
-inline constexpr std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
-inline constexpr std::uint64_t ITEM_SKIN_LEVEL = game_offsets::ITEM_SKIN_LEVEL;
+// cOq short @0x38, mods @0x40, stack @0x48) — имена обфусцированы иначе, раскладка та же.
 inline constexpr std::uint64_t ITEMDATA_NAME = game_offsets::ITEMDATA_NAME;
 inline constexpr std::uint64_t ITEMDATA_SHORTNAME = game_offsets::ITEMDATA_SHORTNAME;
 // ItemData.m_Id @0x58 в бете 11977 на том же месте (dumpbeta11977, класс
@@ -262,12 +259,6 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_P
 // Между WeaponPiece и WeaponState расположен новый int attackType (0x148).
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x100;            // hS playerWeaponViewReference
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x130;           // jUh (SyncVar weaponPiece)
-// Рабочая копия piece (в релизе 11966 QVN 0xC0, в релизе 11978 wDT 0xD0 —
-// то же значение): та же роль — pMd пишет её и отдаёт Ov.pXc, hbr.pMZ/pMj
-// читают её для FP-пересборки. Сдвинута на +0x10 вместе с skinVisualHandle
-// (0xC0), то есть лежит сразу за ним.
-inline constexpr std::uint64_t PLAYERWEAPON_PIECE_LOCAL = 0xD0;
-inline constexpr std::uint64_t PLAYERWEAPON_STATE = 0x14C;           // jUs (SyncVar weaponState)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160;  // <player>k__BackingField
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER = game_offsets::WEAPONPIECE_NUMBER;
@@ -276,12 +267,12 @@ inline constexpr std::uint64_t WEAPONPIECE_NUMBER = game_offsets::WEAPONPIECE_NU
 // релиза 11966 (релиз 11978 сошёлся с этими значениями). Оборачивающий
 // декоратор по-прежнему лежит в первом поле (+0x10).
 inline constexpr std::uint64_t WEAPONVIEW_WEAPON_BASE = 0x50;
-inline constexpr std::uint64_t WEAPONVIEW_PIECE = 0x58;
 inline constexpr std::uint64_t WEAPONVIEW_ROOT_TRANSFORM = 0x70;
 inline constexpr std::uint64_t WEAPONVIEW_INNER = game_offsets::WEAPONVIEW_INNER;
 inline constexpr std::uint64_t MODELINFO_RIGHT_WEAPON_HOLDER = game_offsets::MODELINFO_RIGHT_WEAPON_HOLDER;
 inline constexpr std::uint64_t MODELINFO_LEFT_WEAPON_HOLDER = game_offsets::MODELINFO_LEFT_WEAPON_HOLDER;
 inline constexpr std::uint64_t MODELINFO_HEAD = game_offsets::MODELINFO_HEAD;
+inline constexpr std::uint64_t MODELINFO_EQUIPMENT_HOLDER = game_offsets::MODELINFO_EQUIPMENT_HOLDER;
 inline constexpr std::uint64_t NPC_BRAIN_MODEL_INFO = game_offsets::NPC_BRAIN_MODEL_INFO;
 inline constexpr std::uint64_t CHARANIM_PLAYER_MODEL_INFO = game_offsets::CHARANIM_PLAYER_MODEL_INFO;
 inline constexpr std::uint64_t INVDATA_PLAYER_MODEL_INFO = game_offsets::INVDATA_PLAYER_MODEL_INFO;
@@ -603,94 +594,10 @@ inline constexpr std::uint64_t FPMOTION_CLOSE_OFFSET = 0x70;
 inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET = 0xE8;
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = game_offsets::TRANSFORMOFFSET_LERP_SPEED;
 
-// ---- Скины: бета 11977 ----------------------------------------------------
-// Все раскладки SkinData/WeaponObjectSkinData/WeaponRecolorSkinData/
-// WeaponProgressionSkinData/WeaponPreviewPrefabSkinData/Equipment*SkinData/
-// ItemData.skinData/AssetReference в 11977 совпадают с релизом ПОИМЁННО и
-// ПО АДРЕСАМ (сверено dump.cs обеих сборок), поэтому берутся без отличий.
-// Отличия только у WeaponPiece и у того, что её содержит.
-inline constexpr std::uint64_t WEAPONPIECE_SKIN        = game_offsets::WEAPONPIECE_SKIN;
-inline constexpr std::uint64_t WEAPONPIECE_SKIN_LEVEL  = game_offsets::WEAPONPIECE_SKIN_LEVEL;
-inline constexpr std::uint64_t WEAPONPIECE_LOADED      = game_offsets::WEAPONPIECE_LOADED;
-inline constexpr std::uint64_t WEAPONPIECE_MODS        = game_offsets::WEAPONPIECE_MODS;
-// В 11977 у Oxide.WeaponPiece добавлен `bool EmptyHands; // 0x10`: структура
-// выросла с 0x10 до 0x18 байт. Следствие не косметическое — 0x18 > 16, значит
-// WeaponPiece передаётся ПО ССЫЛКЕ, а не пакуется в один 64-битный регистр,
-// как в релизе 11966 (в EN.XLy релиза Skin доставался lsr x20,#0x20; RE 11978
-// подтверждает передачу по ссылке: LTI читает q0=[piece], x8=[piece+0x10]).
-// Релиз 11978 получил то же поле — раскладки совпали.
-// На запись отдельных полей это не влияет: Skin 0x4 и SkinLevel 0x6 на месте.
-inline constexpr std::uint64_t WEAPONPIECE_SIZE        = 0x18;
-inline constexpr std::uint64_t WEAPONPIECE_EMPTY_HANDS = 0x10;
-
-inline constexpr std::uint64_t ITEMDATA_SKIN_DATA = game_offsets::ITEMDATA_SKIN_DATA;
-inline constexpr std::uint64_t SKINDATA_ID        = game_offsets::SKINDATA_ID;
-inline constexpr std::uint64_t SKINDATA_BASE_ID   = game_offsets::SKINDATA_BASE_ID;
-inline constexpr std::uint64_t SKINDATA_ICON_REF  = game_offsets::SKINDATA_ICON_REF;
-inline constexpr std::uint64_t WEAPONSKIN_RIGHT_HAND_REF = game_offsets::WEAPONSKIN_RIGHT_HAND_REF;
-inline constexpr std::uint64_t WEAPONSKIN_LEFT_HAND_REF  = game_offsets::WEAPONSKIN_LEFT_HAND_REF;
-inline constexpr std::uint64_t WEAPONSKIN_FP_REF         = game_offsets::WEAPONSKIN_FP_REF;
-inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL    = game_offsets::WEAPONSKIN_RECOLOR_MATERIAL;
-inline constexpr std::uint64_t WEAPONSKIN_RECOLOR_MATERIAL_FP = game_offsets::WEAPONSKIN_RECOLOR_MATERIAL_FP;
-inline constexpr std::uint64_t WEAPONSKIN_PROG_RIGHT_HAND_REFS = game_offsets::WEAPONSKIN_PROG_RIGHT_HAND_REFS;
-inline constexpr std::uint64_t WEAPONSKIN_PROG_LEFT_HAND_REFS  = game_offsets::WEAPONSKIN_PROG_LEFT_HAND_REFS;
-inline constexpr std::uint64_t WEAPONSKIN_PROG_FP_REFS         = game_offsets::WEAPONSKIN_PROG_FP_REFS;
-// WeaponPreviewPrefabSkinData в 11977 — НОВЫЙ класс (в релизе он есть, но
-// отдельно от прогрессии не встречался): previewPrefabRef на том же 0x60.
-inline constexpr std::uint64_t WEAPONSKIN_PREVIEW_REF = game_offsets::WEAPONSKIN_PREVIEW_REF;
-inline constexpr std::uint64_t EQUIPSKIN_PROPERTY_BLOCK = game_offsets::EQUIPSKIN_PROPERTY_BLOCK;
-inline constexpr std::uint64_t EQUIPSKIN_OBJECT_REF     = game_offsets::EQUIPSKIN_OBJECT_REF;
-inline constexpr std::uint64_t EQUIPSKIN_FP_OBJECT_REF  = game_offsets::EQUIPSKIN_FP_OBJECT_REF;
-inline constexpr std::uint64_t EQUIPSKIN_HIDE_BODY      = game_offsets::EQUIPSKIN_HIDE_BODY;
-inline constexpr std::uint64_t EQUIPSKIN_HIDE_HEAD      = game_offsets::EQUIPSKIN_HIDE_HEAD;
-inline constexpr std::uint64_t ASSETREF_GUID        = game_offsets::ASSETREF_GUID;
-inline constexpr std::uint64_t ASSETREF_SUBOBJ_NAME = game_offsets::ASSETREF_SUBOBJ_NAME;
-inline constexpr std::uint64_t ASSETREF_SUBOBJ_TYPE = game_offsets::ASSETREF_SUBOBJ_TYPE;
-inline constexpr std::uint64_t ASSETREF_OPERATION   = game_offsets::ASSETREF_OPERATION;
-
 // PlayerWeapon 11977: перед playerWeaponViewReference вставлены новые поля,
-// поэтому FP-вьюха и ручка визуала уехали. SyncVar-тройка определена
-// позиционно в этом же профиле (piece 0x130, state 0x14C), здесь — соседи:
-//   SkinVisualHandle jUO 0xC0, WeaponPiece jUu 0xD0 (НЕ SyncVar, не трогать),
-//   EO/hS playerWeaponViewReference 0x100, PlayerFPWeaponView 0x108,
-//   WeaponPiece jUh 0x130 (SyncVar), WeaponState jUs 0x14C.
-inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW     = 0x108;
-inline constexpr std::uint64_t PLAYERWEAPON_SKIN_HANDLE = 0xC0;
-// §4.26: гейт дроу и указатель на FPManager — по обоим профилям одинаковы
-// (проверено сверкой полей PlayerWeapon в дампах 11966/11977: расхождение
-// только у FP_VIEW/SKIN_HANDLE). Диагностические, записей по ним нет.
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_GATE   = game_offsets::PLAYERWEAPON_DRAW_GATE;
-// Живой слот дроу (wDY @0x150): у беты та же раскладка PlayerWeapon, что и
-// у релиза 11978, поэтому алиас даёт точное значение.
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_SLOT   = game_offsets::PLAYERWEAPON_DRAW_SLOT;
-// Кэш Item-источника дроу (+0x120): у беты та же раскладка PlayerWeapon, что
-// и у релиза 11978, поэтому алиас даёт точное значение.
-inline constexpr std::uint64_t PLAYERWEAPON_DRAW_ITEM   = game_offsets::PLAYERWEAPON_DRAW_ITEM;
-inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER  = game_offsets::PLAYERWEAPON_FP_MANAGER;
-inline constexpr std::uint64_t FPWEAPONVIEW_VISUAL       = game_offsets::FPWEAPONVIEW_VISUAL;
-inline constexpr std::uint64_t FPWEAPONVIEW_PIECE        = game_offsets::FPWEAPONVIEW_PIECE;
-// WeaponPiece стал 0x18 байт, поэтому CancellationTokenSource уехал с 0x38.
-inline constexpr std::uint64_t FPWEAPONVIEW_CANCELLATION = 0x40;
-inline constexpr std::uint64_t SKINHANDLE_MODEL      = game_offsets::SKINHANDLE_MODEL;
-inline constexpr std::uint64_t SKINHANDLE_SLOT       = game_offsets::SKINHANDLE_SLOT;
-inline constexpr std::uint64_t SKINHANDLE_GENERATION = game_offsets::SKINHANDLE_GENERATION;
-
-// TypeInfo-слоты 11977 (script.json, тот же разбор, что дал
-// Oxide.PlayerManager = 0xE647138 — значение этого профиля).
-// EG в списке TypeInfoPointers беты НЕТ: 0 = резолвить класс по имени в
-// рантайме (class_identity), а не по слоту. EN (hbv<WeaponPiece>) — есть.
-inline constexpr std::uint64_t EG_TYPEINFO_RVA                      = 0;
-inline constexpr std::uint64_t EN_TYPEINFO_RVA                      = 0xE63FC68;
-inline constexpr std::uint64_t WEAPONSKINDATA_TYPEINFO_RVA          = 0xE64BA08;
-inline constexpr std::uint64_t WEAPONOBJECTSKIN_TYPEINFO_RVA        = 0xE64B9E0;
-inline constexpr std::uint64_t WEAPONRECOLORSKIN_TYPEINFO_RVA       = 0xE64B9F8;
-inline constexpr std::uint64_t WEAPONPROGRESSIONSKIN_TYPEINFO_RVA   = 0xE64B9F0;
-inline constexpr std::uint64_t WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA = 0xE64B9E8;
-inline constexpr std::uint64_t EQUIPSKINDATA_TYPEINFO_RVA           = 0xE640018;
-inline constexpr std::uint64_t EQUIPOBJECTSKIN_TYPEINFO_RVA         = 0xE640010;
-inline constexpr std::uint64_t EQUIPRECOLORSKIN_TYPEINFO_RVA        = 0xE640020;
-
-inline constexpr int SKIN_INDEX_MAX = game_offsets::SKIN_INDEX_MAX;
-inline constexpr int SKIN_LEVEL_MAX = game_offsets::SKIN_LEVEL_MAX;
+// поэтому FP-вьюха уехала. SyncVar-тройка определена позиционно в этом же
+// профиле (piece 0x130, state 0x14C); playerWeaponViewReference 0x100.
+// WeaponPiece в 11977 — 0x18 байт (добавлен bool @0x10), поэтому передаётся
+// по ссылке; CancellationTokenSource в PlayerFPWeaponView уехал с 0x38.
 
 } // namespace game_offsets_beta

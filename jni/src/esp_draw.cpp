@@ -10,6 +10,10 @@
 #include "lang.h"                // lang::visual: подпись оружия
 #include "esp_box_hold.h"        // состав боксов/маркеров на кадр
 #include "overlay_geometry.h"
+#include "armor_esp.h"
+#include "media/armor_atlas.h"
+#include "stb_image/stb_image.h"
+#include <GLES3/gl3.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -34,6 +38,30 @@ float AimFovRadiusPx(float sw, float sh) {
 
 // One short hold window for every ESP visual, including world-marker labels.
 constexpr double kEspHoldSeconds = 0.30;
+static GLuint g_armor_atlas_texture = 0;
+static bool g_armor_atlas_attempted = false;
+
+static void ensure_armor_atlas_texture() {
+    if (g_armor_atlas_attempted) return;
+    g_armor_atlas_attempted = true;
+    int w = 0, h = 0, channels = 0;
+    unsigned char* rgba = stbi_load_from_memory(kArmorAtlasPng,
+        static_cast<int>(kArmorAtlasPngLen), &w, &h, &channels, 4);
+    if (!rgba || w != kArmorAtlasCell * kArmorAtlasCols ||
+        h != kArmorAtlasCell * kArmorAtlasRows) {
+        if (rgba) stbi_image_free(rgba);
+        return;
+    }
+    glGenTextures(1, &g_armor_atlas_texture);
+    glBindTexture(GL_TEXTURE_2D, g_armor_atlas_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgba);
+    stbi_image_free(rgba);
+}
 
 // Монотонное время в секундах — одно на кадр (и для холда, и для замеров).
 static double mono_now() {
@@ -173,6 +201,7 @@ void DrawEspOverlay() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
 
     if (!g_esp_attached) return;
+    if (g_state.esp_armor) ensure_armor_atlas_texture();
 
     if (g_state.aim_touch && g_state.aim_special) {
         float fovR = AimFovRadiusPx(sw, sh);
@@ -299,6 +328,31 @@ void DrawEspOverlay() {
         // Team mates / clan mates get their own colour so they read as
         // friendly at a glance (and the aimbot leaves them alone).
         const bool ally = box.ally;
+
+        if (g_state.esp_armor && g_armor_atlas_texture) {
+            const float boxH = by2 - by1;
+            const float iconSize = ImClamp(boxH * 0.17f, 12.f, 24.f);
+            const float gap = ImMax(2.f, iconSize * 0.08f);
+            const float x = bx1 - iconSize - 4.f;
+            for (int slot = 0; slot < 4; ++slot) {
+                const unsigned icon = box.armor_icons[slot];
+                if (!armoresp::valid_icon(icon)) continue;
+                const int col = static_cast<int>(icon) % kArmorAtlasCols;
+                const int row = static_cast<int>(icon) / kArmorAtlasCols;
+                const ImVec2 p0{x, by1 + slot * (iconSize + gap)};
+                const ImVec2 p1{p0.x + iconSize, p0.y + iconSize};
+                const ImVec2 uv0{(float)(col * kArmorAtlasCell) /
+                                    (kArmorAtlasCell * kArmorAtlasCols),
+                                (float)(row * kArmorAtlasCell) /
+                                    (kArmorAtlasCell * kArmorAtlasRows)};
+                const ImVec2 uv1{uv0.x + 1.f / kArmorAtlasCols,
+                                 uv0.y + 1.f / kArmorAtlasRows};
+                dl->AddRectFilled(p0, p1, IM_COL32(12, 14, 20, 205), 3.f);
+                dl->AddImageRounded((ImTextureID)(intptr_t)g_armor_atlas_texture,
+                                    p0, p1, uv0, uv1, IM_COL32_WHITE, 3.f);
+                dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 90), 3.f, 0, 1.f);
+            }
+        }
 
         if (g_state.esp_chams) {
             bool all_valid = true;

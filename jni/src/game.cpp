@@ -21,6 +21,7 @@
 #include "mount_latch.h"           // удержание бокса на транспорте (хост-проверяемый)
 #include "body_clip.h"             // отсечение тела по ближней плоскости (хост-проверяемый)
 #include "weapon_name.h"            // имена оружия в подписях (хост-проверяемые)
+#include "armor_esp.h"               // armor prefab -> embedded icon id
 #include "Vector.h"
 #include "lang.h"      // РУ/EN: подписи визуалов (оружие, предметы, животные)
 #include "text_utf8.h"  // копия подписи в буфер без разрезания символа UTF-8
@@ -784,6 +785,8 @@ struct PlayerTextCache {
     bool ally = false;    // shares the local player's team or clan
     char tag[16] = {};    // clan tag
     bool has_tag = false;
+    uint8_t armor_icons[armoresp::SlotCount] = {};
+    bool has_armor = false;
     int  revalidate = 30; // first sighting resolves immediately
 };
 static std::unordered_map<uint64_t, PlayerTextCache> g_player_text;
@@ -6805,6 +6808,36 @@ static uint64_t resolve_player_model_info(uint64_t player, const PlayerAux& aux)
     return 0;
 }
 
+static bool read_player_armor_icons(uint64_t player, const PlayerAux& aux,
+                                    uint8_t out[armoresp::SlotCount]) {
+    if (!out || !valid_obj(player)) return false;
+    memset(out, 0, armoresp::SlotCount);
+    const uint64_t model_info = resolve_player_model_info(player, aux);
+    if (!valid_obj(model_info)) return false;
+    const uint64_t holder = managed_object_native(
+        rd_ptr(model_info + MODELINFO_EQUIPMENT_HOLDER));
+    if (!valid_obj(holder)) return false;
+    if (!ensure_gameobject_name_offset(player)) return false;
+
+    std::vector<uint64_t> nodes;
+    collect_transform_subtree(holder, nodes, 192);
+    if (nodes.empty()) return false;
+    bool got_any_name = false;
+    for (uint64_t node : nodes) {
+        char object_name[96] = {};
+        if (!read_transform_name(node, object_name, sizeof(object_name))) continue;
+        got_any_name = true;
+        const armoresp::Match found = armoresp::classify_name(object_name);
+        if (!found.valid || found.slot >= armoresp::SlotCount ||
+            !armoresp::valid_icon(found.icon)) continue;
+        // One equipped item per slot. Traversal is breadth-first, so the
+        // shallow equipment prefab name wins over any nested mesh/LOD nodes.
+        uint8_t& slot = out[static_cast<size_t>(found.slot)];
+        if (!slot) slot = static_cast<uint8_t>(found.icon);
+    }
+    return got_any_name;
+}
+
 // Route A: PlayerWeapon -> weapon view -> spawned weapon GameObject.
 // Item number -> label, dumped from this build's Oxide.ItemDatabase (items.txt,
 // /storage/emulated/0/benzware). WeaponPiece.Number is an INDEX INTO THE
@@ -11769,6 +11802,16 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 tc.ally = local_group_valid && groups_are_allied(local_group, group);
                 snprintf(tc.tag, sizeof(tc.tag), "%s", group.tag);
                 tc.has_tag = tc.tag[0] != '\0';
+                if (g_state.esp_armor) {
+                    uint8_t armor[armoresp::SlotCount]{};
+                    if (read_player_armor_icons(s_transforms[i], aux, armor)) {
+                        memcpy(tc.armor_icons, armor, sizeof(tc.armor_icons));
+                        tc.has_armor = true;
+                    }
+                } else {
+                    memset(tc.armor_icons, 0, sizeof(tc.armor_icons));
+                    tc.has_armor = false;
+                }
             }
             box.has_name = tc.has_name;
             if (tc.has_name) memcpy(box.name, tc.name, sizeof(box.name));
@@ -11777,6 +11820,8 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             box.ally = tc.ally;
             box.has_tag = tc.has_tag;
             if (tc.has_tag) memcpy(box.tag, tc.tag, sizeof(box.tag));
+            if (g_state.esp_armor && tc.has_armor)
+                memcpy(box.armor_icons, tc.armor_icons, sizeof(box.armor_icons));
         }
         for (size_t corner = 0; corner < 8; ++corner) {
             Vec2 sc{};

@@ -37,41 +37,6 @@ void ConfigSave() { ++saves; }
 void ConfigLoad(int index, bool) { ++loads; g_cfgLoadedIdx = index; }
 void ConfigUpdate(int) { ++updates; }
 void esp_viewmodel_tick(const ViewmodelSettings&) { ++applies; }
-// Скинченджер: список и снимок состояния приходят из памяти игры
-// (skin_changer_memory.h); здесь — детерминированный стенд из трёх скинов,
-// чтобы тест проходил и по ветке «есть уровни» (индекс 1), и по ветке
-// «уровней нет» (индексы 0 и 2).
-static int skinScans = 0, skinRebuilds = 0;
-int esp_skin_entries(viewmodel::SkinEntryView* out, int max) {
-    if (!out || max <= 0) return 0;
-    viewmodel::SkinEntryView entries[3];
-    entries[0].index = 0; entries[0].kind = viewmodel::SkinKind::WeaponObject;
-    entries[0].levels = 1; entries[0].ready = true;
-    snprintf(entries[0].id, sizeof(entries[0].id), "%s", "dmr_gold");
-    entries[1].index = 1; entries[1].kind = viewmodel::SkinKind::WeaponProgression;
-    entries[1].levels = 3; entries[1].ready = false;
-    snprintf(entries[1].id, sizeof(entries[1].id), "%s", "dmr_star");
-    entries[2].index = 2; entries[2].kind = viewmodel::SkinKind::WeaponRecolor;
-    entries[2].levels = 1; entries[2].ready = true;
-    snprintf(entries[2].id, sizeof(entries[2].id), "%s", "dmr_red");
-    const int n = max < 3 ? max : 3;
-    for (int i = 0; i < n; ++i) out[i] = entries[i];
-    return n;
-}
-viewmodel::SkinUiInfo esp_skin_ui() {
-    viewmodel::SkinUiInfo info;
-    info.count = 3;
-    info.skin = g_state.viewmodel.skin_index;
-    info.level = g_state.viewmodel.skin_level;
-    info.fp_stale = false;
-    info.handle_live = true;
-    info.status = g_state.viewmodel.skin_enabled ? viewmodel::Status::Active
-                                                 : viewmodel::Status::Off;
-    snprintf(info.weapon, sizeof(info.weapon), "%s", "dmr");
-    return info;
-}
-void esp_skin_request_scan() { ++skinScans; }
-void esp_skin_request_rebuild() { ++skinRebuilds; }
 float AimTouchFracX() { return g_state.aim_tx < 0.f ? 0.72f : g_state.aim_tx; }
 float AimTouchFracY() { return g_state.aim_ty < 0.f ? 0.48f : g_state.aim_ty; }
 namespace Blur { void Freeze(int, int, int, int, int, int) {} }
@@ -202,7 +167,7 @@ static void espTests() {
     fresh("esp");
     const float compact = frame(tab(2)); assert(compact < 950.f);
     expand(2, "##esp_players");
-    for (const auto* label : {"##vb", "##vvs", "##v3", "##vn", "##vd", "##vw", "##vtr", "##vsk", "##vtm",
+    for (const auto* label : {"##vb", "##vvs", "##v3", "##vn", "##vd", "##vw", "##vtr", "##vsk", "##var", "##vtm",
                               "##esp_stretch", "##esp_thickness"}) assert(items.count(id(label)));
     // Flip only the dedicated arrow switch while leaving its settings closed.
     tap(tab(2), groupId("##esp_arrows", "enable")); assert(g_state.esp_arrows);
@@ -251,24 +216,6 @@ static void miscTests() {
     // FOV/hands reset still applies immediately, without clearing weapon flags.
     tap(tab(3), id("##vmreset"));
     assert(g_state.viewmodel.no_recoil_button && g_state.viewmodel.no_spread);
-    // Скинченджер — пользовательский список: именованные строки вместо
-    // слепого слайдера «#N», выбор тапом, уровни только у прогрессии.
-    expand(3, "##misc_skins");
-    for (const auto* label : {"##skin_pick0", "##skin_pick1", "##skin_pick2"})
-        assert(items.count(id(label)));
-    assert(!items.count(id("##skin_level")));            // «Gold»: уровней нет
-    assert(!items.count(id("##skin_rewrite_now")));      // техкнопки больше нет
-    assert(!items.count(id("##skin_index")));            // и слайдера индекса
-    // Слайдер уровней появляется кадром позже выбора: `levels` считается до
-    // отрисовки списка (та же задержка была у старого слайдера индекса).
-    tap(tab(3), id("##skin_pick1"));
-    assert(g_state.viewmodel.skin_index == 1);
-    frame(tab(3));                                   // уровни — со следующего кадра
-    assert(items.count(id("##skin_level")));             // «Star»: 3 уровня
-    tap(tab(3), id("##skin_pick2"));
-    assert(g_state.viewmodel.skin_index == 2);
-    frame(tab(3));
-    assert(!items.count(id("##skin_level")));            // «Red»: перекраска
 }
 
 static void configAndOptionsTests() {

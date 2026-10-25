@@ -198,6 +198,7 @@ int main() {
     assert(go_active::MODELINFO_HEAD == 0x20);
     assert(go_active::MODELINFO_RIGHT_WEAPON_HOLDER == 0x28);
     assert(go_active::MODELINFO_LEFT_WEAPON_HOLDER == 0x30);
+    assert(go_active::MODELINFO_EQUIPMENT_HOLDER == 0x38);
     assert(go_active::HITBOX_ROOT_ARRAY == 0x68);
     assert(go_active::HITBOX_SIZE == 0x24);
     assert(go_active::HITBOX_CENTER == 0x30);
@@ -401,98 +402,21 @@ int main() {
     assert(go_active::FPTOOL_TOOL_PURPOSES == 0x168);
     assert(go_active::WAITFORSECONDS_SECONDS == 0x10);
 
-    // --- PlayerWeapon: сдвиг +0x10/+0x20 от вставленных полей; гейт дроу
-    // переехал с 0xDC (теперь середина wDT 0xD0..0xE8) на 0xF0 — доказано RE:
-    // метод 0x7BB70B4 читает `ldr w2,[x19,#0xF0]` и передаёт слотом в LTI,
-    // FPManager берёт из `ldr x0,[x19,#0x110]`. ---
-    assert(go_active::PLAYERWEAPON_SKIN_HANDLE == 0xC0);
-    assert(go_active::PLAYERWEAPON_PIECE_LOCAL == 0xD0);
-    assert(go_active::PLAYERWEAPON_DRAW_GATE == 0xF0);
-    assert(go_active::PLAYERWEAPON_DRAW_SLOT == 0x150);
-    // Кэш Item-источника дроу: via(kJw) кладёт туда [kJw+0x10] и строит из
-    // НЕГО SyncVar (skin +0x30) — четвёртая точка записи скинченджера.
-    assert(go_active::PLAYERWEAPON_DRAW_ITEM == 0x120);
+    // --- PlayerWeapon: сдвиг +0x10/+0x20 от вставленных полей ---
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
-    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
-    assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x110);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
-    assert(go_active::PLAYERWEAPON_STATE == 0x14C);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
-    // Гейт обязан лежать ВНЕ working-копии piece (0xD0..0xE8) — иначе срез
-    // §4.26 читал бы мусор из середины структуры.
-    assert(go_active::PLAYERWEAPON_DRAW_GATE >= go_active::PLAYERWEAPON_PIECE_LOCAL +
-                                                    go_active::WEAPONPIECE_SIZE);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
-    assert(go_active::WEAPONVIEW_PIECE == 0x58);
     assert(go_active::WEAPONVIEW_ROOT_TRANSFORM == 0x70);
     assert(go_active::WEAPONVIEW_INNER == 0x10);
-    assert(go_active::FPWEAPONVIEW_VISUAL == 0x20);
-    assert(go_active::FPWEAPONVIEW_PIECE == 0x28);
-    assert(go_active::FPWEAPONVIEW_CANCELLATION == 0x40);
 
-    // --- Скины: WeaponPiece вырос до 0x18 (EmptyHands @0x10) ---
+    // --- Oxide.WeaponPiece: Enabled/Number (piece 0x18 байт, по ссылке) ---
     assert(go_active::WEAPONPIECE_ENABLED == 0x00);
     assert(go_active::WEAPONPIECE_NUMBER == 0x02);
-    assert(go_active::WEAPONPIECE_SKIN == 0x04);
-    assert(go_active::WEAPONPIECE_SKIN_LEVEL == 0x06);
-    assert(go_active::WEAPONPIECE_LOADED == 0x07);
-    assert(go_active::WEAPONPIECE_MODS == 0x08);
-    assert(go_active::WEAPONPIECE_EMPTY_HANDS == 0x10);
-    assert(go_active::WEAPONPIECE_SIZE == 0x18);
     assert(go_active::ITEM_DATA == 0x20);
-    assert(go_active::ITEM_SKIN == 0x30);
-    assert(go_active::ITEM_SKIN_LEVEL == 0x34);
     assert(go_active::ITEMDATA_ID == 0x58);
     assert(go_active::ITEMDATA_NAME == 0x18);
     assert(go_active::ITEMDATA_SHORTNAME == 0x20);
-    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
-    assert(go_active::SKINDATA_ID == 0x18);
-    assert(go_active::SKINDATA_BASE_ID == 0x20);
-    assert(go_active::SKINDATA_ICON_REF == 0x28);
-    assert(go_active::WEAPONSKIN_RIGHT_HAND_REF == 0x48);
-    assert(go_active::WEAPONSKIN_LEFT_HAND_REF == 0x50);
-    assert(go_active::WEAPONSKIN_FP_REF == 0x58);
-    assert(go_active::WEAPONSKIN_PROG_RIGHT_HAND_REFS == 0x60);
-    assert(go_active::WEAPONSKIN_PROG_LEFT_HAND_REFS == 0x68);
-    assert(go_active::WEAPONSKIN_PROG_FP_REFS == 0x70);
-    assert(go_active::WEAPONSKIN_RECOLOR_MATERIAL == 0x48);
-    assert(go_active::WEAPONSKIN_RECOLOR_MATERIAL_FP == 0x50);
-    assert(go_active::WEAPONSKIN_PREVIEW_REF == 0x60);
-    assert(go_active::EQUIPSKIN_PROPERTY_BLOCK == 0x48);
-    assert(go_active::EQUIPSKIN_OBJECT_REF == 0x50);
-    assert(go_active::EQUIPSKIN_FP_OBJECT_REF == 0x58);
-    assert(go_active::EQUIPSKIN_HIDE_BODY == 0x60);
-    assert(go_active::EQUIPSKIN_HIDE_HEAD == 0x61);
-    assert(go_active::ASSETREF_GUID == 0x10);
-    assert(go_active::ASSETREF_SUBOBJ_NAME == 0x18);
-    assert(go_active::ASSETREF_SUBOBJ_TYPE == 0x20);
-    assert(go_active::ASSETREF_OPERATION == 0x28);
-    assert(go_active::SKINHANDLE_MODEL == 0x00);
-    assert(go_active::SKINHANDLE_SLOT == 0x08);
-    assert(go_active::SKINHANDLE_GENERATION == 0x0C);
-    assert(go_active::SKIN_INDEX_MAX == 63);
-    assert(go_active::SKIN_LEVEL_MAX == 7);
-    // TypeInfo-слоты скинов (script.json 11978): «пятёрка» с прежними шагами
-    // (object +8 preview +8 progression +8 recolor +0x10 abstract) и «тройка»
-    // экипировки (object +8 abstract +8 recolor).
-    assert(go_active::EG_TYPEINFO_RVA == 0xE673558);
-    assert(go_active::EN_TYPEINFO_RVA == 0);
-    assert(go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 0xE6727B0);
-    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 0xE6727B8);
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 0xE6727C0);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0xE6727C8);
-    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA == 0xE6727D8);
-    assert(go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA -
-               go_active::WEAPONOBJECTSKIN_TYPEINFO_RVA == 8);
-    assert(go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA -
-               go_active::WEAPONPREVIEWPREFABSKIN_TYPEINFO_RVA == 8);
-    assert(go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA -
-               go_active::WEAPONPROGRESSIONSKIN_TYPEINFO_RVA == 8);
-    assert(go_active::WEAPONSKINDATA_TYPEINFO_RVA -
-               go_active::WEAPONRECOLORSKIN_TYPEINFO_RVA == 0x10);
-    assert(go_active::EQUIPOBJECTSKIN_TYPEINFO_RVA == 0xE6684F8);
-    assert(go_active::EQUIPSKINDATA_TYPEINFO_RVA == 0xE668500);
-    assert(go_active::EQUIPRECOLORSKIN_TYPEINFO_RVA == 0xE668508);
 
     // --- Фарм/лут: MineableObject и расширения (offsets без изменений) ---
     assert(go_active::MINEABLE_REQUIRED_TOOL_PURPOSE == 0x70);

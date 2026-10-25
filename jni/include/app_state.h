@@ -34,6 +34,7 @@ struct AppState {
     int   aim_priority = 0;
     bool  esp_box = false, esp_name = false, esp_wall = false, esp_chams = false;
     bool  esp_weapon = false, esp_tracer = false, esp_skeleton = false;
+    bool  esp_armor = false;
     bool  esp_ore = false, esp_animal = false, esp_loot = false, esp_team = false;
     // Типы руды: какие именно камни показывать. «Руда» выше — общий
     // выключатель меток руды, эти три — отбор внутри него (камень / железо /
@@ -76,10 +77,7 @@ struct AppState {
     float a_custom_fov = 0.f, a_custom_hands = 0.f, a_no_recoil = 0.f, a_no_spread = 0.f,
           a_no_ballistics = 0.f, a_fast_loot = 0.f, a_fast_fire = 0.f,
           a_fast_reload = 0.f, a_fake_lag = 0.f;
-    // Скинченджер (viewmodel.skin_*): тумблер и «пересобирать при смене».
-    float a_skin = 0.f;
     SliderAnim sl_custom_fov, sl_hands_x, sl_hands_y, sl_hands_z, sl_fake_lag;
-    SliderAnim sl_skin_level;   // индекс скина выбирается списком, не слайдером
     bool  always_day = false;     // всегда день
     bool  no_grass = false;       // не создавать рендереры травы и кустов
     float marker_dist = 150.f;
@@ -153,7 +151,7 @@ struct AppState {
     // Сессионное: бинарный CfgBlob заморожен версией (config.cpp).
     float screen_stretch_x = 1.0f;
     float a_esp_box = 0, a_esp_name = 0, a_esp_wall = 0, a_esp_chams = 0, a_esp_vis = 0;
-    float a_esp_weapon = 0, a_esp_tracer = 0, a_esp_skeleton = 0;
+    float a_esp_weapon = 0, a_esp_tracer = 0, a_esp_skeleton = 0, a_esp_armor = 0;
     float a_esp_ore = 0, a_esp_animal = 0, a_esp_loot = 0, a_esp_team = 0, a_esp_pickup = 0;
     float a_esp_ore_stone = 1, a_esp_ore_iron = 1, a_esp_ore_sulfur = 1;
     float a_esp_bots = 0, a_esp_vehicles = 0, a_esp_scrap = 0, a_esp_house_boxes = 0;

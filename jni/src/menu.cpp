@@ -14,8 +14,6 @@
 #include "str.h"
 #include "esp_draw.h"
 #include "aim.h"
-#include "weapon_name.h"    // читаемое имя ствола для панели скинов
-#include "skin_name.h"      // читаемое имя скина (чистка технического id)
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -332,10 +330,11 @@ float TabContent(int tab, float dt, float cW) {
 {"##vw",  XS("Оружие"),     &g_state.esp_weapon,       &g_state.a_esp_weapon,       &cfg::esp::weapon_col},
 {"##vtr", XS("Линии"),      &g_state.esp_tracer,       &g_state.a_esp_tracer,       &cfg::esp::tracer_col},
 {"##vsk", XS("Скелеты"),    &g_state.esp_skeleton,     &g_state.a_esp_skeleton,     &cfg::esp::skeleton_col},
+{"##var", XS("Броня"),      &g_state.esp_armor,        &g_state.a_esp_armor,        nullptr},
 {"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
         };
-        if (group("##esp_players", XS("Игроки"), players, 9)) {
-            drawRows(players, 9);
+        if (group("##esp_players", XS("Игроки"), players, 10)) {
+            drawRows(players, 10);
             SHdr(XS("Линии и боксы"), 8.f);
             CardBg(Layout::SliderH * 2.f);
             SliderRow("##esp_stretch", XS("Растяг экрана"), &g_state.screen_stretch_x,
@@ -825,105 +824,6 @@ float TabContent(int tab, float dt, float cW) {
             if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
                 esp_viewmodel_tick(vm);
         }
-        // ---- Скины -------------------------------------------------------
-        // Скинченджер пишет ИНДЕКС в копии Oxide.WeaponPiece (SyncVar и
-        // рабочую) и в Item (skin/skinLevel, включая кэш дроу pw+0x120):
-        // игра сама берёт по нему SkinData из ItemData.skinData[] этого
-        // предмета и собирает визуал на своём событии — холстер/дроу, RPC
-        // насадок/модов, спавн/подбор ствола (см. skin_changer_memory.h,
-        // «КТО ПЕРЕСОБИРАЕТ»). Список — живой, из памяти игры: глобальной
-        // таблицы скинов не существует, индекс у каждого предмета свой.
-        // Панель — пользовательская: технические id («deagle.skin.rusty.event»)
-        // чистятся в читаемые имена (skin_name.h), ствол подписывается таблицей
-        // weapon_name.h; ни статусных строк, ни тостов — вся диагностика живёт
-        // только в skin.log (KERNEL.md §6).
-        SHdr(XS("Скины"));
-        {
-            viewmodel::SkinEntryView skinEntries[viewmodel::kSkinEntryMax];
-            const viewmodel::SkinUiInfo skinUi = esp_skin_ui();
-            const int skinCount = esp_skin_entries(skinEntries, viewmodel::kSkinEntryMax);
-            // Читаемое имя ствола — как в подписях ESP: игровой shortName
-            // («dmr», «pistol_deagle») через таблицу weapon_name.h.
-            char weaponLabel[64];
-            snprintf(weaponLabel, sizeof(weaponLabel), "%s", skinUi.weapon);
-            if (weaponLabel[0])
-                weaponname::canonicalize(weaponLabel, sizeof(weaponLabel), lang::english());
-            char skinSummary[192];
-            if (!vm.skin_enabled)
-                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Выкл"));
-            else if (skinCount <= 0)
-                snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Скинов нет"));
-            else {
-                const int sel = ImClamp(vm.skin_index, 0, skinCount - 1);
-                char selName[96], pos[8];
-                snprintf(pos, sizeof(pos), "%d", sel + 1);
-                if (!skinname::humanize(skinEntries[sel].id, skinEntries[sel].base_id,
-                                        selName, sizeof(selName)))
-                    snprintf(selName, sizeof(selName), XS("Скин %s"), pos);
-                snprintf(skinSummary, sizeof(skinSummary), "%s%s%s",
-                         weaponLabel, weaponLabel[0] ? ": " : "", selName);
-            }
-            if (SettingsHeader("##misc_skins", XS("Скинченджер"), skinSummary,
-                               false, &vm.skin_enabled, g_state.a_skin)) {
-                // Перечитывание списка — по запросу, а не каждый кадр: строки
-                // читаются из памяти игры посимвольно.
-                esp_skin_request_scan();
-                const int n = skinCount;
-                if (n > 0 && vm.skin_index >= n) vm.skin_index = n - 1;
-                if (vm.skin_index < 0) vm.skin_index = 0;
-                const int levels = (n > 0) ? ImMax(1, skinEntries[vm.skin_index].levels) : 1;
-                if (vm.skin_level >= levels) vm.skin_level = levels - 1;
-                const int oldIndex = vm.skin_index, oldLevel = vm.skin_level;
-
-                if (n <= 0) {
-                    // Пустой список — одна понятная строка вместо слепого «#0».
-                    CardBg(Layout::RowH);
-                    auto* dlS = ImGui::GetWindowDrawList();
-                    auto* fnS = ImGui::GetFont();
-                    const float fsS = ImGui::GetFontSize() * 1.15f;
-                    const auto pS = ImGui::GetCursorScreenPos();
-                    dlS->AddText(fnS, fsS,
-                                 {pS.x + Layout::Inset + Layout::PadX,
-                                  pS.y + (Layout::RowH - fsS) * 0.5f},
-                                 C::U(C::Dim()), XS("В руках нет предмета со скинами"));
-                    ImGui::Dummy({ImGui::GetContentRegionAvail().x, Layout::RowH});
-                } else {
-                    // Выбор скина — именованный список: пользователь видит,
-                    // что выбирает. Метка «Перекраска» предупреждает, что
-                    // скин меняет только материал, а не модель.
-                    CardBg(Layout::RowH * (float)n + (levels > 1 ? Layout::SliderH : 0.f));
-                    for (int i = 0; i < n; ++i) {
-                        const viewmodel::SkinEntryView& e = skinEntries[i];
-                        char rowName[96], pos[8], rowId[24];
-                        snprintf(pos, sizeof(pos), "%d", i + 1);
-                        if (!skinname::humanize(e.id, e.base_id, rowName, sizeof(rowName)))
-                            snprintf(rowName, sizeof(rowName), XS("Скин %s"), pos);
-                        snprintf(rowId, sizeof(rowId), "##skin_pick%d", i);
-                        const char* tag =
-                            (e.kind == viewmodel::SkinKind::WeaponRecolor ||
-                             e.kind == viewmodel::SkinKind::EquipRecolor)
-                                ? XS("Перекраска") : nullptr;
-                        if (SelectRow(rowId, rowName, tag, vm.skin_index == i,
-                                      i == n - 1 && levels <= 1))
-                            vm.skin_index = i;
-                    }
-                    if (levels > 1) {
-                        float levelValue = (float)vm.skin_level;
-                        SliderRow("##skin_level", XS("Уровень"), &levelValue, 0.f,
-                                  (float)(levels - 1), "%.0f", true, false,
-                                  g_state.sl_skin_level, dt);
-                        vm.skin_level = ImClamp((int)(levelValue + 0.5f), 0, levels - 1);
-                    }
-                }
-
-                // Диагностика состояния в меню не показывается вовсе: ни
-                // строк, ни тостов (KERNEL.md §6). Подробности живут в
-                // skin.log — их пишет skin_log.h языком skin_block_text().
-                if (oldIndex != vm.skin_index || oldLevel != vm.skin_level)
-                    esp_viewmodel_tick(vm);
-            }
-        }
-
         SHdr(XS("Автофарм"));
         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
                            false, &g_state.farm_on, g_state.a_farm_on)) {
@@ -1039,102 +939,22 @@ static float RailTabsW() {
     return kRailPadL + kRailIcon + kRailGap + worst + kRailPadR;
 }
 
-// «Светофор» в левом верхнем углу меню и метрики левой панели.
+// Метрики левой панели.
 //
-// Кружок-аватарка убран: место под него (отступ + диаметр + отступ) пока
-// оставлено за панелью, чтобы ширина не менялась. Столбец вкладок стоит сразу
-// под светофором. В самом углу окна стоят три кнопки как в macOS (красная — закрыть меню, жёлтая —
-// свернуть в минимальный размер, зелёная — развернуть на весь экран и обратно).
+// Кружок-аватарка убран: его прежнее место пока зарезервировано, чтобы
+// ширина панели вкладок не менялась.
 static const float kAvatarR    = 87.75f; // радиус кружка (диаметр 175.5)
 static const float kAvatarPad  = 20.f;   // отступ по бокам внутри панели
-static const float kAvatarPadT = 12.f;   // от верхнего края окна
 
-// «Светофор»: три кружка по 20 px с зазором 6.7 — та же пропорция, что в
-// macOS (12 px при системном шрифте 13), в 1.5 раза меньше прежних 30/10.
-static const float kTLD   = 20.f;        // диаметр кружка светофора
-static const float kTLGap = 6.7f;        // зазор между кружками
-static const float kTLPad = 12.f;        // отступ светофора от краёв окна
-static const int   kTLN   = 3;           // красный, жёлтый, зелёный
-
-// Ширина светофора целиком.
-static float TrafficLightW(float d, float gap) { return d * kTLN + gap * (kTLN - 1); }
-
-// Размер кружков светофора под ширину панели: в узком окне он ужимается вместе
-// с панелью, чтобы не вылезти на содержимое вкладок.
-static void TrafficLightMetrics(float railW, float& d, float& gap) {
-    d = kTLD; gap = kTLGap;
-    const float need = TrafficLightW(d, gap);
-    const float have = railW - kAvatarPad * 2.f;
-    if (need > 0.f && have > 0.f && need > have) {
-        const float k = have / need;
-        d *= k; gap *= k;
-    }
-}
-
-// Ширина панели вкладок: по прежнему кружку (175.5 px), но не меньше,
-// чем нужно светофору. На узком экране (меню сжимается под ширину дисплея)
-// панель не отдаём больше 45% окна: тогда кружок и светофор уменьшаются.
+// Ширина левой панели вкладок: прежний резерв под аватарку сохранён,
+// чтобы не менять геометрию меню при удалении декоративных кнопок.
 static float AvatarRailW(float winW) {
-    const float forAvatar = (kAvatarR + kAvatarPad) * 2.f;   // отступ + диаметр + отступ
-    const float forLights = TrafficLightW(kTLD, kTLGap) + kAvatarPad * 2.f;
-    const float forTabs   = RailTabsW();                     // иконка + крупная подпись
-    return ImMin(ImMax(ImMax(forAvatar, forLights), forTabs), ImMax(120.f, winW * 0.45f));
+    const float forAvatar = (kAvatarR + kAvatarPad) * 2.f;
+    return ImMin(ImMax(forAvatar, RailTabsW()), ImMax(120.f, winW * 0.45f));
 }
 
-
-// --- Светофор ===============================================================
-// Кружки: 0 — красная, 1 — жёлтая, 2 — зелёная. Это ДЕКОР (просьба игрока:
-// «он как декоративный дизайн»): тапов и действий у кружков нет, поэтому нет и
-// InvisibleButton'ов — окно за них таскается как за обычную шапку.
-enum TrafficLightId { TL_CLOSE = 0, TL_MIN, TL_ZOOM };
-
-// Прямоугольник i-й кнопки (квадрат со стороной d + 8 — палец толще кружка).
-static void TrafficLightRect(ImVec2 winPos, float d, float gap, int i, ImVec2& mn, ImVec2& mx) {
-    const float pitch = d + gap;
-    const float cx = winPos.x + kTLPad + i * pitch + d * 0.5f;
-    const float cy = winPos.y + kTLPad + d * 0.5f;
-    const float h  = d * 0.5f + 4.f;
-    mn = {cx - h, cy - h};
-    mx = {cx + h, cy + h};
-}
-
-// Цвета macOS: закрыть, свернуть, развернуть.
-static ImU32 TrafficLightColor(int i) {
-    switch (i) {
-        case TL_CLOSE: return IM_COL32(255,  95,  87, 255);
-        case TL_MIN:   return IM_COL32(254, 188,  46, 255);
-        default:       return IM_COL32( 40, 200,  64, 255);
-    }
-}
-
-// Полоса шапки контента. В раскладке с нижней панелью она раньше была втрое
-// выше — под кружок аватарки и светофор; кружка там больше нет, и полоса снова
-// обычной высоты (только под заголовок вкладки).
+// Полоса шапки контента содержит только заголовок вкладки.
 static float MenuHeaderH(bool) { return Layout::HeaderH; }
-
-// Где стоит светофор: в САМОМ левом верхнем углу окна, в обеих раскладках.
-// (В раскладке с нижней панелью он стоял по центру полосы шапки — рядом с
-// кружком аватарки. Кружка там больше нет, и светофор переехал в угол.)
-static ImVec2 TrafficLightPos(ImVec2 winPos, bool) { return winPos; }
-
-// Нарисовать светофор. Тапы не обрабатываются: это декор, действия закрыть /
-// свернуть / развернуть убраны вместе с ним (меню открывается и закрывается
-// тапом по пилюле «Противники» сверху, окно таскается за шапку и растягивается
-// за правый нижний угол).
-static void TrafficLight(ImVec2 winPos, float railW) {
-    float d = 0.f, gap = 0.f;
-    TrafficLightMetrics(railW, d, gap);
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-
-    for (int i = 0; i < kTLN; ++i) {
-        ImVec2 mn, mx;
-        TrafficLightRect(winPos, d, gap, i, mn, mx);
-        const ImVec2 c{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
-        // Как в macOS: цветной кружок с чуть заметной тёмной кромкой.
-        fg->AddCircleFilled(c, d * 0.5f, TrafficLightColor(i), 32);
-        fg->AddCircle(c, d * 0.5f, IM_COL32(0, 0, 0, 45), 32, 1.5f);
-    }
-}
 
 // ====================== Фрикам: управление полётом ========================
 //
@@ -1621,6 +1441,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_sleepers, g_state.esp_sleepers,     dt);
     Tick(g_state.a_esp_cupboards, g_state.esp_cupboards,   dt);
     Tick(g_state.a_esp_pumpkins, g_state.esp_pumpkins,     dt);
+    Tick(g_state.a_esp_armor,    g_state.esp_armor,        dt);
     Tick(g_state.a_always_day,  g_state.always_day,         dt);
     Tick(g_state.a_no_grass,    g_state.no_grass,            dt);
     Tick(g_state.a_esp_team,   g_state.esp_team,           dt);
@@ -1644,7 +1465,6 @@ void RenderMenu() {
     Tick(g_state.a_no_spread, g_state.viewmodel.no_spread, dt);
     Tick(g_state.a_no_ballistics, g_state.viewmodel.no_ballistics, dt);
     Tick(g_state.a_fast_loot, g_state.viewmodel.fast_loot, dt);
-    Tick(g_state.a_skin, g_state.viewmodel.skin_enabled, dt);
     Tick(g_state.a_fast_fire, g_state.fast_fire, dt);
     Tick(g_state.a_fast_reload, g_state.fast_reload, dt);
     Tick(g_state.a_fake_lag, g_state.fake_lag, dt);
@@ -1996,8 +1816,7 @@ void RenderMenu() {
 
         if (!g_win.dragging && io.MouseDown[0] && !(g_sheet.visible || (g_pop.visible && !g_pop.closing)) && !g_win.resizing && g_win.openAnim >= 1.f && !g_win.closing) {
             float tx = io.MouseClickedPos[0].x, ty = io.MouseClickedPos[0].y;
-            // Тащим окно за верхнюю шапку (по всей ширине). Кружки светофора
-            // больше не исключение: они декор и тапов не обрабатывают.
+            // Тащим окно за верхнюю шапку (по всей ширине).
             bool inHdr = tx >= g_win.pos.x && tx < g_win.pos.x + g_win.w
                       && ty >= g_win.pos.y && ty < g_win.pos.y + hH_;
             if (inHdr) {
@@ -2262,17 +2081,13 @@ void RenderMenu() {
         ldl->AddLine({lpPos.x + railW, lpPos.y + 12.f}, {lpPos.x + railW, lpPos.y + WH - 12.f},
                      C::UA(C::Sep(), 0.8f), 1.f);
 
-        // Светофор как в macOS — в самом углу окна.
-        TrafficLight(TrafficLightPos(g_win.pos, true), railW);
 
         // Размеры подписи и иконки в этой панели — из ширины панели.
         const RailCell railM = RailMetrics(railW);
 
-        // Столбец вкладок прижат к верху панели, сразу под светофором — там,
-        // где раньше был кружок. Если в минимальном окне (720 px) пяти ячейкам
-        // по 108 px места не хватает, высота ячейки поджимается, чтобы последняя
-        // вкладка не уехала за нижний край.
-        const float colTop = kTLPad + kTLD + kAvatarPadT;
+        // Столбец вкладок начинается у верхнего края панели; при нехватке
+        // места высота ячеек поджимается, чтобы последняя вкладка не уехала вниз.
+        const float colTop = 12.f;
         const float avail  = ImMax(64.f * kTabShown, WH - colTop - 6.f);
         const float tabH   = ImMin(Layout::TabHV, avail / (float)kTabShown);
         const float startY = colTop;
@@ -2391,12 +2206,7 @@ void RenderMenu() {
     ImGui::BeginChild("##cp", {cW, cH}, false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    // Когда панель вкладок не слева, кружок аватарки рисуется в шапке контента
-    // (там же, где заголовок): полосу шапки под него расширяем, иначе он налез
-    // бы на первый ряд вкладки.
-    // В раскладке с нижней панелью вкладок кружок и светофор стоят в шапке
-    // контента: светофор у самого угла окна, кружок сразу справа от него, оба
-    // по центру полосы. Полосу под них расширяем, чтобы не налезли на первый ряд.
+    // Шапка контента содержит только заголовок и не резервирует место под декор.
     const float hdrH = MenuHeaderH(panelLeft);
 
     {
@@ -2409,11 +2219,6 @@ void RenderMenu() {
         auto tsz = ImGui::GetFont()->CalcTextSizeA(titleFS, FLT_MAX, 0, headerText);
         cdl->AddText(ImGui::GetFont(), titleFS,
             {hp.x + (cW - tsz.x) * 0.5f, hp.y + (hH - tsz.y) * 0.5f}, C::U(C::Txt()), headerText);
-        if (!panelLeft) {
-            // Светофор — в самом левом верхнем углу окна. Кружка аватарки в
-            // этой раскладке нет (просьба игрока: с нижней панелью он мешает).
-            TrafficLight(TrafficLightPos(g_win.pos, false), cW);
-        }
         ImGui::Dummy({cW, hH});
     }
 

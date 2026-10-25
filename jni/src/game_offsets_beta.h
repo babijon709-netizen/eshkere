@@ -2,15 +2,14 @@
 #include "game_offsets.h"
 
 // Beta profile, snapshot 2026-10-26, build 11981.
-// Source: dumpbeta11981.7z (dump.cs, script.json; archive has no libil2cpp.so).
-// Primary TypeInfo RVAs come from script.json TypeInfoPointers; nested fallback
-// slots are candidates validated by class name at runtime. Field layouts come
-// from dump.cs. Shared offsets use game_offsets.h unless this profile overrides them.
+// Sources: dumpbeta11981.7z (dump.cs, script.json) and libil2cppbeta11981.zip
+// (AArch64 libil2cpp.so). TypeInfo RVAs come from script.json TypeInfoPointers;
+// nested <>c fallback slots are name-validated by the fast-loot resolver.
+// Field layouts come from dump.cs. Shared offsets use game_offsets.h unless overridden.
 //
-// TOD_SCAN_RVA_* is a candidate span inferred from the reported TypeInfo slots,
-// including qTW (TypeDefIndex 6691), PlayerManager, Sw (TOD sky), WorldStreaming,
-// and UniTask delay promises. The archive lacks libil2cpp.so, so .data section
-// bounds are not independently verified.
+// The ELF .data section is [0xE656CD8, 0xECC7EA0). TOD_SCAN_RVA_* is a narrower
+// candidate span inferred from TypeInfo slots for qTW, PlayerManager, Sw (TOD sky),
+// WorldStreaming, and UniTask delay promises; it is verified inside that section.
 
 namespace game_offsets_beta {
 inline constexpr std::uint64_t CAMERA_PROJECTION_MATRIX = game_offsets::CAMERA_PROJECTION_MATRIX;
@@ -47,8 +46,8 @@ inline constexpr std::uint64_t DELAYPROMISE_INITIAL_FRAME = game_offsets::DELAYP
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_TIMESPAN = game_offsets::DELAYPROMISE_SCALED_TIMESPAN;
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_ELAPSED = game_offsets::DELAYPROMISE_SCALED_ELAPSED;
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = game_offsets::DELAYPROMISE_SCALED_INITIAL_FRAME;
-// UniTask delay-promise TypeInfo slots for beta 11981: the direct classes and
-// nested <>c fallback candidates (validated by name at runtime).
+// UniTask delay-promise TypeInfo slots listed by beta 11981 script.json: direct
+// classes and nested <>c fallbacks; runtime still validates class names.
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE902408;      // Cysharp...UniTask.DelayPromise
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0xE9050A0; // DelayPromise.<>c
 inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE902400;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise
@@ -453,7 +452,7 @@ inline constexpr std::uint64_t ARP_LATEST_VALUE = game_offsets::ARP_LATEST_VALUE
 inline constexpr std::uint64_t HEALTH_VALUE = game_offsets::HEALTH_VALUE;
 inline constexpr std::uint64_t VITALS_MAX_HEALTH = game_offsets::VITALS_MAX_HEALTH;
 // Candidate scan span inferred from beta 11981 script.json TypeInfoPointers;
-// .data section bounds could not be checked because the dump archive has no library.
+// the uploaded ELF confirms it lies inside .data [0xE656CD8, 0xECC7EA0).
 inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE8E0000;
 inline constexpr std::uint64_t TOD_SCAN_RVA_END = 0xE906000;
 // Beta 11981 TOD sky is Sw: List<Sw> at +0x0, Cycle at +0x40.

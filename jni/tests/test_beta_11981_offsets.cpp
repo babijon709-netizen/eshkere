@@ -4,6 +4,7 @@
 #include "maps_lookup.h"
 
 #include <cassert>
+#include <initializer_list>
 
 int main() {
     using go_active::GameVersion;
@@ -39,10 +40,30 @@ int main() {
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA -
                go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0x38);
 
-    // --- Candidate TypeInfo scan span (actual .data bounds unverified) ---
+    // --- Candidate TypeInfo scan span is inside the ELF's actual .data section ---
+    constexpr std::uint64_t kDataBegin = 0xE656CD8;
+    constexpr std::uint64_t kDataEnd = 0xECC7EA0; // exclusive, from ELF .data section
     assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE8E0000);
     assert(go_active::TOD_SCAN_RVA_END == 0xE906000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
+    assert(go_active::TOD_SCAN_RVA_BEGIN >= kDataBegin);
+    assert(go_active::TOD_SCAN_RVA_END <= kDataEnd);
+    const auto in_data = [=](std::uint64_t rva) { return rva >= kDataBegin && rva < kDataEnd; };
+    const auto in_scan = [](std::uint64_t rva) {
+        return rva >= go_active::TOD_SCAN_RVA_BEGIN && rva < go_active::TOD_SCAN_RVA_END;
+    };
+    for (const auto rva : {go_active::PLAYER_MANAGER_TYPEINFO_RVA,
+                           go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA,
+                           go_active::GAME_CONTROLLER_TYPEINFO_RVA,
+                           go_active::NETWORK_CLIENT_TYPEINFO_RVA,
+                           go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA,
+                           go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA,
+                           go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT,
+                           go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA,
+                           go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT}) {
+        assert(in_data(rva));
+        assert(in_scan(rva));
+    }
     assert(go_active::HMJ_TYPEINFO_RVA == 0xE8F95F8); // qTW, TypeDefIndex 6691
     assert(go_active::HMJ_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::HMJ_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);

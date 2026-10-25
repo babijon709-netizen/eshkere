@@ -18,7 +18,6 @@
 #include "mode_select.h"
 #include "metadata_dump.h"
 #include "skeleton_diag.h"
-#include "skin_probe.h"
 #include "mem_io.h"
 #include "kernel_io.h"
 #include "stealth.h"
@@ -42,13 +41,6 @@
 //                                                  запущенной игры в benzware/dump/
 //   su -c /data/local/tmp/benzware skel             — диагностика конвейера костей
 //                                                  (почему нет скелетов)
-//   su -c /data/local/tmp/benzware skins            — скины ствола в руках:
-//                                                  индекс, тип, уровни, готов ли ассет
-//   su -c /data/local/tmp/benzware skin 2 [уровень] [--rebuild]
-//                                                  — записать индекс скина в обе
-//                                                  копии WeaponPiece (SyncVar и
-//                                                  рабочую +0xC0); --rebuild —
-//                                                  перезаписать их немедленно
 // Печатает: root/не root, ядро, семейство сокета FT-драйвера и класс маячка,
 // живые пробы команд по собственной памяти (оба известных протокола FT),
 // RT-Dev (/dev/[A-GNY]{1,6}), RT-Hook (перехваченный syscall ioctl),
@@ -324,8 +316,6 @@ int main(int argc, char* argv[]) {
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
     // (базовая) или --scan-driver (полный скан кодов команд) — без GUI,
     // до запуска оверлея и игры.
-    // skins/skin — перечень и запись скинов ствола (skin_probe.h): те же
-    // короткоживущие процессы без GUI и маскировки.
     // dump — рантайм-дамп global-metadata.dat из памяти запущенной игры
     // (metadata_dump.h): тоже без GUI и маскировки, короткоживущий процесс
     // с терминальным выводом; транспорт — аргумент → .mode → трейлер
@@ -337,13 +327,6 @@ int main(int argc, char* argv[]) {
             return metadump::Run(argc - i, argv + i);
         if (strcmp(argv[i], "skel") == 0 || strcmp(argv[i], "--skel") == 0)
             return skeldiag::Run(argc - i, argv + i);
-        // Скины: `skins` только читает и печатает список, `skin <индекс>` пишет
-        // индекс в SyncVar и НАМЕРЕННО не откатывает его на выходе — иначе игра
-        // не успеет подхватить значение (см. skin_probe.h).
-        if (strcmp(argv[i], "skins") == 0 || strcmp(argv[i], "--skins") == 0)
-            return skinprobe::List(argc - i, argv + i);
-        if (strcmp(argv[i], "skin") == 0 || strcmp(argv[i], "--skin") == 0)
-            return skinprobe::Set(argc - i, argv + i);
     }
 
     // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +

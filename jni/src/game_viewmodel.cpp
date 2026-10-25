@@ -6,10 +6,7 @@
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
 #include "object_data_memory.h"
-#include "skin_changer_memory.h"
-#include "skin_log.h"
 #include "app_state.h"
-#include "config.h"          // CfgDir() для автолога скинов (skin_log.h)
 #include "farm.h"
 #include "maps_lookup.h"
 #include <chrono>
@@ -339,50 +336,6 @@ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
 no_recoil::Controller<HeapMemory> no_recoil_ctl(heap_memory);
 no_ballistics::Controller<HeapMemory> no_ballistics_ctl(heap_memory);
-skinchanger::Controller<HeapMemory> skin_ctl(heap_memory);
-
-// ---- Автолог скинченджера: skinlog::Writer (skin_log.h) ---------------------
-//
-// Здесь только адаптер — он подставляет то, что знает исключительно этот TU:
-// каталог конфигов, часы, имя профиля и список скинов из контроллера. Сами
-// строки, дедупликация по изменениям и ротация файла живут в skin_log.h и
-// покрыты хост-тестом jni/tests/test_skin_log.cpp.
-//
-// Зачем он вообще: ответ на «применился ли скин» нужен, когда игрок просто
-// включил тумблер и играет, а не когда он вспомнил про терминал. Команды
-// skins/skin остались одноразовой проверкой до включения, а диагноз пишется сам.
-// Штамп сборки задаёт jni/Android.mk (git commit + UTC-время ndk-build).
-// Вне Android-сборки (хост-тесты этот TU не компилируют) — честное «dev».
-#ifndef BENZWARE_BUILD_SHA
-#define BENZWARE_BUILD_SHA "dev"
-#define BENZWARE_BUILD_DATE "local"
-#endif
-static constexpr char kBuildTag[] = BENZWARE_BUILD_SHA " " BENZWARE_BUILD_DATE;
-
-skinlog::Writer skin_log_writer;
-
-class SkinLog {
-public:
-    void reset() { skin_log_writer.reset(); }
-    void note(uint64_t session, bool enabled, bool bound, const viewmodel::SkinUiInfo& ui) {
-        viewmodel::SkinEntryView entries[viewmodel::kSkinEntryMax];
-        skinlog::Snapshot s;
-        s.session = session;
-        s.enabled = enabled;
-        s.bound = bound;
-        s.ui = ui;
-        s.entries = entries;
-        s.count = skin_ctl.entries(entries, viewmodel::kSkinEntryMax);
-        s.want_index = viewmodel::sanitize(g_state.viewmodel).skin_index;
-        s.profile = go_active::VersionName();
-        s.build = kBuildTag;
-        s.dir = CfgDir();
-        s.now = memio::now_seconds();
-        skin_log_writer.note(s);
-    }
-};
-
-SkinLog skin_log;
 
 // Причина остановки быстрой стрельбы для лога: расшифровка стадии, которую
 // выставляет fast_fire::Controller (resolve/build_plan/apply в
@@ -607,9 +560,6 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
-    if (!skin_ctl.reset(restore && g_mem.bound()))
-        ;
-    skin_log.reset();
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -632,9 +582,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         no_recoil_ctl.status = settings.no_recoil_button ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_ballistics_ctl.reset(false);
         no_ballistics_ctl.status = settings.no_ballistics ? viewmodel::Status::Waiting : viewmodel::Status::Off;
-        skin_ctl.reset(false);
-        skin_ctl.status = settings.skin_enabled ? viewmodel::Status::Waiting : viewmodel::Status::Off;
-        skin_log.note(epoch, settings.skin_enabled, false, skin_ctl.ui());
         const bool want_spread = settings.no_spread || esp_silent_wants_no_spread();
         weapons.spread = want_spread ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         unity_base = 0; fps_last_resolve = {};
@@ -669,7 +616,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         want_fast_fire || rapid_fire.has_state() ||
         settings.no_recoil_button || no_recoil_ctl.has_state() ||
         settings.no_ballistics || no_ballistics_ctl.has_state() ||
-        settings.skin_enabled || skin_ctl.has_state() ||
         g_farmActive) {
         auto local_player_ok = [&](uint64_t candidate) {
             uint64_t net=0; uint8_t local=0;
@@ -701,8 +647,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
-            skin_ctl.tick(epoch, g_il2cpp_base, 0, settings);
-            skin_log.note(epoch, settings.skin_enabled, true, skin_ctl.ui());
             return;
         }
         local_source_failed=false;
@@ -713,8 +657,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
     const unsigned weapon_flags = (want_no_spread ? 1u : 0u) |
                                   (want_fast_fire ? 2u : 0u) |
                                   (settings.no_recoil_button ? 4u : 0u) |
-                                  (settings.no_ballistics ? 8u : 0u) |
-                                  (settings.skin_enabled ? 16u : 0u);
+                                  (settings.no_ballistics ? 8u : 0u);
     const auto weapon_now = Clock::now();
     const bool weapon_due = weapon_flags != weapon_last_flags ||
                             player != weapon_last_player ||
@@ -727,11 +670,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         rapid_fire.tick(epoch, g_il2cpp_base, player, want_fast_fire);
         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
         no_ballistics_ctl.tick(epoch, g_il2cpp_base, player, settings.no_ballistics);
-        skin_ctl.tick(epoch, g_il2cpp_base, player, settings);
-        // Автолог — внутри того же блока и под тем же мьютексом: строки
-        // появляются только когда тикался сам контроллер (раз в 100 мс),
-        // а не на каждый кадр оверлея.
-        skin_log.note(epoch, settings.skin_enabled, true, skin_ctl.ui());
     }
     {
         // Log no-spread resolution changes only.
@@ -783,60 +721,4 @@ viewmodel::FpsUiInfo esp_viewmodel_fps_ui() {
     info.pace_kind = fps_controller.pace_seen();
     info.build_id = fps_unknown_build_id;
     return info;
-}
-
-// ---- Скинченджер: публичный срез контроллера ------------------------------
-// Список и снимок состояния берутся из кэша skinchanger::Controller, который
-// заполняет тик оружия (раз в 100 мс): меню и one-shot CLI не делают собственных
-// обращений к памяти игры на каждый свой кадр.
-int esp_skin_entries(viewmodel::SkinEntryView* out, int max) {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    return skin_ctl.entries(out, max);
-}
-
-viewmodel::SkinUiInfo esp_skin_ui() {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    return skin_ctl.ui();
-}
-
-void esp_skin_request_rebuild() {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    skin_ctl.request_rebuild();
-}
-
-void esp_skin_request_scan() {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    skin_ctl.request_scan();
-}
-
-const char* skin_change_stop_reason(viewmodel::Status status, int stage) {
-    if (status == viewmodel::Status::Off) return "disabled or game unbound";
-    switch (stage) {
-        case 1: case 2:  return "no local player";
-        case 3: case 4:  return "network identity missing or not local";
-        case 5:          return "PlayerWeapon component not found";
-        case 6:          return "FPManager missing or dead";
-        case 7:          return "weapon slot in hands is empty";
-        case 8:          return "FP object backlink to player mismatch";
-        case 9:          return "held FP object has no Oxide.Item";
-        case 10:         return "ItemData not found on the held item";
-        case 11:         return "ItemData.skinData array not found";
-        case 12:         return "skinData array is empty or its length is unreadable (item has no skins)";
-        case 13:         return "selected index is not in this item's skinData";
-        case 14:         return "WeaponPiece head unreadable";
-        case 15:         return "WeaponPiece head is not a WeaponPiece (offset mismatch)";
-        case 16:         return "SyncVar copy: Skin write not confirmed by readback";
-        case 17:         return "SyncVar copy: SkinLevel write not confirmed by readback";
-        case 18:         return "working copy: Skin write not confirmed by readback";
-        case 19:         return "working copy: SkinLevel write not confirmed by readback";
-        case 20:         return "working copy head unreadable";
-        case 21:         return "working copy head: Enabled is not a bool (raw head bytes are dumped in skin.log)";
-        case 22:         return "Oxide.Item.skin write not confirmed by readback";
-        case 23:         return "Oxide.Item.skinLevel write not confirmed by readback";
-        case 24:         return "достройка головы рабочей копии (зеркало низа из SyncVar) не подтвердилась чтением";
-        case 25:         return "достройка головы рабочей копии (зеркало хвоста из SyncVar) не подтвердилась чтением";
-        case 26:         return "ствол в карантине: этот скин ломал сборку FP-вьюхи, чит сбросил её и вернул родной скин — выберите другой индекс";
-        case 27:         return "в ItemData.skinData больше позиций, чем вмещает список чита (kSkinEntryMax) — это не «нет скинов»";
-        default:         return "waiting for bind or player";
-    }
 }

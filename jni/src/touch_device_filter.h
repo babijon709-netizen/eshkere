@@ -8,6 +8,7 @@ struct Caps {
     bool abs_x = false;
     bool abs_y = false;
     bool btn_touch = false;
+    bool btn_tool_finger = false;
     bool tool_pen = false;
     bool direct = false;
     bool pointer = false;
@@ -20,13 +21,15 @@ enum Kind {
 };
 
 inline Kind classify(const Caps& caps) {
-    // Android may expose a touchpad and one or more pen digitizers alongside
-    // the panel. Reading all of them lets an idle secondary device release
-    // ImGui's mouse immediately after the real panel reports a press.
-    if (caps.tool_pen) return NotTouch;
+    const bool multi_touch = caps.mt_x && caps.mt_y;
+
+    // A stylus can share the same DIRECT multitouch event node as the finger
+    // panel. Accept that combined device, but still reject pen-only digitizers.
+    if (caps.tool_pen && !(caps.direct && multi_touch)) return NotTouch;
     if (caps.pointer && !caps.direct) return NotTouch;
-    if (caps.mt_x && caps.mt_y) return MultiTouch;
-    if (caps.abs_x && caps.abs_y && caps.btn_touch) return SingleTouch;
+    if (multi_touch) return MultiTouch;
+    if (caps.abs_x && caps.abs_y && (caps.btn_touch || caps.btn_tool_finger))
+        return SingleTouch;
     return NotTouch;
 }
 

@@ -1,13 +1,18 @@
-# Headless menu checks
+# Headless checks
 
 ```sh
+tools/tests/run_touch_device_filter.sh
 tools/tests/run_menu_ui.sh
 tools/tests/run_menu_ui.sh --measure
 tools/tests/run_menu_ui.sh --bench
 ```
 
-Requires a C++17 host compiler (`g++`, or set `CXX`). The runner builds the real
-`menu.cpp`, `widgets.cpp`, theme, localization and bundled ImGui in a temporary
+Requires a C++17 host compiler (`g++`, or set `CXX`). The touch-filter runner
+exercises recognized Linux/Android evdev capability combinations used by
+physical panels and virtual-machine single-touch devices.
+
+The menu runner builds the real `menu.cpp`, `widgets.cpp`, theme, localization,
+and bundled ImGui in a temporary
 directory. `ui_host/` replaces only Android/GL headers; the test mocks filesystem,
 audio, blur and game-memory callbacks. No device or game process is accessed.
 

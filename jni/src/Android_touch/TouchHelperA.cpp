@@ -192,9 +192,10 @@ static bool Touch_readOnly = false;
 //       слота сводится к одному пальцу);
 //   2 — однотачевый type-A (ABS_X/ABS_Y + BTN_TOUCH): так выглядят
 //       virtio/qemu-тачпады и «мышиная интеграция» в VMOS/X8/F1 и облачных
-//       телефонах — из-за них на ВМ и падало «Failed init touch!».
-// INPUT_PROP_POINTER-тачпады и BTN_TOOL_PEN-дигитайзеры отбрасываются: на
-// Xiaomi они идут рядом с настоящей DIRECT-панелью и сбрасывают MouseDown.
+//       телефонах.
+// Считываем все распознанные панели, а не отбрасываем однотачевую лишь потому,
+// что рядом найдено пустое/виртуальное мультитач-устройство. Обычные pointer-
+// тачпады и pen-only digitizers отфильтровывает touch_device_filter.h.
 static int checkDeviceIsTouch(int fd);
 static void genRandomString(char *string, int length) {
     int flag, i;
@@ -491,7 +492,8 @@ static void *TypeA(void *arg) {
                     if (ie.code == ABS_X) { Finger[i][0].x = (int) ((ie.value - minX) * S2TX); continue; }
                     if (ie.code == ABS_Y) { Finger[i][0].y = (int) ((ie.value - minY) * S2TY); continue; }
                 }
-                if (ie.type == EV_KEY && ie.code == BTN_TOUCH) {
+                if (ie.type == EV_KEY &&
+                    (ie.code == BTN_TOUCH || ie.code == BTN_TOOL_FINGER)) {
                     const bool down = ie.value != 0;
                     if (down && !Finger[i][0].isDown) Finger[i][0].blockClassified = false;
                     if (!down) Finger[i][0].blockClassified = false;
@@ -499,7 +501,8 @@ static void *TypeA(void *arg) {
                     continue;
                 }
             }
-            if (ie.type == EV_KEY && ie.code == BTN_TOUCH && !single) {
+            if (ie.type == EV_KEY &&
+                (ie.code == BTN_TOUCH || ie.code == BTN_TOOL_FINGER) && !single) {
                 const bool down = ie.value != 0;
                 if (!seenTrackingId) {
                     if (down) {
@@ -560,7 +563,7 @@ static void *TypeA(void *arg) {
                     continue;
                 }
             }
-            if (ie.code == SYN_REPORT) {
+            if (ie.type == EV_SYN && ie.code == SYN_REPORT) {
                 int bestDev = -1;
                 int bestSlot = -1;
                 for (int d = 0; d < fdNum; ++d) {
@@ -720,7 +723,6 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
         input_absinfo ay;
     };
     std::vector<CandDev> cands;
-    bool haveMultiTouch = false;
     for (int ev : evNums) {
         sprintf(temp, "/dev/input/event%d", ev);
         int fd = open(temp, O_RDWR);
@@ -737,7 +739,6 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
                 tmp2 = ioctl(fd, EVIOCGABS(ABS_Y), &ay);
             if (tmp1 == 0 && tmp2 == 0 &&
                 ax.maximum > ax.minimum && ay.maximum > ay.minimum) {
-                if (kind == 1) haveMultiTouch = true;
                 cands.push_back({fd, ev, kind, ax, ay});
                 continue;
             }
@@ -752,10 +753,6 @@ bool Touch_Init(int w, int h, uint32_t orientation_, bool readOnly) {
     int real_touch_fd = -1;
     fdNum = 0;
     for (const CandDev& c : cands) {
-        if (haveMultiTouch && c.kind != 1) {
-            close(c.fd);
-            continue;
-        }
         if (fdNum >= maxE) {
             close(c.fd);
             continue;
@@ -883,6 +880,7 @@ static int checkDeviceIsTouch(int fd) {
         }
     }
     caps.btn_touch = checkDeviceHasKey(fd, BTN_TOUCH);
+    caps.btn_tool_finger = checkDeviceHasKey(fd, BTN_TOOL_FINGER);
     caps.tool_pen = checkDeviceHasKey(fd, BTN_TOOL_PEN);
     caps.direct = checkDeviceHasProp(fd, INPUT_PROP_DIRECT);
     caps.pointer = checkDeviceHasProp(fd, INPUT_PROP_POINTER);

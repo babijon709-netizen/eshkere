@@ -2,7 +2,7 @@
 // mode_select.h — экран выбора способа чтения ПЕРЕД запуском чита.
 //
 // Минималистичный экран: заголовок «Способ чтения» по центру сверху и три
-// кнопки: «Прямое чтение», «DitPro 138» и «RT-Dev» (случайный
+// кнопки: «Прямое чтение», «DitPro» и «RT-Dev» (случайный
 // `/dev/[A-GNY]{1,6}`, ioctl 0x801/0x802). FT и RT-Hook не предлагаются.
 // Без фона, подписей и строк состояния: причины отказа приходят тостом по
 // тапу, повторный тап по кнопке драйвера перепроверяет драйвер (прошить
@@ -161,7 +161,7 @@ static bool RunModeSelect() {
     RestoreAccent();
     ApplyTheme();
 
-    bool ditpro = memio::ditpro_available();     // DitPro 138 доступен
+    bool ditpro = memio::ditpro_available();     // DitPro доступен
     bool rt_dev = memio::rt_dev_available();     // RT-Dev найден и отвечает
 
     int   picked = -1;         // -1 — ещё не выбрали
@@ -223,7 +223,7 @@ static bool RunModeSelect() {
 
             ImGui::SetCursorScreenPos({bx + btnW + gap, by});
             if (ModeButton("##mode_ditpro", btnW, btnH,
-                           XS("DitPro 138"), ditpro, true, fs)) {
+                           XS("DitPro"), ditpro, true, fs)) {
                 if (geteuid() != 0) {
                     PlaySound(SND_CLICK);
                     ShowToast(XS("DitPro: нет root — запусти чит от su"));

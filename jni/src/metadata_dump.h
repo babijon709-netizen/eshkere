@@ -1032,7 +1032,7 @@ static int saved_backend() {
 
 static const char* backend_name(int backend) {
     switch (backend) {
-        case ESP_MEM_DITPRO: return "DitPro 138";
+        case ESP_MEM_DITPRO: return "DitPro";
         case ESP_MEM_FT: return "FT-Драйвер";
         case ESP_MEM_RT_DEV: return "RT-Dev";
         case ESP_MEM_RT_HOOK: return "RT-Hook";

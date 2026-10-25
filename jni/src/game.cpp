@@ -7640,15 +7640,14 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     }
     const Vec3 scaled_lead = aim_ballistics::scale(g_aim_lead, lead_dist_scale * g_aim_predict_scale);
 
-    // Silent has no finger/camera control lag, so the control-latency lead above
-    // is dead weight there. The solver already moves the target for the whole
-    // flight, so keeping both leads double-counted motion and overshot runners.
-    // Silent instead feeds network latency into the solver (path.latency below).
+    // Silent has no finger/camera control lag, and in Touch/Memory modes any
+    // artificial pre-lead shifts the crosshair off the bone whenever the
+    // target strafes or animates. Keep pre_lead at zero so the crosshair stays
+    // locked on the bone; projectile flight time is handled by the solver.
+    (void)scaled_lead;
     const bool silent_mode = g_state.aim_mode == AIM_MODE_SILENT;
-    const Vec3 pre_lead = silent_mode ? Vec3{} : scaled_lead;
-    Vec3 world{world_in.x + pre_lead.x,
-               world_in.y + pre_lead.y,
-               world_in.z + pre_lead.z};
+    const Vec3 pre_lead{};
+    Vec3 world{world_in.x, world_in.y, world_in.z};
     if (slot == 0) world.y += head_lift_for_range(world_in);
 
     bool ballisticSolved = false;
@@ -7664,8 +7663,16 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         }
         float ballistic_vel_scale = g_aim_predict_scale;
         if (!vehicle_speed && aim_ballistics::finite(dist)) {
-            if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
-            else if (dist < 8.5f) ballistic_vel_scale *= (dist - 3.5f) / 5.0f;
+            if (silent_mode || params.muzzle_speed < 250.0f) {
+                if (dist <= 3.5f) ballistic_vel_scale = 0.0f;
+                else if (dist < 8.5f) ballistic_vel_scale *= (dist - 3.5f) / 5.0f;
+            } else {
+                // Touch / Memory with firearms: keep the crosshair glued hard
+                // to the bone inside 35m (flight time < 70 ms, inside hitbox)
+                // so left-right strafes never pull the aim off the bone.
+                if (dist <= 35.0f) ballistic_vel_scale = 0.0f;
+                else if (dist < 60.0f) ballistic_vel_scale *= (dist - 35.0f) / 25.0f;
+            }
         }
         // Silent uses its own motion estimate (LS fit over observed position
         // changes: velocity + acceleration + fit confidence + sample staleness,
@@ -7978,21 +7985,7 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
         const bool mounted = player_is_mounted(player) || player_mount_engaged(player);
         botlead::update(skeleton.hips_track, hips_now, now,
                         mounted ? 65.0F : botlead::kMaxSpeed,
-                        mounted ? 40.0F : 8.5F); // fastest NPC run: deer 8.0 m/s (NPCMoverConfig)
-        const float cur_v2 = g_aim_velocity.x * g_aim_velocity.x +
-                             g_aim_velocity.z * g_aim_velocity.z;
-        if (cur_v2 < 0.04F && botlead::fresh(skeleton.hips_track, now)) {
-            Vec3 hv = skeleton.hips_track.vel;
-            if (!mounted && fabsf(hv.y) < 0.45F) hv.y *= 0.35F;
-            const float hv2 = hv.x * hv.x + hv.z * hv.z;
-            if (hv2 > 0.04F && aim_ballistics::finite(hv)) {
-                g_aim_velocity = hv;
-                g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
-                const float max_y = mounted ? 2.00F : 0.20F;
-                if (g_aim_lead.y > max_y) g_aim_lead.y = max_y;
-                else if (g_aim_lead.y < -max_y) g_aim_lead.y = -max_y;
-            }
-        }
+                        mounted ? 40.0F : 8.5F);
     }
     // Aim points: exact bone world positions -> screen + angular offsets.
     //   [0] head  : skull centre. The Head joint sits at the base of the skull,
@@ -10996,10 +10989,26 @@ bool esp_box_reproject(EspBox& box) {
         if (ok) { box.bones[bone][0] = sb.x; box.bones[bone][1] = sb.y; }
     }
 
-    // Точки аима НЕ трогаем. Они привязаны к кадру съёма: там было упреждение
-    // по цели, баллистика и подъём на дальность (set_aim_point), и повторить их
-    // из мирового якоря нечем. Свежая, но чужая точка в прицеле хуже одного
-    // кадра без неё: аим и так держит цель своим окном захвата.
+    // Перепроецируем мировые точки аима текущей матрицей вида, чтобы на
+    // удерживаемом кадре (espboxhold) при повороте камеры точка прицела не
+    // залипала на старых экранных координатах и не уводила прицел с кости.
+    for (int s = 0; s < 3; ++s) {
+        if (!box.aim_world_valid[s]) continue;
+        const Vec3 aw{box.aim_world[s][0], box.aim_world[s][1], box.aim_world[s][2]};
+        Vec2 sc{};
+        float yaw = 0.0F, pitch = 0.0F;
+        if (w2s(g_frame_vp, aw, sw, sh, sc, false) &&
+            fabsf(sc.x) <= sw * 4.0F && fabsf(sc.y) <= sh * 4.0F &&
+            aim_angles_for(aw, sc, sw, sh, yaw, pitch)) {
+            box.aim_pts[s][0] = sc.x;
+            box.aim_pts[s][1] = sc.y;
+            box.aim_yaw[s] = yaw;
+            box.aim_pitch[s] = pitch;
+            box.aim_valid[s] = true;
+        } else {
+            box.aim_valid[s] = false;
+        }
+    }
     float cam[3];
     if (esp_frame_camera_position(cam)) {
         const float dx = box.anchor_feet[0] - cam[0];
@@ -11955,37 +11964,17 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             }
         }
 
-        // Head slot: prefer the centre of the server-side Head hit volume over
-        // the rig-derived estimate. This is the exact volume the shot is tested
-        // against, so it removes the constant model/hitbox offset that makes
-        // long-range head shots land low. Only accepted when it lies within
-        // the body (plausibility vs feet) so a stale transform cannot hijack it.
-        if (g_aim_bones_requested && !transform_camera_mode) {
+        // Head slot fallback from the server-side Head hit volume only when the
+        // skeleton head bone was not resolved above. Overwriting a live
+        // BONE_HEAD with head_hitbox (which can sit up to 45 cm off during
+        // animations) made the aim point jump left-right between two sources.
+        if (g_aim_bones_requested && !transform_camera_mode && !box.aim_valid[0]) {
             Vec3 hb{};
             if (player_head_hitbox_world(aux, hb)) {
                 float dy = hb.y - feet.y;
                 float dx = hb.x - feet.x, dz = hb.z - feet.z;
                 if (dy > 0.5F && dy < 2.4F && (dx * dx + dz * dz) < 1.0F) {
-                    bool agree = true;
-                    auto sk = g_skeletons.find(s_transforms[i]);
-                    if (sk != g_skeletons.end() &&
-                        sk->second.bone_world_age[BONE_HEAD] >= 1 &&
-                        sk->second.bone_world_age[BONE_HEAD] <= kSkeletonAimMaxAge) {
-                        const Vec3& rig_head = sk->second.bone_world[BONE_HEAD];
-                        const float rdx = hb.x - rig_head.x;
-                        const float rdy = hb.y - rig_head.y;
-                        const float rdz = hb.z - rig_head.z;
-                        agree = (rdx * rdx + rdy * rdy + rdz * rdz) < 0.45F * 0.45F;
-                    } else if (box.bone_valid[BONE_HEAD]) {
-                        Vec2 hs{};
-                        if (w2s(vp, hb, sw, sh, hs, false)) {
-                            const float ex = hs.x - box.bones[BONE_HEAD][0];
-                            const float ey = hs.y - box.bones[BONE_HEAD][1];
-                            const float bh = fabsf(box.y2 - box.y1);
-                            agree = (ex * ex + ey * ey) < (bh * 0.30F) * (bh * 0.30F) + 9.0F;
-                        }
-                    }
-                    if (agree && set_aim_point(box, 0, hb, vp, sw, sh) && box.aim_source == 0) box.aim_source = 1;
+                    if (set_aim_point(box, 0, hb, vp, sw, sh) && box.aim_source == 0) box.aim_source = 1;
                 }
             }
         }

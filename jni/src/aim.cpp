@@ -553,8 +553,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
             pick.filterUsesCamera = haveCamera;
             pick.filterModeSet = true;
         }
-        float timeConstant = 0.010f;
-        if (best.world_dist > 0.0f && best.world_dist < 12.0f) timeConstant *= 0.75f;
+        float timeConstant = 0.004f;
         if (haveCamera) {
             filteredYaw = WrapDeg180(cameraYaw + filteredYaw);
             filteredPitch += cameraPitch;
@@ -634,7 +633,7 @@ static void UpdateAimTouch(float dt) {
 
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
     const float ex = best.sx - crossX, ey = best.sy - crossY;
-    if (fabsf(ex) < 2.5f && fabsf(ey) < 2.5f) return;
+    if (fabsf(ex) < 0.5f && fabsf(ey) < 0.5f) return;
 
     if (!s_fingerDown) {
         s_fx = ptX;
@@ -646,12 +645,13 @@ static void UpdateAimTouch(float dt) {
     float sm = g_state.gun_str;
     if (!(sm >= 1.f)) sm = 1.f;
     if (sm > 10.f) sm = 10.f;
-    const float rate = 4.f + (sm - 1.f) * (24.f / 9.f);
+    const float rate = 18.f + (sm - 1.f) * 6.f;
     float k = 1.f - expf(-rate * dt);
-    if (k > 0.85f) k = 0.85f;
+    if (k < 0.35f) k = 0.35f;
+    if (k > 0.92f) k = 0.92f;
 
-    float maxStep = (2500.f + (sm - 1.f) * 500.f) * dt;
-    if (maxStep > 150.f) maxStep = 150.f;
+    float maxStep = (3500.f + (sm - 1.f) * 650.f) * dt;
+    if (maxStep > 240.f) maxStep = 240.f;
     float dx = ex * k, dy = ey * k;
     if (dx > maxStep) dx = maxStep;
     if (dx < -maxStep) dx = -maxStep;
@@ -671,8 +671,13 @@ static void UpdateAimTouch(float dt) {
     s_fx += dx;
     s_fy += dy;
     if (s_fx < xMin || s_fx > xMax || s_fy < yMin || s_fy > yMax) {
-        AimReleaseFinger(s_fingerDown);
-        return;
+        Touch_Up();
+        s_fx = ptX;
+        s_fy = ptY;
+        Touch_Down(s_fx, s_fy);
+        s_fingerDown = true;
+        s_fx = std::max(xMin, std::min(xMax, s_fx + dx));
+        s_fy = std::max(yMin, std::min(yMax, s_fy + dy));
     }
     Touch_Move(s_fx, s_fy);
 }
@@ -842,28 +847,31 @@ static void UpdateAimMemory(float dt) {
         return;
     }
 
-    // Запись от абсолютных углов камеры вместо слепого прибавления к накопителю:
-    // так исключается накопление ошибки, когда оверлей крутится быстрее игры
-    // (два такта чтения видят один и тот же кадр матрицы).
+    // Запись от абсолютных углов камеры с точным сохранением смещения между
+    // накопителем MouseLook и матрицей вида (sway/FPMotion/базовый поворот):
+    // раньше при |dy| <= 8° смещение обнулялось, и запись cameraYaw + offYaw
+    // уводила прицел с кости влево-вправо на величину dy.
+    static float s_refCamY = 0.f, s_refCamP = 0.f;
+    static bool  s_haveRefCam = false;
     float cameraYaw = 0.0f, cameraPitch = 0.0f;
     const bool haveCameraReference = esp_camera_angles(cameraYaw, cameraPitch) &&
                                      std::isfinite(cameraYaw) && std::isfinite(cameraPitch);
     if (haveCameraReference) {
-        if (!s_haveTrim || !s_haveLastWrite || !matchedLastWrite) {
-            const float dy = WrapDeg180(accY - cameraYaw);
-            const float dx = WrapDeg180(accX + cameraPitch);
-            if (fabsf(dy) > 8.0f || fabsf(dx) > 8.0f) {
-                s_trimY = dy;
-                s_trimX = dx;
-            } else {
-                s_trimY = 0.f;
-                s_trimX = 0.f;
-            }
+        const bool camUpdated = !s_haveRefCam ||
+                                fabsf(WrapDeg180(cameraYaw - s_refCamY)) > 0.01f ||
+                                fabsf(cameraPitch - s_refCamP) > 0.01f;
+        if (!s_haveTrim || !s_haveLastWrite || !matchedLastWrite || camUpdated) {
+            s_trimY = WrapDeg180(accY - cameraYaw);
+            s_trimX = WrapDeg180(accX + cameraPitch);
+            s_refCamY = cameraYaw;
+            s_refCamP = cameraPitch;
+            s_haveRefCam = true;
             s_haveTrim = true;
         }
         cameraYaw = WrapDeg180(cameraYaw + s_trimY);
         cameraPitch = WrapDeg180(cameraPitch - s_trimX);
     } else {
+        s_haveRefCam = false;
         const bool errMoved = fabsf(best.yaw - s_baseErrY) > 0.25f ||
                               fabsf(best.pitch - s_baseErrP) > 0.25f;
         if (!s_haveLastWrite || !matchedLastWrite || errMoved || s_unconsumedT >= 0.035f) {

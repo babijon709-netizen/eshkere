@@ -107,9 +107,17 @@ struct DitProRwReq {
 };
 static_assert(sizeof(DitProRwReq) == 0x18, "ditPro request ABI changed");
 
-inline bool ditpro_available() {
+inline long ditpro_probe_result() {
+    // Match the archive's own detection sequence: first exclude the DITS .ko
+    // ABI with its pointer-form probe, then test DitPro KPM's scalar flag.
+    long check = kDitProCheck;
+    if (syscall(kDitProSyscall, &check) == 616) return -616;
     errno = 0;
-    return syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck) == 616;
+    return syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck);
+}
+
+inline bool ditpro_available() {
+    return ditpro_probe_result() == 616;
 }
 
 // ---- класс 2: gongchuang (публичный референс) -----------------------------

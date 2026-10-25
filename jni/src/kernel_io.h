@@ -107,17 +107,43 @@ struct DitProRwReq {
 };
 static_assert(sizeof(DitProRwReq) == 0x18, "ditPro request ABI changed");
 
+// DitPro KPM 131's older ABI uses command 0x100/0x200 and a 0x28-byte
+// request; the target pid is supplied per operation (no INIT command).
+#pragma pack(push, 1)
+struct DitPro131RwReq {
+    uint32_t pid;
+    uint32_t pad;
+    uint64_t addr;
+    uint64_t size;
+    uint64_t user_buf;
+    uint64_t reserved;
+};
+#pragma pack(pop)
+static_assert(sizeof(DitPro131RwReq) == 0x28, "ditPro 131 request ABI changed");
+constexpr long kDitPro131Read = 0x100;
+constexpr long kDitPro131Write = 0x200;
+
 inline long ditpro_probe_result() {
-    // Match the archive's own detection sequence: first exclude the DITS .ko
-    // ABI with its pointer-form probe, then test DitPro KPM's scalar flag.
+    // KPM 131 reports its version for command 0x11 and acknowledges the
+    // module check with 0x332. KPM 138 uses the scalar 0x40000001 check.
+    errno = 0;
+    const long version = syscall(kDitProSyscall, 0x11L);
+    if (version == 131 || version == 138) return version;
+    errno = 0;
+    if (syscall(kDitProSyscall, 0x332L) == 616) return 131;
+
+    // Match the 138 sample wrapper: exclude the DITS .ko pointer ABI, then
+    // test its KPM scalar flag.
     long check = kDitProCheck;
     if (syscall(kDitProSyscall, &check) == 616) return -616;
     errno = 0;
-    return syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck);
+    return syscall(kDitProSyscall, kDitProFlag | (uint64_t)kDitProCheck) == 616
+         ? 138 : -1;
 }
 
 inline bool ditpro_available() {
-    return ditpro_probe_result() == 616;
+    const long version = ditpro_probe_result();
+    return version == 131 || version == 138;
 }
 
 // ---- класс 2: gongchuang (публичный референс) -----------------------------
@@ -223,6 +249,10 @@ public:
     bool open(pid_t pid) override {
         if (pid <= 0) return false;
         if (ditpro_) {
+            if (ditpro_version_ == 131) {
+                pid_ = (int)pid;  // v131 includes pid in each request
+                return true;
+            }
             if (syscall(kDitProSyscall, kDitProFlag | kDitProInit, (long)pid) <= 0)
                 return false;
             pid_ = (int)pid;
@@ -247,6 +277,7 @@ public:
         if (gong_sock_ >= 0) { ::close(gong_sock_); gong_sock_ = -1; }
         family_ = -1;
         ditpro_ = false;
+        ditpro_version_ = 0;
         proto_ = PROTO_BING;
         read_cmd_ = kDriverCmdRead;
         write_cmd_ = kDriverCmdWrite;
@@ -286,8 +317,10 @@ public:
         return sock_;
     }
     bool select_ditpro() {
-        if (!ditpro_available()) return false;
+        const long version = ditpro_probe_result();
+        if (version != 131 && version != 138) return false;
         ditpro_ = true;
+        ditpro_version_ = (int)version;
         map_known_ = true;
         return true;
     }
@@ -543,8 +576,37 @@ public:
     }
 
 private:
+    ssize_t ditpro131_rw(bool is_read, uint64_t addr, void* buf, size_t len) {
+        uint8_t* p = (uint8_t*)buf;
+        uint64_t a = addr & kAddressTagMask;
+        size_t done = 0;
+        const long op = is_read ? kDitPro131Read : kDitPro131Write;
+        while (done < len) {
+            const uint64_t page_left = 0x1000 - (a & 0xfff);
+            const size_t chunk = (uint64_t)(len - done) < page_left
+                               ? len - done : (size_t)page_left;
+            DitPro131RwReq req{};
+            req.pid = (uint32_t)pid_;
+            req.addr = a;
+            req.size = (uint64_t)chunk;
+            req.user_buf = (uint64_t)(uintptr_t)p;
+            errno = 0;
+            const long rc = syscall(kDitProSyscall, op, &req);
+            if (rc != (long)chunk) {
+                if (rc >= 0) errno = EIO;
+                return done ? (ssize_t)done : -1;
+            }
+            a += chunk;
+            p += chunk;
+            done += chunk;
+        }
+        return (ssize_t)done;
+    }
+
     ssize_t ditpro_rw(bool is_read, uint64_t addr, void* buf, size_t len) {
         if (pid_ <= 0 || !buf || !len) { errno = EBADF; return -1; }
+        if (ditpro_version_ == 131)
+            return ditpro131_rw(is_read, addr, buf, len);
         uint8_t* p = (uint8_t*)buf;
         uint64_t a = addr & kAddressTagMask;
         size_t done = 0;
@@ -692,6 +754,7 @@ private:
     }
 
     bool ditpro_ = false;
+    int ditpro_version_ = 0;
     int sock_   = -1;   // рабочий сокет bing-класса (тип 4)
     int gong_sock_ = -1;// сокет gongchuang-класса (SOCK_RAW, 0x090419)
     int family_ = -1;   // найденное семейство

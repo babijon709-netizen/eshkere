@@ -63,8 +63,8 @@ static int Run(bool full_scan) {
     const long ditpro_probe = memio::ditpro_probe_result();
     const int ditpro_probe_errno = errno;
     printf("DitPro syscall 18: ");
-    if (ditpro_probe == 616)
-        printf("KPM обнаружен (ответ 616)\n");
+    if (ditpro_probe == 131 || ditpro_probe == 138)
+        printf("KPM обнаружен, протокол версии %ld\n", ditpro_probe);
     else if (ditpro_probe == -616)
         printf("ответ 616 на pointer-пробу; это не DitPro KPM\n");
     else
@@ -225,7 +225,7 @@ static int Run(bool full_scan) {
     // DitPro: additionally prove the KPM read ABI against this process's own
     // stack memory. This diagnostic neither touches the game nor hides/uninstalls.
     bool ditpro_ok = false;
-    if (ditpro_probe == 616) {
+    if (ditpro_probe == 131 || ditpro_probe == 138) {
         memio::KernelTransport dit;
         if (dit.select_ditpro() && dit.open(getpid())) {
             const uint64_t expected = 0xD17A0138C0DEC0DEULL;
@@ -237,12 +237,12 @@ static int Run(bool full_scan) {
             dit.close();
             ditpro_ok = n == (ssize_t)sizeof(observed) && observed == expected;
             if (ditpro_ok)
-                printf("DitPro read ABI : OK (init + чтение собственной памяти)\n");
+                printf("DitPro read ABI : OK (чтение собственной памяти)\n");
             else
                 printf("DitPro read ABI : ОШИБКА (read=%zd, errno=%d, value=%#llx)\n",
                        n, read_errno, (unsigned long long)observed);
         } else {
-            printf("DitPro read ABI : не удалось выполнить INIT для pid=%d\n",
+            printf("DitPro read ABI : не удалось привязать/выполнить чтение для pid=%d\n",
                    (int)getpid());
         }
     }
@@ -269,7 +269,7 @@ static int Run(bool full_scan) {
                "                  ни сокета, ни /dev-узла; /proc не участвует\n");
         return 0;
     }
-    if (ditpro_probe == 616) {
+    if (ditpro_probe == 131 || ditpro_probe == 138) {
         printf("итог            : DitPro отвечает на check, но INIT/READ-тест не прошёл.\n");
         return 2;
     }

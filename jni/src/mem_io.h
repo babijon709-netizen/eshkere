@@ -535,8 +535,8 @@ private:
         static constexpr uint64_t kHotTypeInfoPairs[][2] = {
             {0xE66DEE8ULL, 0xE669190ULL}, // Release 11978: PlayerManager, GameControllerBase
             {0xE66DEB0ULL, 0xE66D238ULL}, // Release 11978: PlayerLoopHelper, NetworkClient
-            {0xE647138ULL, 0xE640C70ULL}, // Beta 11977: PlayerManager, GameControllerBase
-            {0xE647100ULL, 0xE646398ULL}, // Beta 11977: PlayerLoopHelper, NetworkClient
+            {0xE8F2D58ULL, 0xE8EDEA0ULL}, // Beta 11981: PlayerManager, GameControllerBase
+            {0xE8F2D20ULL, 0xE8F1FD8ULL}, // Beta 11981: PlayerLoopHelper, NetworkClient
         };
         for (const auto& pair : kHotTypeInfoPairs) {
             uint64_t p0 = 0, p1 = 0;

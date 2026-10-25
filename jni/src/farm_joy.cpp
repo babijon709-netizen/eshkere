@@ -552,8 +552,8 @@ bool sprint(bool on) {
         return false;
     }
     // По release 11966 trace оценщик вызывался до применения слота A (+0x6C),
-    // а затем игра проверяла Nullable<bool> здесь: +0x84 (release 11978:
-    // PlayerInputHandler.KVQ; beta 11977: cGP; hasValue +0x84, value +0x85).
+    // а затем игра проверяла Nullable<bool> здесь: +0x84 (KVQ в release 11978,
+    // WWF в beta 11981; hasValue +0x84, value +0x85).
     // Текущий dump подтверждает эту раскладку; value & 1 попадает в
     // PlayerInput.Sprint (+0x59), а kAu.Run в release 11978 расположен на +0x288.
     const uint64_t ovr_addr = handler + PLAYER_INPUT_HANDLER_SPRINT_OVERRIDE;

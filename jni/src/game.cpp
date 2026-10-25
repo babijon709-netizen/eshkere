@@ -569,7 +569,8 @@ bool valid_obj(uint64_t p) {
 }
 
 // Read one raw nickname candidate for a player. `src` selects the source:
-//   0 PlayerManager.LLI (0x220) — the real human-readable display name
+//   0 profile-selected PlayerManager display-name field (release 11978 +0x240;
+//     beta 11981 candidate +0x280)
 //   1 Dissonance VoicePlayerState.<Name>
 //   2 Voice tracker (fuI) display string
 //   3 Legacy nicklabel widget nickname text
@@ -3008,20 +3009,23 @@ static bool evaluate_player_position_offset(const std::vector<uint64_t>& players
     return true;
 }
 
-// Direct (PlayerManager field) position offsets, most trusted first. 0x260 is
-// the field the live client actually uses now: the log at 19:52 confirmed it
-// against kcc (8 of 9 players) while the profile's 0x1F4 read invalid-world
-// for every player. The canonical field is lastSavedPosition (0x1D0);
-// lastTickPosition (0x1C8) is equivalent. The rest are legacy guesses kept as
-// a last resort only.
+// Test the active profile's canonical PlayerManager position field first; retain
+// historical candidates below only as fallbacks when that field is not plausible.
 static const uint64_t k_known_position_offsets[] = {0x260, 0x1D0, 0x1C8, 0x1E0, 0x2D0, 0x2DC, 0x1D4, 0x1DC, 0x1E8};
 
 static uint64_t find_direct_player_position_offset(const std::vector<uint64_t>& players) {
     bool saved_use_direct = g_use_direct_player_position;
     g_use_direct_player_position = true;
+    const uint64_t profile_offset = PLAYER_POSITION;
+    double profile_score = 0.0;
+    if (evaluate_player_position_offset(players, profile_offset, profile_score)) {
+        g_use_direct_player_position = saved_use_direct;
+        return profile_offset;
+    }
     uint64_t best_offset = 0;
     double best_score = 0.0;
     for (uint64_t offset : k_known_position_offsets) {
+        if (offset == profile_offset) continue;
         double score = 0.0;
         if (!evaluate_player_position_offset(players, offset, score)) continue;
         // Prefer the offset that validates for the most players; on a tie the
@@ -3097,9 +3101,8 @@ static void recheck_direct_player_position(const std::vector<uint64_t>& players)
 // влияет. Значит град/px строго пропорционален m_Sensitivity, и аиму нужен
 // именно он, а не зашитое число.
 //
-// Поле публичное и проверено по release dump 205619:
-// PlayerManager.mouseLook находится по +0x70.
-static constexpr uint64_t PLAYER_MOUSE_LOOK_OFFSET      = 0x70;
+// MouseLook is selected from the active release/beta profile; do not cache this
+// mutable offset in a static constexpr because profile detection can switch it.
 static constexpr uint64_t MOUSE_LOOK_SENSITIVITY_OFFSET = 0x34;
 
 bool esp_read_look_sensitivity(float& out) {
@@ -3120,7 +3123,7 @@ bool esp_read_look_sensitivity(float& out) {
     if (!player) return false;
     if (g_player_manager_class && rd_ptr(player) != g_player_manager_class) return false;
 
-    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK_OFFSET);
+    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK);
     if (!mouse_look) return false;
     float value = rd<float>(mouse_look + MOUSE_LOOK_SENSITIVITY_OFFSET);
     // Мусор в поле (объект переиспользован, память переехала) отдаём как отказ:
@@ -3475,7 +3478,7 @@ static bool resolve_local_mouse_look(uint64_t& out, LookFail* why = nullptr) {
         if (mouse_look_from_cache(player, out)) { return true; }
         return false;
     }
-    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK_OFFSET);
+    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK);
     if (mouse_look < 0x10000) {  // ноль или мусор вместо указателя
         if (why) *why = LookFail::noObject;
         if (mouse_look_from_cache(player, out)) { return true; }
@@ -3669,7 +3672,7 @@ bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
     return ok;
 }
 
-// Ось выстрела: PlayerManager.playerEventHandler (+0x78, класс Gum) ->
+// Ось выстрела: profile-selected PlayerManager.playerEventHandler ->
 // LookDirection (+0x140) -> значение Vector3 (+0x20, обёртка синхронизации).
 // MouseLook.Update каждый кадр пишет сюда forward камеры (ZJo, RVA 0x64e35a4:
 // приёмник — [this+0x20][0x140], значение — s0/s1/s2 от Transform.get_forward),
@@ -4726,7 +4729,7 @@ struct PlayerAux {
     bool     head_hitbox_valid = false;
     float    normal_height = 1.8F;
     float    crouch_height = 1.1F;
-    uint64_t event_handler = 0; // PlayerManager.playerEventHandler (+0x28, hsN)
+    uint64_t event_handler = 0; // PlayerManager.playerEventHandler, via active profile
     uint64_t aim_target = 0;    // AimTarget MonoBehaviour
     uint64_t aim_collider = 0;  // Collider для проверки видимости через hwR
     int      retry_cooldown = 0;
@@ -5211,11 +5214,11 @@ static bool transform_belongs_to_gameobject(uint64_t transform) {
     return false;
 }
 
-// player -> KCC. kccReference (0xB0) may be an obfuscated wrapper, and its
-// internal layout is unknown, so probe it and — as a last resort — scan the
-// PlayerManager fields. A real KCC is recognized by its back-reference
-// (KCC.player @0x78 == player); KCC.head (@0x88, managed Transform) and the
-// CharacterAnimation slot (@0x108) strengthen the match.
+// PlayerManager -> KCC via profile-selected kccReference (release +0xB0; beta
+// 11981 +0xF0), which may be an obfuscated wrapper. Probe it and then scan fields.
+// A real KCC is recognized by KCC.player (+0x78); KCC.head (+0x88) and the
+// CharacterAnimation slot (profile offset, +0xE0 in both supplied profiles)
+// strengthen the match.
 static bool kcc_head_transform_valid(uint64_t kcc) {
     uint64_t head = managed_object_native(rd_ptr(kcc + KCC_HEAD_TRANSFORM));
     return skeleton_transform_ptr_valid(head);
@@ -9440,9 +9443,9 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
 //      isOccluded): каждый кадр в ScreenMarkerPresenter::LateTick (0x5D14C30)
 //      игра стреляет Physics.Raycast(camPos, headPos - camPos, dist, obstacleMask)
 //      для каждого вражеского игрока в радиусе 200м на экране.
-//   2. RaycastManager (PlayerManager + 0x88): RaycastData (+0x160) и 300-метровый
-//      AimRaycast (+0x168) вдоль оси камеры.
-//   3. AimAssist (hwR / YuB, PlayerManager + 0x258): прямой рейкаст по коллайдеру
+//   2. RaycastManager (PlayerManager + PLAYER_RAYCAST_MANAGER): RaycastData
+//      (+0x160) and 300m AimRaycast (+0x168) along the camera axis.
+//   3. AimAssist (hwR / YuB, PlayerManager + PLAYER_AIM_ASSIST): direct collider ray
 //      цели с пропуском собственных коллайдеров игрока (hwR::ohb -> hwR::ohe),
 //      опрашивающий ботов и цели по кругу через tjb (+0x60) при обнулённых
 //      скоростях доводки в AimAssistConfig (+0x38..+0x44).
@@ -9621,9 +9624,9 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
 }
 
 // Сброс таймеров попадания локального игрока.
-// Release 11978: PlayerManager.lE hit tracker is at +0x358; lE has
-// dictionaries at +0x10 and +0x18. Beta 11977's Yf tracker is also at +0x358
-// with the same dictionary layout; +0x18 is the hit-expiry map in both profiles.
+// Release 11978: PlayerManager.lE is at +0x358; beta 11981: WtE -> LL at +0x398
+// is a strong structural candidate (matching dictionaries at +0x10/+0x18); its
+// semantic mapping is not independently confirmed. The expected hit map is +0x18.
 static void expire_local_player_hit_timers(uint64_t local_player) {
     if (!valid_obj(local_player)) return;
     const uint64_t nt = rd_ptr(local_player + PLAYER_HIT_TRACKER);
@@ -9660,10 +9663,10 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
     }
 }
 
-// Release 11978 HMJ_TYPEINFO_RVA points to kiQ (TypeDefIndex: 6610); beta
-// 11977 points to IWt at the same TypeDefIndex. Both candidates expose 25 static
-// LayerMask fields, accepted only when the verified signature matches. Legacy
-// release 11966 candidates were hMj (6280) and hMD (6279).
+// Release 11978 HMJ_TYPEINFO_RVA points to kiQ (TypeDefIndex: 6610); beta 11977
+// uses IWt (6610), and beta 11981 uses qTW (6691). Candidates expose 25 static
+// LayerMask fields and are accepted only when the verified signature matches.
+// Legacy release 11966 candidates were hMj (6280) and hMD (6279).
 // Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв
 // ("Deployed" | "Vehicle" | "VehicleBox" | "Trigger" | "Water" | "IgnoreCollision" | "Doorway").
@@ -9924,8 +9927,8 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
 
         NearbyPlayerOccSample sample{};
         sample.model_tr    = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
-        sample.user_id_str = rd_ptr(data + 0x58); // NV.Rqd == [PlayerManager + 0x298] (userID)
-        sample.name_str    = rd_ptr(data + 0x60); // NV.RWz == [PlayerManager + 0x240] (uKU)
+        sample.user_id_str = rd_ptr(data + 0x58); // nearby-marker user-ID string
+        sample.name_str    = rd_ptr(data + 0x60); // nearby-marker display-name string
         sample.world_pos   = world_pos;
         sample.head_pos    = have_base_torso ? base_torso : head_pos;
         sample.visible     = (is_occ == 0);
@@ -10038,7 +10041,8 @@ static void sanitize_camera_and_aim_assist(uint64_t local_player) {
 
 // Na::Tick (0x5CFD850..0x5CFD8A8) кладёт в data + 0x40 (MARKER_DATA_TRANSFORM)
 // трансформ головы из PlayerModelInfo (+0x20, MODELINFO_HEAD), доставая сам
-// PlayerModelInfo через [PlayerManager + 0x260] -> [+0x10].
+// PlayerModelInfo via [PlayerManager + PLAYER_MODEL_INFO_REF] -> [+0x10]
+// (release 11978 +0x260; beta 11981 +0x2A0).
 static uint64_t player_marker_head_transform(uint64_t player, PlayerAux& aux) {
     if (!valid_obj(player)) return 0;
     const uint64_t mi_ref = rd_ptr(player + PLAYER_MODEL_INFO_REF);
@@ -10743,8 +10747,8 @@ static void revalidate_dead_direct_position(const std::vector<uint64_t>& players
 
 static void note_direct_position_health(const std::vector<uint64_t>& players,
                                         const std::vector<char>& sources) {
-    // Release 11978 and beta 11977 dumps place lastSavedPosition at 0x1F4 and
-    // lastDeathPosition at 0x200; neither is marked SyncVar. Keep lastDeathPosition
+    // Release 11978 and beta 11977 place lastSavedPosition/lastDeathPosition at
+    // 0x1F4/0x200; beta 11981 places them at 0x234/0x240. Keep lastDeathPosition
     // out of direct position scans and do not switch g_player_position_offset to it.
     (void)players;
     (void)sources;

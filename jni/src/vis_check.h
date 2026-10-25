@@ -97,9 +97,9 @@ inline bool is_single_layer_bit(std::int32_t m) {
 }
 
 // The full signature below was recovered from release 11966 hMj (TypeDefIndex: 6280).
-// Release 11978 and beta 11977 point to obfuscated candidates kiQ/IWt
-// (TypeDefIndex: 6610; 25 static LayerMask fields); semantic ordering is not
-// assumed, so accept either candidate only if it matches this signature:
+// Release 11978 and beta 11977 use kiQ/IWt (TypeDefIndex: 6610); beta 11981
+// uses qTW (TypeDefIndex: 6691). Each has 25 static LayerMask fields; semantic
+// ordering is not assumed, so accept a candidate only if it matches this signature:
 //   +0x00 Default (1<<0), +0x04 Hitbox, +0x08 IgnoreCollision, +0x0C Construction,
 //   +0x10 Deployed, +0x14 Terrain, +0x18 Water (1<<4), +0x1C ProxyEntity, +0x20 Entity,
 //   +0x24 First Person, +0x28 Default|Construction|Deployed|Terrain|Water,

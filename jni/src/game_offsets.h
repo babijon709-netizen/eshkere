@@ -285,7 +285,8 @@ inline constexpr std::uint8_t  INPUT_ACTION_PHASE_STARTED          = 2;    // In
 
 // Oxide.PlayerManager instance fields (dump.cs)
 inline constexpr std::uint64_t PLAYER_TRANSFORM = 0x68; // worldCameraRoot
-// PlayerManager.lastSavedPosition. Совпадает в release 11978 и beta 11977;
+// PlayerManager.lastSavedPosition: release 11978 and beta 11977 use +0x1F4;
+// beta 11981 overrides this field to +0x234.
 // 0x260 — ссылка на PlayerModelInfo, поэтому чтение Vector3 оттуда вместо
 // последней сохранённой позиции сваливалось бы на неверный путь.
 inline constexpr std::uint64_t PLAYER_POSITION = 0x1F4;
@@ -677,7 +678,7 @@ inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x3C0; // set after 
 // Stand 0 и Crouch 1 — лежачей позы в этой сборке НЕТ.
 inline constexpr std::int32_t KCC_MOVE_STATE_DEAD          = 7;
 // Внутренние смещения самого значения Move (value struct внутри KCC);
-// layout сверена в dump.cs 11978 и 11977: State 0x00, Pose 0x04, Aim 0x08,
+// layout сверена в dump.cs 11978, 11977 и 11981: State 0x00, Pose 0x04, Aim 0x08,
 // Position 0x0C, RealVelocity 0x18, MoveDirection 0x24, BaseVelocity 0x38.
 inline constexpr std::uint64_t KCC_MOVE_STATE              = 0x00; // int32 MoveState
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY      = 0x18; // Vector3

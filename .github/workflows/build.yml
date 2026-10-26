@@ -77,6 +77,9 @@ jobs:
 
           file libs/arm64-v8a/benzware.sh
           sha256sum libs/arm64-v8a/benzware.sh | tee libs/arm64-v8a/benzware.sh.sha256
+          # Устройство уже прошивали устаревшим артефактом — пусть в annotations
+          # будет однозначная метка именно этого бинаря.
+          echo "::notice::ARTIFACT: sha256=$(cut -d' ' -f1 < libs/arm64-v8a/benzware.sh.sha256) | commit=$(git rev-parse --short HEAD) | size=$(stat -c%s libs/arm64-v8a/benzware.sh)"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4

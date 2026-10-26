@@ -9466,6 +9466,53 @@ static bool read_ui_transform_world_trs_and_root(uint64_t managed_rt,
            std::isfinite(scale.y) && fabsf(scale.y) > 1e-5F;
 }
 
+// Мягкий обход цепочки трансформа — для UI карты.
+//
+// Строгий read_ui_transform_world_trs_and_root отваливается целиком, если хотя
+// бы у одного предка матрица не прошла проверку (у UI-канвы встречаются
+// нулевые кватернионы и предки без записанной матрицы): по трейсу карта
+// встаёт ровно на этой стадии. Здесь копим то, что прочиталось, и выходим на
+// первом битом уровне — позиция карты на экране нужна с точностью до пикселя
+// канвы, и потеря одного уровня даёт сдвиг пинов, а не мусор.
+static bool read_ui_transform_world_soft(uint64_t managed_rt, Vec3& pos, Vec4& rot,
+                                         Vec3& scale, Vec3& root_pos, int& levels) {
+    levels = 0;
+    uint64_t matrices = 0, indices = 0;
+    int32_t index = -1;
+    if (!resolve_ui_transform_arrays(managed_rt, matrices, indices, index)) return false;
+    Matrix34 m{};
+    if (!rd_exact(matrices + (uint64_t)index * sizeof(Matrix34), m) || !matrix34_is_valid(m))
+        return false;
+    pos = {m.translation.x, m.translation.y, m.translation.z};
+    rot = m.rotation;
+    scale = {m.scale.x, m.scale.y, m.scale.z};
+    root_pos = pos;
+    if (!normalize_quaternion(rot)) return false;
+    int32_t parent = -2, previous = index;
+    if (!rd_exact(indices + (uint64_t)index * sizeof(int32_t), parent)) return true;
+    int depth = 0;
+    while (parent >= 0 && depth++ < 64) {
+        if (parent > 100000 || parent == previous) return true;
+        Matrix34 pm{};
+        if (!rd_exact(matrices + (uint64_t)parent * sizeof(Matrix34), pm) ||
+            !matrix34_is_valid(pm))
+            return true;                      // предок не прочитался — стоим на нём
+        Vec4 pr = pm.rotation;
+        if (!normalize_quaternion(pr)) return true;
+        const Vec3 scaled = {pos.x * pm.scale.x, pos.y * pm.scale.y, pos.z * pm.scale.z};
+        const Vec3 turned = rotate_vector(pr, scaled);
+        pos = {pm.translation.x + turned.x, pm.translation.y + turned.y, pm.translation.z + turned.z};
+        rot = multiply_quaternion(pr, rot);
+        if (!normalize_quaternion(rot)) return true;
+        scale = {pm.scale.x * scale.x, pm.scale.y * scale.y, pm.scale.z * scale.z};
+        root_pos = {pm.translation.x, pm.translation.y, pm.translation.z};
+        previous = parent;
+        ++levels;
+        if (!rd_exact(indices + (uint64_t)parent * sizeof(int32_t), parent)) break;
+    }
+    return vec3_is_finite(pos) && std::isfinite(scale.x) && fabsf(scale.x) > 1e-5F;
+}
+
 struct MapProjection {
     bool  valid = false;
     Vec3  map_pos{};
@@ -9974,6 +10021,7 @@ static struct MapDiag {
     int   markers = 0;   // то же из словаря маркеров презентера
     float zry = 0.0F;
     float canvas_w = 0.0F, canvas_h = 0.0F;
+    int   layers = -1;                     // сколько уровней прошёл мягкий обход
     int   proj_ok = 0, proj_fail = 0;      // игроки: попали в экран карты / нет
     float local_x = 0.0F, local_y = 0.0F;  // первый игрок в координатах карты
     float sx = 0.0F, sy = 0.0F;            // и его экранная точка
@@ -10014,8 +10062,16 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
 
     Vec3 root_pos{};
     if (!read_ui_transform_world_trs_and_root(map_rt, out.map_pos, out.map_rot, out.map_scale, root_pos)) {
-        g_map_diag.stage = 6;
-        return false;
+        // Строгий обход не прошёл (трейс: стадия 6 при открытой карте).
+        // Пробуем мягкий и запоминаем, сколько уровней он осилил.
+        int levels = 0;
+        if (!read_ui_transform_world_soft(map_rt, out.map_pos, out.map_rot, out.map_scale,
+                                          root_pos, levels)) {
+            g_map_diag.stage = 6;
+            return false;
+        }
+        g_map_diag.layers = levels;
+        g_map_diag.stage = 60 + (levels < 10 ? levels : 9);
     }
 
     if (std::isfinite(root_pos.x) && std::isfinite(root_pos.y) &&

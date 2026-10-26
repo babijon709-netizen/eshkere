@@ -502,6 +502,9 @@ bool        esp_farm_cross_pin(const FarmTarget& target, bool enabled);
 bool        esp_farm_cross_healthy();
 // Сдаться на узле (недостижим / застряли) на `seconds`.
 void        esp_farm_blacklist(unsigned long long id, float seconds);
+// Узел только что добыт: записи узлов в паре метров от места добычи коротко
+// не выбираются (пень, дроп, устаревший список) — бот не крутится вокруг пня.
+void        esp_farm_note_harvest(unsigned long long id);
 // Почему последний esp_farm_get_target() ничего не вернул + сколько узлов
 // насчитал последний скан реестра. Причины: 0 ок, 1 фарм выключен,
 // 2 кадр не опубликован (нет камеры/позиции), 3 в реестре нет подходящих

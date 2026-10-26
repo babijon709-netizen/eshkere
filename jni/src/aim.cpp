@@ -386,8 +386,17 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         // читается тем же обходом рига, что и в ESP (armor_esp.h), поэтому
         // выбор стоит на реальном шлеме, а не на догадке по модели.
         int baseBone = wantBone;
-        if (baseBone == kAutoBone)
-            baseBone = armoresp::valid_icon(b.armor_icons[armoresp::Head]) ? 2 : 0;
+        if (baseBone == kAutoBone) {
+            const bool helmet = armoresp::valid_icon(b.armor_icons[armoresp::Head]);
+            const bool torso  = armoresp::valid_icon(b.armor_icons[armoresp::Torso]);
+            const bool legs   = armoresp::valid_icon(b.armor_icons[armoresp::Legs]);
+            const bool feet   = armoresp::valid_icon(b.armor_icons[armoresp::Feet]);
+            // Голова открыта — туда. Шлем один — в корпус. Полный комплект
+            // (голова, торс, ноги, ступни) — снова в голову: по бронированному
+            // корпусу урон режется каждым слоем, и сквозь шлем проходит больше.
+            const bool full = helmet && torso && legs && feet;
+            baseBone = (!helmet || full) ? 0 : 2;
+        }
         int candidateBone = baseBone;
         if (g_state.aim_mode == AIM_MODE_SILENT && g_state.silent_auto_zone && baseBone < 2 &&
             (b.aim_speed > kSilentZoneSpeed || b.distance > kSilentZoneRange))

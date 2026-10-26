@@ -472,6 +472,7 @@ static void UpdateFarmInner(float dt) {
     if (healthDepleted || (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac)) {
         if (healthDepleted || ++s_depletedFrames >= kDepletedFrames) {
             esp_farm_blacklist(tgt.id, 120.f);
+            esp_farm_note_harvest(tgt.id);   // место добычи — не цель для поиска
             releaseAll();
             resetNode();
             s_settle = kSettleTime;

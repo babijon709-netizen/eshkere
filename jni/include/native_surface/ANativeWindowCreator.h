@@ -582,6 +582,11 @@ namespace anwc {
                 detail::StrongPointer<void> sc;
                 sc.pointer = entry.second.data;
                 transaction.SetFlags(sc, flags, mask);
+                // Trusted overlay (Android 12+) тоже уводит слой из захвата:
+                // его ставят для «системных» наложений, и композиция для
+                // скриншота/записи такие слои не отдаёт. Для стример-мода
+                // снимаем и его.
+                transaction.SetTrustedOverlay(sc, !m_captureVisible);
                 any = true;
             }
             if (any) transaction.Apply(true, true);

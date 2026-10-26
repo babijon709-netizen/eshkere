@@ -417,6 +417,25 @@ void esp_farm_blacklist(unsigned long long id, float seconds) {
     if (g_farm_next_scan > next_frame) g_farm_next_scan = next_frame;
 }
 
+// ---- Место последней добычи -------------------------------------------------
+// Пока игра доигрывает падение дерева и выкидывает запись из реестра, рядом с
+// добытым местом ещё живут пень, дроп и устаревшая запись списка. Каждая из них
+// на секунду-две выглядит рабочим узлом, и бот вместо следующего дерева крутится
+// вокруг срубленного. Поэтому место добычи запоминается, а записи в его радиусе
+// на это время не выбираются.
+Vec3   g_farm_harvest_pos{};
+double g_farm_harvest_until = 0.0;
+constexpr float  kHarvestSkipRadius = 2.5F;
+constexpr double kHarvestSkipTime   = 1.5;
+
+void esp_farm_note_harvest(unsigned long long id) {
+    (void)id;
+    // Бот добывал, стоя на месте: его позиция и есть место добычи.
+    if (!std::isfinite(g_frame_local_pos.x) || !std::isfinite(g_frame_local_pos.z)) return;
+    g_farm_harvest_pos = g_frame_local_pos;
+    g_farm_harvest_until = mono_seconds() + kHarvestSkipTime;
+}
+
 // ---- Крестик: читаем из памяти, а не угадываем ------------------------------
 // Старая реализация искала X перебором детей узла (по именам, LOD-мешам и
 // «прыгающему» трансформу) и потому регулярно целилась в ствол, в спящий
@@ -818,6 +837,7 @@ bool esp_farm_get_target(FarmTarget& out) {
     }
 
     farm_scan_tick();
+    const double now = mono_seconds();
 
     // Липкая цель: пока текущий узел жив, работаем по нему — иначе контроллер
     // переключался бы между двумя равноудалёнными узлами каждый кадр.
@@ -861,6 +881,12 @@ bool esp_farm_get_target(FarmTarget& out) {
             const float dist = sqrtf(dx * dx + dz * dz);
             if (!std::isfinite(dist) || dist > kMaxFarmDistance) continue;
             if (!std::isfinite(dy) || fabsf(dy) > 30.0F) continue;
+            // Только что добытое место: пень и дроп рядом с ним — не цель.
+            if (g_farm_harvest_until > 0.0 && now < g_farm_harvest_until) {
+                const float hx = entity.pos.x - g_farm_harvest_pos.x;
+                const float hz = entity.pos.z - g_farm_harvest_pos.z;
+                if (hx * hx + hz * hz < kHarvestSkipRadius * kHarvestSkipRadius) continue;
+            }
 
             float score = dist;
             if (entity.identity != s_last_identity) {
@@ -899,6 +925,10 @@ bool esp_farm_get_target(FarmTarget& out) {
         const uint64_t dead_id = best->identity;
         g_farm_blacklist[dead_id] = 360;
         farm_purge_entity(dead_id);
+        if (std::isfinite(best->pos.x) && std::isfinite(best->pos.z)) {
+            g_farm_harvest_pos = best->pos;
+            g_farm_harvest_until = now + kHarvestSkipTime;
+        }
         if (s_last_identity == dead_id) s_last_identity = 0;
         best = nullptr;
     }

@@ -20,12 +20,25 @@ _CF := -DBENZWARE_BUILD_SHA=\"$(_BUILD_SHA)\" -DBENZWARE_BUILD_DATE=\"$(_BUILD_D
        -fPIE \
        -fno-unwind-tables \
        -fno-asynchronous-unwind-tables \
+       -fno-ident \
+       -ffile-prefix-map=$(LOCAL_PATH)/=. -fmacro-prefix-map=$(LOCAL_PATH)/=. \
        -fstrict-aliasing
 
 LOCAL_CPPFLAGS := $(_CF) -std=gnu++17 -fexceptions -fno-rtti
 LOCAL_CFLAGS   := $(_CF) -std=c11
 
-LOCAL_LDFLAGS := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none -pie
+# --icf=all сливает одинаковые функции (меньше кода и меньше зацепок для
+# дизассемблера), --exclude-libs,ALL прячет символы, приехавшие из c++_static.
+LOCAL_LDFLAGS := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none \
+                 -Wl,--exclude-libs,ALL -Wl,--icf=all -pie
+
+# Обфускация потока управления. Нужен clang с проходами OLLVM/obfuscator-llvm:
+# в стоковом NDK их нет, поэтому флаги включаются только явно — OBF=1 ./build.sh.
+# -fla (flattening), -bcf (bogus control flow), -sub (instruction substitution),
+# -sobf (шифрование строк), -split (разбиение блоков).
+ifneq ($(filter 1 yes true,$(OBF)),)
+    _CF += -mllvm -fla -mllvm -bcf -mllvm -sub -mllvm -sobf -mllvm -split
+endif
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include $(LOCAL_PATH)/include/ImGui $(LOCAL_PATH)/include/ImGui/backends $(LOCAL_PATH)/src
 

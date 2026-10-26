@@ -9466,12 +9466,19 @@ static bool read_ui_transform_world_trs_and_root(uint64_t managed_rt,
             return false;
         Vec4 pr = p.rotation;
         if (!normalize_quaternion(pr)) return false;
-        const Vec3 scaled = {pos.x * p.scale.x, pos.y * p.scale.y, pos.z * p.scale.z};
+        // Нулевая ось масштаба у UI-предка — это либо обёртка-layout, либо
+        // мусор в лейне; рисоваться с настоящим нулём она всё равно не может,
+        // поэтому ось трактуется как 1, иначе ребёнок схлопывается в точку
+        // родителя и вся карта уезжает в (0,0).
+        const float psx = fabsf(p.scale.x) < 1e-4F ? 1.0F : p.scale.x;
+        const float psy = fabsf(p.scale.y) < 1e-4F ? 1.0F : p.scale.y;
+        const float psz = fabsf(p.scale.z) < 1e-4F ? 1.0F : p.scale.z;
+        const Vec3 scaled = {pos.x * psx, pos.y * psy, pos.z * psz};
         const Vec3 turned = rotate_vector(pr, scaled);
         pos = {p.translation.x + turned.x, p.translation.y + turned.y, p.translation.z + turned.z};
         rot = multiply_quaternion(pr, rot);
         if (!normalize_quaternion(rot)) return false;
-        scale = {p.scale.x * scale.x, p.scale.y * scale.y, p.scale.z * scale.z};
+        scale = {psx * scale.x, psy * scale.y, psz * scale.z};
         root_pos = {p.translation.x, p.translation.y, p.translation.z};
         previous = parent;
         if (!rd_exact(indices + (uint64_t)parent * sizeof(int32_t), parent)) return false;
@@ -9517,12 +9524,15 @@ static bool read_ui_transform_world_soft(uint64_t managed_rt, Vec3& pos, Vec4& r
             return true;                      // предок не прочитался — стоим на нём
         Vec4 pr = pm.rotation;
         if (!normalize_quaternion(pr)) return true;
-        const Vec3 scaled = {pos.x * pm.scale.x, pos.y * pm.scale.y, pos.z * pm.scale.z};
+        const float psx = fabsf(pm.scale.x) < 1e-4F ? 1.0F : pm.scale.x;
+        const float psy = fabsf(pm.scale.y) < 1e-4F ? 1.0F : pm.scale.y;
+        const float psz = fabsf(pm.scale.z) < 1e-4F ? 1.0F : pm.scale.z;
+        const Vec3 scaled = {pos.x * psx, pos.y * psy, pos.z * psz};
         const Vec3 turned = rotate_vector(pr, scaled);
         pos = {pm.translation.x + turned.x, pm.translation.y + turned.y, pm.translation.z + turned.z};
         rot = multiply_quaternion(pr, rot);
         if (!normalize_quaternion(rot)) return true;
-        scale = {pm.scale.x * scale.x, pm.scale.y * scale.y, pm.scale.z * scale.z};
+        scale = {psx * scale.x, psy * scale.y, psz * scale.z};
         root_pos = {pm.translation.x, pm.translation.y, pm.translation.z};
         previous = parent;
         ++levels;
@@ -9544,8 +9554,16 @@ struct MapProjection {
     float vp_max_x = 0.0F;
     float vp_max_y = 0.0F;
 
+    // Код последнего отказа: 1 — не готовы zry/канва, 3 — нечисловая точка,
+    // 4 — точка за пределами вьюпорта карты. sx/sy заполняются и при отказе:
+    // по ним в трейсе видно, куда именно уехала метка.
+    mutable int reason = 0;
+
     bool project(const Vec3& world, float sw, float sh, float& sx, float& sy) const {
-        if (!valid || !(zry > 0.15F) || !(canvas_w > 10.0F) || !(canvas_h > 10.0F)) return false;
+        if (!valid || !(zry > 0.15F) || !(canvas_w > 10.0F) || !(canvas_h > 10.0F)) {
+            reason = 1;
+            return false;
+        }
         const float local_x = world.x / zry;
         const float local_y = world.z / zry;
         const Vec3 scaled = {local_x * map_scale.x, local_y * map_scale.y, 0.0F};
@@ -9554,8 +9572,12 @@ struct MapProjection {
         const float cy = map_pos.y + turned.y;
         sx = (cx / canvas_w) * sw;
         sy = (1.0F - (cy / canvas_h)) * sh;
-        if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
-        return sx >= vp_min_x && sx <= vp_max_x && sy >= vp_min_y && sy <= vp_max_y;
+        if (!std::isfinite(sx) || !std::isfinite(sy)) { reason = 3; return false; }
+        if (sx < vp_min_x || sx > vp_max_x || sy < vp_min_y || sy > vp_max_y) {
+            reason = 4;
+            return false;
+        }
+        return true;
     }
 };
 
@@ -10049,6 +10071,10 @@ static struct MapDiag {
     int   proj_ok = 0, proj_fail = 0;      // игроки: попали в экран карты / нет
     float local_x = 0.0F, local_y = 0.0F;  // первый игрок в координатах карты
     float sx = 0.0F, sy = 0.0F;            // и его экранная точка
+    float map_pos_x = 0.0F, map_pos_y = 0.0F;   // позиция карты на канве
+    float fail_local_x = 0.0F, fail_local_y = 0.0F;  // первый отказ: точка в координатах карты
+    float fail_sx = 0.0F, fail_sy = 0.0F;            // и её экранная точка
+    int   fail_why = 0;                    // 1 нет zry/канвы, 3 нечисловая, 4 вне вьюпорта
     uint64_t map_mgr = 0, map_view = 0, map_rt = 0;
 } g_map_diag;
 
@@ -10136,6 +10162,18 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
         out.canvas_w = sw;
         out.canvas_h = sh;
     }
+
+    // Локальные координаты карты отсчитываются от её центра (мир 0,0 лежит в
+    // центре острова), поэтому позиция карты на канве нулевой быть не может.
+    // Ноль означает, что обход потерял смещение карты на каком-то уровне
+    // (нулевой масштаб обёртки, якорь за пределами канвы). Ставим карту по
+    // центру канвы: сдвиг в пол-экрана лучше, чем ни одной метки.
+    if (have_transform && fabsf(out.map_pos.x) < 1.0F && fabsf(out.map_pos.y) < 1.0F) {
+        out.map_pos.x = out.canvas_w * 0.5F;
+        out.map_pos.y = out.canvas_h * 0.5F;
+    }
+    g_map_diag.map_pos_x = out.map_pos.x;
+    g_map_diag.map_pos_y = out.map_pos.y;
 
     // Масштаб мир→карта. Игра считает его в MapView.Zry() как
     // worldSize / width(RectTransform карты) и делит мир на него в MapView.Qz();
@@ -12944,6 +12982,13 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             const Vec3 feet = positions[i];
             float sx = 0.0F, sy = 0.0F;
             if (!map_proj.project(feet, sw, sh, sx, sy)) {
+                if (g_map_diag.proj_fail == 0) {
+                    g_map_diag.fail_why = map_proj.reason;
+                    g_map_diag.fail_local_x = feet.x / map_proj.zry;
+                    g_map_diag.fail_local_y = feet.z / map_proj.zry;
+                    g_map_diag.fail_sx = sx;
+                    g_map_diag.fail_sy = sy;
+                }
                 ++g_map_diag.proj_fail;
                 continue;
             }
@@ -12997,10 +13042,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
         if (note_now - s_map_note_at > 1.0 || g_map_diag.stage != s_map_note_stage) {
             s_map_note_at = note_now;
             s_map_note_stage = g_map_diag.stage;
-            char note[256];
+            char note[512];
             snprintf(note, sizeof(note),
                      "map stage=%d mgr=%d pres=%d open=%d pins=%d marks=%d "
                      "zry=%.3f canvas=%.0fx%.0f proj=%d/%d local=%.1f,%.1f px=%.0f,%.0f "
+                     "mpos=%.0f,%.0f why=%d floc=%.1f,%.1f fpx=%.0f,%.0f "
                      "arr=%d loc=%d idx=%d lay=%d tr=%d sc=%.4f,%.4f nat=%llx mats=%llx inds=%llx "
                      "mm=%llx mv=%llx rt=%llx",
                      g_map_diag.stage, g_map_diag.mgr_open, g_map_diag.pres_open,
@@ -13009,6 +13055,10 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                      g_map_diag.proj_ok, g_map_diag.proj_fail,
                      g_map_diag.local_x, g_map_diag.local_y,
                      g_map_diag.sx, g_map_diag.sy,
+                     g_map_diag.map_pos_x, g_map_diag.map_pos_y,
+                     g_map_diag.fail_why,
+                     g_map_diag.fail_local_x, g_map_diag.fail_local_y,
+                     g_map_diag.fail_sx, g_map_diag.fail_sy,
                      g_map_diag.arr_ok, g_map_diag.local_ok, g_map_diag.idx,
                      g_map_diag.layers, g_map_diag.tr_ok,
                      g_map_diag.scale_x, g_map_diag.scale_y,

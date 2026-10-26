@@ -9959,16 +9959,40 @@ static void reset_vis_caches() {
     s_view_probe_slot.clear();
 }
 
+// Диагностика мапхака: на какой стадии разбирается карта и сколько игроков
+// попало в её экран. Пишется строкой-комментарием в CSV-трейс (AIM → Запись
+// трейса) — по одному файлу видно, где именно встаёт путь: открыта ли карта,
+// дошло ли до RectTransform, нашёлся ли масштаб world→map.
+//   0 не начинали, 1 нет GameController statics, 2 нет GameController,
+//   3 нет MapManager, 4 карта закрыта, 5 нет RectTransform карты,
+//   6 не прочиталась цепочка трансформа, 7 не нашёлся масштаб zry, 100 ок.
+static struct MapDiag {
+    int   stage = 0;
+    int   mgr_open = 0;
+    int   pres_open = 0;
+    int   pins = 0;      // пар «мир / локальная точка» из маркеров интереса
+    int   markers = 0;   // то же из словаря маркеров презентера
+    float zry = 0.0F;
+    float canvas_w = 0.0F, canvas_h = 0.0F;
+    int   proj_ok = 0, proj_fail = 0;      // игроки: попали в экран карты / нет
+    float local_x = 0.0F, local_y = 0.0F;  // первый игрок в координатах карты
+    float sx = 0.0F, sy = 0.0F;            // и его экранная точка
+    uint64_t map_mgr = 0, map_view = 0, map_rt = 0;
+} g_map_diag;
+
 static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
     out = MapProjection{};
+    g_map_diag = MapDiag{};
     const uint64_t statics = game_controller_statics();
-    if (!statics) return false;
+    if (!statics) { g_map_diag.stage = 1; return false; }
     const uint64_t gc = rd_ptr(statics + GAME_CONTROLLER_STATIC_SELF_FIELD);
-    if (!valid_obj(gc)) return false;
+    if (!valid_obj(gc)) { g_map_diag.stage = 2; return false; }
     const uint64_t map_mgr = rd_ptr(gc + GAME_CONTROLLER_MAP_MANAGER);
-    if (!valid_obj(map_mgr)) return false;
+    if (!valid_obj(map_mgr)) { g_map_diag.stage = 3; return false; }
+    g_map_diag.map_mgr = map_mgr;
 
     const uint64_t map_view = rd_ptr(map_mgr + MAP_MANAGER_MAP_VIEW);
+    g_map_diag.map_view = map_view;
     uint64_t map_pres = rd_ptr(map_mgr + MAP_MANAGER_MAP_PRESENTER);
     if (!valid_obj(map_pres) && valid_obj(map_view)) {
         const uint64_t act = rd_ptr(map_view + MAP_VIEW_ON_ENABLE_ACTION);
@@ -9977,17 +10001,22 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
 
     const bool open_mgr = rd<uint8_t>(map_mgr + game_offsets::MAP_MANAGER_IS_OPEN) != 0;
     const bool open_pres = valid_obj(map_pres) && rd<uint8_t>(map_pres + game_offsets::MAP_PRESENTER_IS_OPEN) != 0;
-    if (!open_mgr && !open_pres) return false;
+    g_map_diag.mgr_open = open_mgr ? 1 : 0;
+    g_map_diag.pres_open = open_pres ? 1 : 0;
+    if (!open_mgr && !open_pres) { g_map_diag.stage = 4; return false; }
 
     uint64_t map_rt = valid_obj(map_view) ? rd_ptr(map_view + game_offsets::MAP_VIEW_MAP_RT) : 0;
     const uint64_t static_interest = rd_ptr(map_mgr + game_offsets::MAP_MANAGER_STATIC_INTEREST);
     if (!valid_obj(map_rt) && valid_obj(static_interest))
         map_rt = rd_ptr(static_interest + game_offsets::STATIC_INTEREST_RECT);
-    if (!valid_obj(map_rt)) return false;
+    if (!valid_obj(map_rt)) { g_map_diag.stage = 5; return false; }
+    g_map_diag.map_rt = map_rt;
 
     Vec3 root_pos{};
-    if (!read_ui_transform_world_trs_and_root(map_rt, out.map_pos, out.map_rot, out.map_scale, root_pos))
+    if (!read_ui_transform_world_trs_and_root(map_rt, out.map_pos, out.map_rot, out.map_scale, root_pos)) {
+        g_map_diag.stage = 6;
         return false;
+    }
 
     if (std::isfinite(root_pos.x) && std::isfinite(root_pos.y) &&
         root_pos.x > 100.0F && root_pos.y > 100.0F &&
@@ -10031,6 +10060,7 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
                         continue;
                     consider_pair(wpos.x, lpos.x);
                     consider_pair(wpos.z, lpos.y);
+                    ++g_map_diag.pins;
                 }
             }
         }
@@ -10057,6 +10087,7 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
                         continue;
                     consider_pair(wpos.x, lpos.x);
                     consider_pair(wpos.z, lpos.y);
+                    ++g_map_diag.markers;
                 }
             }
         }
@@ -10068,6 +10099,7 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
     } else if (g_cached_map_zry > 0.15F) {
         out.zry = g_cached_map_zry;
     } else {
+        g_map_diag.stage = 7;
         return false;
     }
 
@@ -10114,6 +10146,10 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
     }
 
     out.valid = true;
+    g_map_diag.stage = 100;
+    g_map_diag.zry = out.zry;
+    g_map_diag.canvas_w = out.canvas_w;
+    g_map_diag.canvas_h = out.canvas_h;
     return true;
 }
 
@@ -12791,7 +12827,17 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
 
             const Vec3 feet = positions[i];
             float sx = 0.0F, sy = 0.0F;
-            if (!map_proj.project(feet, sw, sh, sx, sy)) continue;
+            if (!map_proj.project(feet, sw, sh, sx, sy)) {
+                ++g_map_diag.proj_fail;
+                continue;
+            }
+            ++g_map_diag.proj_ok;
+            if (g_map_diag.proj_ok == 1) {
+                g_map_diag.local_x = feet.x / map_proj.zry;
+                g_map_diag.local_y = feet.z / map_proj.zry;
+                g_map_diag.sx = sx;
+                g_map_diag.sy = sy;
+            }
 
             PlayerTextCache& tc = g_player_text[player];
             if (!tc.has_name || ++tc.revalidate >= 30) {
@@ -12825,6 +12871,31 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             mp.has_tag = tc.has_tag;
             if (tc.has_tag) memcpy(mp.tag, tc.tag, sizeof(mp.tag));
             g_frame_map_players.push_back(mp);
+        }
+    }
+
+    if (g_maphack_requested) {
+        static double s_map_note_at = -1e9;
+        static int    s_map_note_stage = -1;
+        const double note_now = mono_seconds();
+        if (note_now - s_map_note_at > 1.0 || g_map_diag.stage != s_map_note_stage) {
+            s_map_note_at = note_now;
+            s_map_note_stage = g_map_diag.stage;
+            char note[256];
+            snprintf(note, sizeof(note),
+                     "map stage=%d mgr=%d pres=%d open=%d pins=%d marks=%d "
+                     "zry=%.3f canvas=%.0fx%.0f proj=%d/%d local=%.1f,%.1f px=%.0f,%.0f "
+                     "mm=%llx mv=%llx rt=%llx",
+                     g_map_diag.stage, g_map_diag.mgr_open, g_map_diag.pres_open,
+                     g_frame_map_open ? 1 : 0, g_map_diag.pins, g_map_diag.markers,
+                     g_map_diag.zry, g_map_diag.canvas_w, g_map_diag.canvas_h,
+                     g_map_diag.proj_ok, g_map_diag.proj_fail,
+                     g_map_diag.local_x, g_map_diag.local_y,
+                     g_map_diag.sx, g_map_diag.sy,
+                     (unsigned long long)g_map_diag.map_mgr,
+                     (unsigned long long)g_map_diag.map_view,
+                     (unsigned long long)g_map_diag.map_rt);
+            aimtrace::note(note);
         }
     }
 

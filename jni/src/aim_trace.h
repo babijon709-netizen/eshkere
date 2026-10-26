@@ -50,6 +50,24 @@ inline double& last_hit() { static double v = -1e9; return v; }
 inline FILE*& file() { static FILE* f = nullptr; return f; }
 inline int& rows_since_flush() { static int v = 0; return v; }
 
+inline void write_header() {
+    fprintf(file(),
+            "t,id,feet_x,feet_y,feet_z,raw_x,raw_y,raw_z,vel_x,vel_y,vel_z,"
+            "head_x,head_y,head_z,head_ok,dist,age_ms,buffer_ms,rtt_ms,tick,"
+            "cam_x,cam_y,cam_z,fwd_x,fwd_y,fwd_z,"
+            "local_x,local_y,local_z,lvel_x,lvel_y,lvel_z,shot_age_ms,hit_age_ms\n");
+}
+
+// Открывает файл, если он ещё не открыт (общая точка для строк и заметок).
+inline bool ensure_open() {
+    if (file()) return true;
+    const std::string path = std::string(CfgDir()) + "/aimtrace.csv";
+    file() = fopen(path.c_str(), "w");
+    if (!file()) { enabled() = false; return false; }
+    write_header();
+    return true;
+}
+
 inline void close() {
     if (file()) { fclose(file()); file() = nullptr; }
     rows_since_flush() = 0;
@@ -71,18 +89,19 @@ inline void set_enabled(bool on) {
 inline void shot(double now) { detail::last_shot() = now; }
 inline void hit(double now) { detail::last_hit() = now; }
 
+// Служебная строка-комментарий в том же файле: диагностика, которая не лезет
+// в поток кадров (карта, состояние привязки). Сразу с flush — таких строк
+// единицы, а недописанный хвост потом читается как «трейс пустой».
+inline void note(const char* text) {
+    if (!enabled() || !text || !text[0]) return;
+    if (!detail::ensure_open()) return;
+    fprintf(detail::file(), "# %s\n", text);
+    fflush(detail::file());
+}
+
 inline void row(const Row& r) {
     if (!enabled() || !std::isfinite(r.time)) return;
-    if (!detail::file()) {
-        const std::string path = std::string(CfgDir()) + "/aimtrace.csv";
-        detail::file() = fopen(path.c_str(), "w");
-        if (!detail::file()) { enabled() = false; return; }
-        fprintf(detail::file(),
-                "t,id,feet_x,feet_y,feet_z,raw_x,raw_y,raw_z,vel_x,vel_y,vel_z,"
-                "head_x,head_y,head_z,head_ok,dist,age_ms,buffer_ms,rtt_ms,tick,"
-                "cam_x,cam_y,cam_z,fwd_x,fwd_y,fwd_z,"
-                "local_x,local_y,local_z,lvel_x,lvel_y,lvel_z,shot_age_ms,hit_age_ms\n");
-    }
+    if (!detail::ensure_open()) return;
     fprintf(detail::file(),
             "%.4f,%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
             "%.3f,%.3f,%.3f,%d,%.2f,%.1f,%.1f,%.1f,%d,"

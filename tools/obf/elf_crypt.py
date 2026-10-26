@@ -33,6 +33,7 @@ SHF_EXECINSTR = 0x4
 SHT_NOBITS = 8
 PT_LOAD = 1
 PT_DYNAMIC = 2
+PT_GNU_RELRO = 0x6474E552
 DT_NULL = 0
 DT_STRTAB = 5
 DT_JMPREL = 23
@@ -445,6 +446,57 @@ def check(path):
     stripped = elf.shoff == 0 and elf.shnum == 0
     print(f"obf: section headers {'вырезаны' if stripped else 'ЕСТЬ (внимание)'} "
           f"| контрольных строк: {n} ({'строго' if strict else 'по файлу, без атрибуции'})")
+
+    # Статическая проверка того, что конструктор вообще сможет записать
+    # расшифровку: каждый диапазон должен лежать в PF_W-сегменте и НЕ попадать
+    # в PT_GNU_RELRO (лоадер делает его read-only ДО .init_array). Это ловит
+    # «собралось зелёным, а на устройстве SIGSEGV» не выходя из CI.
+    hits = find_all(bytes(elf.d), MAGIC)
+    if len(hits) != 1:
+        raise RuntimeError(f"--check: маркер .bwmeta найден {len(hits)} раз")
+    m = hits[0]
+    if m + META_HDR > len(elf.d):
+        raise RuntimeError("--check: .bwmeta обрезана")
+    count, meta_va, flags = struct.unpack_from("<QQQ", elf.d, m + META_COUNT)
+    if count > MAX_RANGES:
+        print("obf: .bwmeta не пропатчена (сентенел) — структурную проверку пропускаем")
+        return 0
+    if not count:
+        raise RuntimeError("--check: .bwmeta пропатчена, но диапазонов нет")
+    if not meta_va or meta_va > (1 << 28):
+        raise RuntimeError(f"--check: невалидный meta_vaddr {meta_va:#x}")
+    if not (flags & FLAG_SEGMENTS_RW):
+        raise RuntimeError(f"--check: FLAG_SEGMENTS_RW не выставлен ({flags:#x})")
+
+    loads = [p for p in elf.phdrs if p["t"] == PT_LOAD]
+    relros = [p for p in elf.phdrs if p["t"] == PT_GNU_RELRO]
+
+    def segment_for(va, sz):
+        found = [p for p in loads
+                 if p["va"] <= va and va + sz <= p["va"] + p["msz"]]
+        if len(found) != 1:
+            raise RuntimeError(f"--check: [{va:#x},{va + sz:#x}) вне одного PT_LOAD")
+        return found[0]
+
+    def in_relro(va, sz):
+        return any(p["va"] <= va and va + sz <= p["va"] + p["msz"]
+                   for p in relros)
+
+    mseg = segment_for(meta_va, 1)
+    if in_relro(meta_va, 1):
+        raise RuntimeError(f"--check: .bwmeta {meta_va:#x} в PT_GNU_RELRO")
+    for i in range(count):
+        va, sz = struct.unpack_from("<QQ", elf.d, m + META_HDR + i * 16)
+        seg = segment_for(va, sz)
+        if not (seg["fl"] & PF_W):
+            raise RuntimeError(f"--check: строки [{va:#x},{va + sz:#x}) "
+                               f"в read-only PT_LOAD (fl={seg['fl']})")
+        if seg["fl"] & PF_X:
+            raise RuntimeError(f"--check: строки в R|W|X-сегменте {seg['va']:#x}")
+        if in_relro(va, sz):
+            raise RuntimeError(f"--check: строки [{va:#x},{va + sz:#x}) в PT_GNU_RELRO")
+    print(f"obf: рантайм-карта OK: {count} диапазон(ов) в PF_W без RELRO, "
+          f"meta_vaddr={meta_va:#x} в [{mseg['va']:#x},{mseg['va'] + mseg['msz']:#x})")
     return 0
 
 

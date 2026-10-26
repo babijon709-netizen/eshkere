@@ -42,6 +42,7 @@ run_case() {
     fi
 
     python3 tools/obf/elf_crypt.py "$bin" --key "$KEY" --keep-sections
+    python3 tools/obf/elf_crypt.py "$bin" --check
 
     # Структура .bwmeta: новый билдер обязан записать ненулевой meta_vaddr и
     # выставить FLAG_SEGMENTS_RW — иначе конструктор не имеет права писать.

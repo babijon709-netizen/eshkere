@@ -7818,10 +7818,6 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         path.horizon = vehicle_speed ? 5.0F : 2.0F;
         path.gravity = vehicle_speed ? 0.0F : target_gravity;
         path.airborne_vy = 1.15F;
-        // Потолок самого смещения: любая ошибка в слагаемых (не тот muzzle
-        // speed, мусорный rtt) упирается в полшага тела, а не уводит прицел
-        // на метры. Транспорт едет куда быстрее — у него свой предел.
-        path.max_offset = vehicle_speed ? 4.0F : 0.6F;
         box.aim_speed = effective_horiz_speed;
         // Упреждение по цели — только то, что реально отделяет наш отсчёт от
         // момента, когда игра проверит попадание:
@@ -7839,6 +7835,20 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             ? 0.5F / static_cast<float>(g_net_timing.tick)
             : 0.016F;
         path.latency = snapshot_half + kAimControlFrame;
+        // Потолок смещения — по физике, а не константой: столько, сколько цель
+        // может пройти за (задержку + полёт) на скорости 8 м/с (спринт с
+        // запасом), у транспорта 60. Фиксированные 0.6 м резали снайперский
+        // лид уже за ~40 м: на 150 м с винтовкой 550 м/с полёт 0.27 с, а
+        // бегущий уходит на 1.8 м — прицел ставился в спину, отсюда «иногда
+        // промахивается на снайперках». Границы остались только для мусора в
+        // данных оружия (вдесятеро больше физически возможного).
+        {
+            const float approx_flight = (params.muzzle_speed > 1.0F &&
+                                         aim_ballistics::finite(dist))
+                ? dist / params.muzzle_speed : 0.4F;
+            const float lead_window = path.latency + approx_flight;
+            path.max_offset = (vehicle_speed ? 60.0F : 8.0F) * lead_window;
+        }
         if (use_est) {
             if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
             else                    { path.tau = 1.5F; path.horizon = 1.1F; }

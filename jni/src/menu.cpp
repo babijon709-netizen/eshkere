@@ -542,14 +542,9 @@ float TabContent(int tab, float dt, float cW) {
         }
 
         if (SettingsHeader("##options_appearance", XS("Оформление"), XS("Тема и цвет интерфейса"))) {
-            CardBg(Layout::RowH * 2);
-            if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, false))
+            CardBg(Layout::RowH * 1);
+            if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, true))
                 g_darkTheme = g_state.ui_dark_mode;
-            // Стример-мод: слой оверлея снимается с защиты от захвата, и его
-            // целиком пишет обычный рекордер экрана. Выключен — меток и меню
-            // нет ни на скриншоте, ни в записи.
-            if (ToggleRow("##ud3", XS("Стример-мод"), &g_state.streamer_mode, g_state.a_streamer, false, true))
-                overlay_set_capture_visible(g_state.streamer_mode);
 
             // ---- Акцент: палитра стиля всего GUI -------------------------------
             // Ряд кругов: 8 пресетов + свой цвет (тап открывает палитру, как точки
@@ -1468,7 +1463,6 @@ void RenderMenu() {
     Tick(g_state.a_esp_tracer, g_state.esp_tracer,         dt);
     Tick(g_state.a_esp_skeleton, g_state.esp_skeleton,     dt);
     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
-    Tick(g_state.a_streamer,   g_state.streamer_mode,      dt);
     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);

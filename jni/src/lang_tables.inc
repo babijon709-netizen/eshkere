@@ -202,7 +202,6 @@ static const LangPair kUiEn[] = {
     {"Старый конфиг — пересохрани", "Old config — save it again"},
     {"Стрелки 360°", "360° arrows"},
     {"Стрелки и радар 360°", "360° arrows & radar"},
-    {"Стример-мод", "Streamer mode"},
     {"Существа и транспорт", "Entities and vehicles"},
     {"Счётчик игроков", "Player counter"},
     {"Тап записывает зону. Меню откроется само.", "A tap records the zone. The menu reopens by itself."},

@@ -197,6 +197,14 @@ constexpr float kStuckTime     = 2.20f;  // нет продвижения к т�
 // срубленного дерева это ровно пень, — упирался, и до kStuckTime копился
 // «нет продвижения»: со стороны выглядело как бег вокруг добытого места.
 constexpr float kFreshTurnTime  = 0.30f;  // с: доворот на новую цель
+// Узел добыт, но сервер ещё не прислал нулевой остаток: у срубленного дерева луч
+// игры перестаёт попадать в узел сразу, а m_CurrentHealth /
+// fractionRemaining обновляются позже. Без этого признака бот продолжал
+// поджимать вперёд по «нет луча» и крутился у пня, пока не придёт нулевой
+// остаток. Луч, который только что бил по нашему узлу и перестал, — это и есть
+// «добыто», причём мгновенно.
+constexpr float kRayLostHarvest = 0.25f;  // с без луча в узле — считаем добытым
+constexpr float kRayLostBlacklist = 20.0f; // с: ложное срабатывание не жжёт узел
 constexpr float kFreshTurnYaw   = 12.0f;  // град: с этого угла уже идём
 constexpr float kEvadeTime     = 1.70f;  // ~0.6 назад + ~1.1 вбок
 constexpr int   kEvadeMax      = 4;
@@ -264,6 +272,8 @@ static void UpdateFarmInner(float dt) {
     static float s_lastWalk = 1e9f;   // лучшая дистанция до точки подхода
     static float s_stuckTime = 0.f;
     static float s_freshTurn = 0.f;   // остаток доворота на новую цель
+    static bool  s_rayOnNode = false; // луч игры бил по текущему узлу
+    static float s_rayLostTime = 0.f; // сколько подряд он уже промахивается
     static float s_evadeTime = 0.f;   // > 0: идёт манёвр обхода препятствия
     static float s_evadeDir = 1.f;    // +1 вправо, -1 влево
     static int   s_evadeCount = 0;
@@ -302,6 +312,7 @@ static void UpdateFarmInner(float dt) {
         s_healthStart = -1.f; s_blockedTime = 0.f; s_clearTime = 0.f;
         s_depletedFrames = 0;
         s_lastWalk = 1e9f; s_stuckTime = 0.f; s_freshTurn = 0.f;
+        s_rayOnNode = false; s_rayLostTime = 0.f;
         s_evadeTime = 0.f; s_evadeCount = 0; s_evadeWhy = 0;
         s_walkOffTime = 0.f; s_noRayTime = 0.f;
         s_rayMissTime = 0.f; s_nudgeTimer = 0.f;
@@ -623,6 +634,34 @@ static void UpdateFarmInner(float dt) {
     // кадра, а камера доворачивается параллельно — ходьба её не ждёт.
     const int phase = inReach ? 3 : 2;
     g_farmPhase = phase;
+
+    // ---- узел добыт ------------------------------------------------------------
+    // Луч игры бил по этому узлу и перестал: ствол/порода уже не там (срублено,
+    // разлетелось), даже если остаток ресурса в памяти ещё не ноль. Смена цели
+    // в этом кадре вместо ожидания нуля и поджима вперёд в пустое место.
+    if (phase == 3) {
+        if (tgt.ray_self) {
+            s_rayOnNode = true;
+            s_rayLostTime = 0.f;
+        } else if (s_rayOnNode && !tgt.ray_blocked) {
+            // Перекрытие (ветка, соседний ствол) — не «добыто»: этот случай
+            // разбирает обычная логика обхода.
+            s_rayLostTime += dt;
+            if (s_rayLostTime > kRayLostHarvest) {
+                esp_farm_blacklist(tgt.id, kRayLostBlacklist);
+                esp_farm_note_harvest(tgt.id);
+                releaseAll();
+                resetNode();
+                s_settle = 0.f;
+                s_freshTurn = kFreshTurnTime;
+                g_farmPhase = 0;
+                return;
+            }
+        }
+    } else {
+        s_rayOnNode = false;
+        s_rayLostTime = 0.f;
+    }
 
     // Сел ли прицел на ТОЧКУ УДАРА. По крестику ждём и yaw, и pitch внутри
     // допуска: иначе удар ляжет мимо X и серия не вырастет (ради неё всё и

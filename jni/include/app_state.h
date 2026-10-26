@@ -137,11 +137,6 @@ struct AppState {
     ImVec4 ui_accent_rgb = {0.545f, 0.486f, 1.000f, 1.0f};
     // Положение панели вкладок: true = слева (по умолчанию), false = снизу.
     bool  ui_panel_left = true;
-    // Стример-мод: слой оверлея снимается с захвата (по умолчанию его нет ни
-    // на скриншоте, ни в записи экрана), включённый — пишется рекордером как
-    // есть. Сессионное: бинарный CfgBlob заморожен версией (config.cpp).
-    bool  streamer_mode = false;
-    float a_streamer = 0.f;
 
     float tab_alpha = 1.f, tab_slide = 0.f, tab_slide_vel = 0.f;
     float a_aim_touch = 0, a_aim_pos = 0, a_aim_spec = 0, a_aim_scope = 0;

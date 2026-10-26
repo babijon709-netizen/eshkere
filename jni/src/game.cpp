@@ -7115,13 +7115,6 @@ static Vec3 g_aim_inherited_velocity{};
 // LS fit over observed position changes, see target_predictor.h). Reset to
 // invalid for bots / between frames so a stale player estimate never leaks.
 static tgtpred::Estimate g_aim_est{};
-// Что остаётся на нашу долю после снятия сетевых таймнгов: шаг FixedUpdate
-// (0.02 s) и шаг интегратора (0.03125 s), пока выстрел уже не догоняется
-// (jX.vLO 0x7BEAC38 raycast, FPHitscan.LOU 0x6D5029C). Раньше сюда же входили
-// rtt/2 и bufferTime снапшота — отсюда прежние 0.065; теперь они читаются из
-// статиков Mirror, см. NetTiming ниже.
-static constexpr float kAimStepLatency = 0.050F;
-
 // ---- Таймнги Mirror: из игры, а не из подбора -------------------------------
 // Две величины, которых не было в дампе смещений: насколько снапшот удалённого
 // игрока отстаёт от удалённого времени (bufferTime) и сколько идёт путь до
@@ -7825,24 +7818,31 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         path.horizon = vehicle_speed ? 5.0F : 2.0F;
         path.gravity = vehicle_speed ? 0.0F : target_gravity;
         path.airborne_vy = 1.15F;
+        // Потолок самого смещения: любая ошибка в слагаемых (не тот muzzle
+        // speed, мусорный rtt) упирается в полшага тела, а не уводит прицел
+        // на метры. Транспорт едет куда быстрее — у него свой предел.
+        path.max_offset = vehicle_speed ? 6.0F : 1.0F;
         box.aim_speed = effective_horiz_speed;
-        // Задержка сети — из статиков Mirror, а не подбором: rtt/2 туда и одно
-        // слагаемое задержки снапшота (возраст отсчёта, а без оценки — buffer).
-        // Без таймнгов (бета, чужой билд, игра ещё грузится) — прежние
-        // константы, уже подобранные под buffer 2 тика на 30 Гц и rtt ~60 мс.
-        net_timing_refresh();
         const float stale = use_est
             ? (g_aim_est.sample_age < 0.22F ? g_aim_est.sample_age : 0.22F)
             : 0.0F;
-        if (g_net_timing.valid) {
-            const float snapshot_lag = stale > 0.0F ? stale : g_net_timing.buffer;
-            path.latency = 0.5F * g_net_timing.rtt + snapshot_lag + kAimStepLatency;
-        } else {
-            const float fallback = silent_mode
-                ? 0.065F
-                : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.055F : 0.065F);
-            path.latency = fallback + stale;
-        }
+        // Упреждение по цели — три честных слагаемых и ни одного запаса:
+        //   rtt/2  — столько снапшот ехал к нам;
+        //   lag    — возраст отсчёта, но не больше kAimLagMax;
+        //   шаг    — FixedUpdate (0.02), за который игра успевает подвинуть
+        //            и цель, и наш выстрел.
+        // Раньше возраст отсчёта брался целиком до 0.22 с, да ещё поверх
+        // buffer/подобранных констант: на 10..30 Гц снапшотах это давало
+        // 0.2..0.3 с упреждения, то есть до метра впереди бегущего — ровно
+        // «предикт слишком сильный». Тайм-минги Mirror уточняют rtt, но больше
+        // не меняют саму формулу: иначе при неразрешённых статиках лид уезжал
+        // на старые константы и правка не ощущалась вообще.
+        net_timing_refresh();
+        constexpr float kAimLagMax = 0.060F;
+        constexpr float kAimStep = 0.020F;
+        const float lag = stale < kAimLagMax ? stale : kAimLagMax;
+        const float half_rtt = g_net_timing.valid ? 0.5F * g_net_timing.rtt : 0.030F;
+        path.latency = half_rtt + lag + kAimStep;
         if (use_est) {
             if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
             else                    { path.tau = 1.5F; path.horizon = 1.1F; }

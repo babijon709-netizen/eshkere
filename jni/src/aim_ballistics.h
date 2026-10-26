@@ -57,6 +57,10 @@ struct TargetModel {
     // after which the target keeps the velocity it reached. 0 = off.
     Vec3  accel{};
     float accel_time = 0.0f;
+    // Hard cap on the predicted offset, m. Any single wrong term (muzzle speed
+    // read from the wrong field, garbage rtt, teleporting sample) otherwise
+    // turns into metres of lead. 0 = off.
+    float max_offset = 0.0f;
 };
 
 inline bool finite(float value) {
@@ -127,6 +131,11 @@ inline Vec3 target_offset(const Vec3& v, float t, const TargetModel& m) {
             off.y = v.y * te - 0.5f * m.gravity * te * te;
             if (off.y < -m.max_drop) off.y = -m.max_drop;
         }
+    }
+    if (m.max_offset > 0.0f) {
+        const float distance = length(off);
+        if (finite(distance) && distance > m.max_offset)
+            off = scale(off, m.max_offset / distance);
     }
     return off;
 }

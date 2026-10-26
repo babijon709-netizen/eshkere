@@ -174,8 +174,14 @@ float TabContent(int tab, float dt, float cW) {
             const aimlead::State& learn = aimlead::state();
             char learnSummary[64];
             const float overall = aimlead::overall_rate();
+            const float delay_ms = esp_aim_delay_ms();
             if (!learn.enabled) {
-                snprintf(learnSummary, sizeof(learnSummary), "%s", XS("выкл"));
+                // Обычный режим: показываем то, что реально решает лид —
+                // измеренную задержку позы, а не масштаб бандита.
+                if (delay_ms > 0.f)
+                    snprintf(learnSummary, sizeof(learnSummary), XS("задержка %.0f мс"), delay_ms);
+                else
+                    snprintf(learnSummary, sizeof(learnSummary), "%s", XS("ждём движения цели"));
             } else if (overall < 0.f) {
                 snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · ждём выстрелы"), learn.scale);
             } else {

@@ -164,6 +164,8 @@ enum EspMemBackend {
 };
 void          esp_set_mem_backend(int backend);
 int           esp_get_mem_backend();
+// Измеренная задержка позы цели (aim_predict.h), мс; -1 — оценки ещё нет.
+float         esp_aim_delay_ms();
 // Какой режим активен: true для любого ядерного транспорта (FT/RT-Dev/RT-Hook/DitPro).
 bool          esp_mem_backend_kernel();
 // Поиск PID процесса игры через ядерный драйвер (DitPro 131 0x300),

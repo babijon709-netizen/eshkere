@@ -5,6 +5,7 @@ tools/tests/run_touch_device_filter.sh
 tools/tests/run_menu_ui.sh
 tools/tests/run_menu_ui.sh --measure
 tools/tests/run_menu_ui.sh --bench
+tools/tests/run_predict.sh
 ```
 
 Requires a C++17 host compiler (`g++`, or set `CXX`). The touch-filter runner
@@ -25,6 +26,12 @@ Checks cover:
 - collapsed content height and scroll bounds after content shrinks;
 - offscreen culling without changing layout/slider state, and font-size probes
   that do not allocate a baked font for every trial size.
+
+`run_predict.sh` feeds the pose-delay estimator (`aim_predict.h`) a synthetic
+strafer with a known delay between the pose we read and the true position, at
+60 and 30 Hz. It must report that delay back within one sample period; with the
+velocity delayed by the same amount (the case where the delay is not measurable)
+it must report ~0 instead of inventing a lead from noise.
 
 `--measure` prints default content heights (650 px content width, 28 px font).
 These are layout measurements, not device screenshots or frame-rate benchmarks.

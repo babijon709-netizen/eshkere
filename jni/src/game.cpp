@@ -10,6 +10,7 @@
 #include "aim_ballistics.h"
 #include "aim_lead_learn.h"     // автокалибровка окна упреждения (aim.cpp кормит)
 #include "aim_trace.h"         // CSV-трейс: поза, авторитетная скорость, тайм-минги
+#include "aim_predict.h"       // измеряемая задержка позы по авторитетной скорости
 #include "target_predictor.h"
 #include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
@@ -7112,6 +7113,15 @@ static float head_lift_for_range(const Vec3& world) {
 // set_aim_point (rtt/2 + возраст снапшота либо buffer + шаг игры), а полёт
 // пули — баллистический solver по данным оружия.
 static Vec3 g_aim_velocity{};
+// Задержка позы текущей цели, измеренная aim_predict.h по авторитетной скорости
+// (сколько наша копия её тела отстаёт от истины). Сбрасывается в начале кадра —
+// значение всегда относится к игроку, которого обрабатываем сейчас.
+static float g_aim_delay_seconds = 0.0F;
+// Измеренная задержка позы текущей цели, мс (aim_predict.h); -1 — оценки нет.
+float esp_aim_delay_ms() {
+    return g_aim_delay_seconds > 0.0F ? g_aim_delay_seconds * 1000.0F : -1.0F;
+}
+static std::unordered_map<uint64_t, aimpredict::Track> g_predict_track;
 static Vec3 g_aim_inherited_velocity{};
 // Silent-aim motion estimate for the target currently being processed (own
 // LS fit over observed position changes, see target_predictor.h). Reset to
@@ -7831,14 +7841,13 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         // и полный путь до сервера в упреждении — двойной счёт. Именно он давал
         // 0.5 м впереди бегущего на ближней дистанции (5..10 м), где полёт
         // пули — 10..20 мс, то есть «предикт слишком сильный».
-        net_timing_refresh();
+        net_timing_refresh();   // тайм-минги остаются для лога/трейса
         constexpr float kAimControlFrame = 0.016F;
-        const float snapshot_half = g_net_timing.valid && g_net_timing.tick > 0
-            ? 0.5F / static_cast<float>(g_net_timing.tick)
-            : 0.016F;
-        // Выученный масштаб окна: 1.0 — номинал, меньше — короче лид. Полёт
-        // пули не масштабируется, это физика (см. aim_lead_learn.h).
-        path.latency = (snapshot_half + kAimControlFrame) * aimlead::scale();
+        // Задержка позы цели — ИЗМЕРЕННАЯ (aim_predict.h), плюс кадр, за который
+        // наш ход пальцем доедет до игры. Масштаб из aim_lead_learn остаётся
+        // выключенным по умолчанию: он был попыткой угадать эту же задержку
+        // бинарным сигналом «попал/не попал».
+        path.latency = (g_aim_delay_seconds + kAimControlFrame) * aimlead::scale();
         // Потолок смещения — по физике, а не константой: столько, сколько цель
         // может пройти за (задержку + полёт) на скорости 8 м/с (спринт с
         // запасом), у транспорта 60. Фиксированные 0.6 м резали снайперский
@@ -11702,6 +11711,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     g_frame_bot_count = 0;
     g_box_frame_transient = true;
     g_aim_velocity = {};
+    g_aim_delay_seconds = 0.0F;
     g_aim_inherited_velocity = {};
     g_aim_ballistic_params = {};
     std::vector<EspBox> result;
@@ -12431,6 +12441,26 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             tgtpred::update(est_track, raw_feet, est_now);
             g_aim_est = tgtpred::estimate(est_track, est_now);
             tgtpred::prune(g_tgt_track, est_now);
+            // Задержка позы этой цели: сравнение смещения позы с интегралом
+            // АВТОРИТЕТНОЙ скорости (KCC.Move.RealVelocity). Это и есть то, что
+            // раньше собиралось из rtt/2 + bufferTime + возраст отсчёта и
+            // подводило; здесь оно измеряется, а не предполагается.
+            // Скорость берём не из g_player_track (там сглаженная смесь с
+            // конечной разностью — она производная той же задержанной позы и
+            // годится только для лида), а прямо из KCC.Move.RealVelocity: это
+            // число считает клиент самого игрока, оно не зависит от нашей позы.
+            Vec3 auth_velocity{};
+            const bool have_auth_velocity = player_authoritative_velocity(s_transforms[i], auth_velocity);
+            aimpredict::Track& predict_track = g_predict_track[s_transforms[i]];
+            // Без авторитетной скорости измерять нечего: производная от нашей же
+            // позы даст ноль при любой задержке.
+            if (have_auth_velocity) predict_track.push(raw_feet, auth_velocity, est_now);
+            predict_track.estimate_delay(est_now);
+            // Держим последнюю уверенную оценку: тишина в оценке (цель встала)
+            // не означает «задержка исчезла», это то же тело и тот же канал.
+            if (predict_track.delay > 0.0)
+                g_aim_delay_seconds = (float)predict_track.delay;
+            aimpredict::prune(g_predict_track, est_now);
         }
         box.id = s_transforms[i];
         box.crouched = crouched;

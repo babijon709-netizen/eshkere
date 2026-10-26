@@ -81,19 +81,6 @@ inline float motion_confidence(float age_seconds) {
     return (kStaleSeconds - age_seconds) / (kStaleSeconds - kFreshSeconds);
 }
 
-// Integrated trusted age used to advance a stale position sample. This is the
-// area under the confidence curve, rather than multiplying full age by its
-// end-of-window confidence and under-leading by almost half.
-inline float motion_age_lead(float age_seconds) {
-    if (!finite(age_seconds) || age_seconds <= 0.0f) return 0.0f;
-    constexpr float kFreshSeconds = 0.12f;
-    constexpr float kStaleSeconds = 0.35f;
-    if (age_seconds <= kFreshSeconds) return age_seconds;
-    if (age_seconds >= kStaleSeconds) return 0.5f * (kFreshSeconds + kStaleSeconds);
-    const float tail = age_seconds - kFreshSeconds;
-    return kFreshSeconds + tail * (1.0f + motion_confidence(age_seconds)) * 0.5f;
-}
-
 // BallisticProfile.cQi (RVA 0x7BF07D8, file offset 0x7BEC7D8) and
 // ShaftedProjectile.GetBallisticParams (RVA 0x6DCD320, file offset 0x6DC9320)
 // pass their gravity field (5.0 for firearms, 2.5 for signal flare, 1.0..3.5

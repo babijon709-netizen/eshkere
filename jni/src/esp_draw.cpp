@@ -131,12 +131,8 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         esp_set_always_day(g_state.always_day);
         esp_set_no_grass(g_state.no_grass);
         esp_set_marker_max_distance(g_state.marker_dist);
-        // Automatic control latency for camera-driven modes; no user lead
-        // knob. Projectile flight time is solved independently from active
-        // weapon data and target distance in game.cpp.
-        const float leadAuto = (g_state.aim_mode == AIM_MODE_TOUCH) ? 0.110f
-                             : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.080f : 0.040f);
-        esp_set_aim_lead(leadAuto);
+        // Контурная задержка и flight time считаются в game.cpp из таймнгов
+        // Mirror и данных оружия; отдельного «упреждения» тут нет.
         esp_set_screen_stretch(g_state.screen_stretch_x);
         esp_set_xray(g_state.xray_on ? g_state.xray_range : 0.f);
         std::vector<EspBox> next = esp_get_boxes(want_w, want_h);

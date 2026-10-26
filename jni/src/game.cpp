@@ -7103,18 +7103,12 @@ static float head_lift_for_range(const Vec3& world) {
     return g_aim_head_lift_near + (g_aim_head_lift - g_aim_head_lift_near) * t;
 }
 
-// Where the target will be by the time the finger move we are about to send
-// has travelled through the phone and come back out as camera rotation. A man
-// running past keeps running during that hundredth-of-a-second or two, and
-// without this the crosshair sits permanently behind him, by a distance
-// proportional to how fast he runs.
-//
-// A small control-latency floor is applied by esp_draw.cpp for memory/touch;
-// the user setting may raise it. This shifts only the aim point, not the ESP
-// box. Active projectile flight time is solved separately below from the
-// weapon's speed, gravity and drag when those parameters are available.
-static float g_aim_lead_seconds = 0.0F;
-static Vec3 g_aim_lead{};
+// Горизонтальная скорость текущей цели (м/с) — один вход для всех режимов
+// аима: из неё solver считает, где цель будет к моменту попадания, и вокруг
+// камеры — угловую скорость точки для feed-forward петли. Отдельного
+// «упреждения в секундах» больше нет: задержку даёт один расчёт в
+// set_aim_point (rtt/2 + возраст снапшота либо buffer + шаг игры), а полёт
+// пули — баллистический solver по данным оружия.
 static Vec3 g_aim_velocity{};
 static Vec3 g_aim_inherited_velocity{};
 // Silent-aim motion estimate for the target currently being processed (own
@@ -7139,15 +7133,13 @@ struct NetTiming {
     float rtt = 0.0F;      // NetworkTime.rtt, s
     int   tick = 0;        // NetworkServer.tickRate, Hz
     bool  valid = false;
-    // Снапшот, который мы читаем, отстаёт от серверного времени на buffer (его
-    // съедает интерполяция) плюс rtt/2 (столько он ехал к нам). Попадание при
-    // этом считается по времени выстрела, а не по времени прихода пакета:
-    // FPHitscan.LOU (RVA 0x6D5029C) кладёт в команду собственные double-метки
-    // времени, а HitBoxRecorderRoot.mJ (RVA 0x5F91800) откатывает историю
-    // хитбоксов к этому моменту (historyLimit, dr[] PvA — буфер записей).
-    // Значит сервер видит цель на нашей временной метке, и упреждение — ровно
-    // buffer + rtt/2. Flight time пули сюда не входит: его считает solver.
-    float lead() const { return buffer + 0.5F * rtt; }
+    // Снапшот, который мы читаем, отстаёт от серверного времени на rtt/2
+    // (столько он ехал к нам) и на возраст самого отсчёта. buffer — это
+    // ЗАДЕРЖКА ОТРИСОВКИ того же отсчёта, а не вторая задержка сверху: пока
+    // buffer прибавлялся к возрасту отсчёта, прицел уходил вперёд бегущего
+    // игрока на целый буфер (2 тика), и это читалось как «предикт слишком
+    // сильный». Одно слагаемое задержки — либо измеренный возраст, либо buffer.
+    // Flight time пули сюда не входит: его считает solver.
 };
 
 static uint64_t g_network_client_class = 0;
@@ -7719,14 +7711,6 @@ void esp_set_screen_stretch(float factor) {
     g_screen_stretch_x = factor;
 }
 
-void esp_set_aim_lead(float seconds) {
-    // Автоматическая задержка контура для touch/memory; это не flight time.
-    // Баллистический flight time считается solver-ом из оружия и дистанции.
-    if (seconds < 0.0F) seconds = 0.0F;
-    if (seconds > 0.35F) seconds = 0.35F;
-    g_aim_lead_seconds = seconds;
-}
-
 static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat4& vp, float sw, float sh) {
     Vec3 origin{};
     const bool haveOrigin = aim_ballistic_origin(origin);
@@ -7743,12 +7727,10 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         g_aim_velocity.x * g_aim_velocity.x + g_aim_velocity.z * g_aim_velocity.z);
     const bool vehicle_speed = aim_ballistics::finite(horiz_speed) && horiz_speed > 7.0f;
 
-    // Silent has no finger/camera control lag, and in Touch/Memory modes any
-    // artificial pre-lead shifts the crosshair off the bone whenever the
-    // target strafes or animates. Keep pre_lead at zero so the crosshair stays
-    // locked on the bone; projectile flight time is handled by the solver.
+    // Touch/Memory/проектиль: точка прицела = кость + упреждение от solver-а.
+    // Никакого второго, «сценарного» упреждения здесь нет — оно уже давало
+    // прицел впереди цели при каждом страйфе; flight time считает solver.
     const bool silent_mode = g_state.aim_mode == AIM_MODE_SILENT;
-    const Vec3 pre_lead{};
     Vec3 world{world_in.x, world_in.y, world_in.z};
     if (slot == 0) world.y += head_lift_for_range(world_in);
 
@@ -7844,29 +7826,41 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         path.gravity = vehicle_speed ? 0.0F : target_gravity;
         path.airborne_vy = 1.15F;
         box.aim_speed = effective_horiz_speed;
-        // Задержка сети — из статиков Mirror, а не подбором: bufferTime
-        // снапшота плюс полный rtt (rtt/2 туда, rtt/2 обратно), плюс шаг самой
-        // игры. Без таймнгов (бета, чужой билд, игра ещё грузится) — прежние
-        // константы, подобранные под buffer 2 тика на 30 Гц и rtt ~60 мс.
+        // Задержка сети — из статиков Mirror, а не подбором: rtt/2 туда и одно
+        // слагаемое задержки снапшота (возраст отсчёта, а без оценки — buffer).
+        // Без таймнгов (бета, чужой билд, игра ещё грузится) — прежние
+        // константы, уже подобранные под buffer 2 тика на 30 Гц и rtt ~60 мс.
         net_timing_refresh();
-        const float base_latency = g_net_timing.valid
-            ? g_net_timing.lead() + kAimStepLatency
-            : (silent_mode
-                   ? 0.065F
-                   : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.055F : 0.065F));
+        const float stale = use_est
+            ? (g_aim_est.sample_age < 0.22F ? g_aim_est.sample_age : 0.22F)
+            : 0.0F;
+        if (g_net_timing.valid) {
+            const float snapshot_lag = stale > 0.0F ? stale : g_net_timing.buffer;
+            path.latency = 0.5F * g_net_timing.rtt + snapshot_lag + kAimStepLatency;
+        } else {
+            const float fallback = silent_mode
+                ? 0.065F
+                : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.055F : 0.065F);
+            path.latency = fallback + stale;
+        }
         if (use_est) {
-            // Staleness of the snapshot we are aiming at is added on top, so a
-            // position that was last refreshed 60..100 ms ago is led forward
-            // to the current frame time + server hit-resolution window.
-            const float stale = g_aim_est.sample_age < 0.22F ? g_aim_est.sample_age : 0.22F;
-            path.latency = base_latency + stale;
             if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
             else                    { path.tau = 1.5F; path.horizon = 1.1F; }
-            path.accel = aim_ballistics::scale(
-                g_aim_est.accel, 0.65F * g_aim_est.confidence);
-            path.accel_time = 0.25F;
-        } else {
-            path.latency = base_latency;
+            // Accel over the whole lead window was the second half of the
+            // overshoot: a 10 Hz position fit gives a noisy 10+ m/s^2, and the
+            // quadratic term then added up to ~0.4 m on top of the velocity
+            // lead. Cap the term at what a strafing body can actually do in
+            // 0.15 s and let velocity carry the rest.
+            constexpr float kAimAccelMax = 4.0F;
+            Vec3 accel = aim_ballistics::scale(g_aim_est.accel, 0.65F * g_aim_est.confidence);
+            const float accel_h = std::sqrt(accel.x * accel.x + accel.z * accel.z);
+            if (accel_h > kAimAccelMax) {
+                const float k = kAimAccelMax / accel_h;
+                accel.x *= k;
+                accel.z *= k;
+            }
+            path.accel = accel;
+            path.accel_time = 0.15F;
         }
         // Угловая скорость точки вокруг камеры — кормит feed-forward петли
         // аима (aim.cpp). Оси те же, от которых aim_angles_for меряет
@@ -7921,11 +7915,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     // Silent publishes a world-space aim point, not camera angles. Preserve
     // target motion lead; when weapon data exists, publish the solved launch
     // ray endpoint so the silent writer steers along the ballistic solution.
-    const Vec3 silent_world = ballisticSolved
-        ? world
-        : Vec3{world_in.x + pre_lead.x,
-               world_in.y + pre_lead.y,
-               world_in.z + pre_lead.z};
+    const Vec3 silent_world = ballisticSolved ? world : world_in;
     const Vec3 aim_world = g_state.aim_mode == AIM_MODE_SILENT
         ? silent_world : world;
     box.aim_world[slot][0] = aim_world.x;
@@ -9842,16 +9832,12 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
                 ? src.pos_age : 0.0f;
             const float confidence = aim_ballistics::motion_confidence(age);
             g_aim_velocity = aim_ballistics::scale(measured, confidence);
-            g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
-            if (g_aim_lead.y > 0.20f) g_aim_lead.y = 0.20f;
-            else if (g_aim_lead.y < -0.20f) g_aim_lead.y = -0.20f;
             const float catchup_dt = (age < kBotPosLeadMax ? age : kBotPosLeadMax);
             bot_catchup = aim_ballistics::scale(g_aim_velocity, catchup_dt);
             if (bot_catchup.y > 0.20f) bot_catchup.y = 0.20f;
             else if (bot_catchup.y < -0.20f) bot_catchup.y = -0.20f;
         } else {
             g_aim_velocity = {};
-            g_aim_lead = {};
         }
         feet = aim_ballistics::add(feet, bot_catchup);
         // Keep bot slots aligned with player slots: [0] head, [1] neck, [2] chest.
@@ -9899,7 +9885,6 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
         ++g_frame_bot_count;
     }
     // Per-target velocity must not leak into the next frame's aim point.
-    g_aim_lead = {};
     g_aim_velocity = {};
 }
 
@@ -11645,7 +11630,6 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     g_frame_bot_count = 0;
     g_box_frame_transient = true;
-    g_aim_lead = {};
     g_aim_velocity = {};
     g_aim_inherited_velocity = {};
     g_aim_ballistic_params = {};
@@ -12354,17 +12338,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                     const float age_seconds = static_cast<float>(age);
                     const float confidence = aim_ballistics::motion_confidence(age_seconds);
                     g_aim_velocity = aim_ballistics::scale(velocity, confidence);
-                    g_aim_lead = aim_ballistics::scale(g_aim_velocity, g_aim_lead_seconds);
-                    const float max_y = mounted ? 2.00f : 0.20f;
-                    if (g_aim_lead.y > max_y) g_aim_lead.y = max_y;
-                    else if (g_aim_lead.y < -max_y) g_aim_lead.y = -max_y;
                 } else {
                     g_aim_velocity = {};
-                    g_aim_lead = {};
                 }
             } else {
                 g_aim_velocity = {};
-                g_aim_lead = {};
             }
         }
         // Silent predictor: fit velocity/accel over the raw un-extrapolated

@@ -201,7 +201,6 @@ void        esp_set_ore_types_enabled(bool stone, bool iron, bool sulfur);
 // Упреждение аима: секунды забега вперёд по скорости цели (0 = вести по
 // текущему положению кости). Слайдер «Упреждение» на вкладке аима.
 void        esp_set_screen_stretch(float factor);
-void        esp_set_aim_lead(float seconds);
 // «Всегда день»: время суток удерживается в полдне (клиентский визуал).
 void        esp_set_always_day(bool enabled);
 // «Без травы»: отключает GrassEnabled и TreesEnabled (рендерер кустов).

@@ -425,8 +425,8 @@ void esp_farm_blacklist(unsigned long long id, float seconds) {
 // на это время не выбираются.
 Vec3   g_farm_harvest_pos{};
 double g_farm_harvest_until = 0.0;
-constexpr float  kHarvestSkipRadius = 2.5F;
-constexpr double kHarvestSkipTime   = 1.5;
+constexpr float  kHarvestSkipRadius = 1.8F;
+constexpr double kHarvestSkipTime   = 0.9;
 
 void esp_farm_note_harvest(unsigned long long id) {
     (void)id;

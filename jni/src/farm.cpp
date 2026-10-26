@@ -196,7 +196,7 @@ constexpr float kStuckTime     = 2.20f;  // нет продвижения к т�
 // идёт. Без этого он с первого кадра давил вперёд по прежнему курсу — у
 // срубленного дерева это ровно пень, — упирался, и до kStuckTime копился
 // «нет продвижения»: со стороны выглядело как бег вокруг добытого места.
-constexpr float kFreshTurnTime  = 0.55f;  // с: доворот на новую цель
+constexpr float kFreshTurnTime  = 0.30f;  // с: доворот на новую цель
 constexpr float kFreshTurnYaw   = 12.0f;  // град: с этого угла уже идём
 constexpr float kEvadeTime     = 1.70f;  // ~0.6 назад + ~1.1 вбок
 constexpr int   kEvadeMax      = 4;
@@ -475,8 +475,12 @@ static void UpdateFarmInner(float dt) {
             esp_farm_note_harvest(tgt.id);   // место добычи — не цель для поиска
             releaseAll();
             resetNode();
-            s_settle = kSettleTime;
-            s_freshTurn = kFreshTurnTime;   // следующий узел — сперва доворот
+            // Паузы после добычи нет вовсе: releaseAll уже поднял ввод, а
+            // s_settle и «цель пропала» только добавляли простоя. Следующий
+            // узел берётся в этом же кадре, доворот — kFreshTurnTime.
+            s_settle = 0.f;
+            s_lostTime = kLostHold;
+            s_freshTurn = kFreshTurnTime;
             g_farmPhase = 0;
             return;
         }

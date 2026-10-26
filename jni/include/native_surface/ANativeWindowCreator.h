@@ -19,6 +19,10 @@
 
 namespace anwc {
     namespace detail {
+        // layer_state_t (SurfaceFlinger): eLayerSecure — тот же бит, что у
+        // FLAG_SECURE окна. С таким слоем композиция не отдаёт его ни в
+        // скриншот, ни в запись экрана.
+        inline constexpr uint32_t kLayerSecure = 0x04;
         namespace ui {
             struct LayerStack {
                 uint32_t id = UINT32_MAX;
@@ -399,7 +403,8 @@ namespace anwc {
                     Functionals::GetInstance().RefBase__DecStrong(data, this);
             }
 
-            SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool hide, bool) {
+            SurfaceControl CreateSurface(const char *name, int32_t width, int32_t height, bool hide,
+                                         bool captureVisible) {
                 if (nullptr == Functionals::GetInstance().SurfaceComposerClient__CreateSurface)
                     return {};
 
@@ -431,7 +436,11 @@ namespace anwc {
                 if (12 <= Functionals::GetInstance().systemVersion && nullptr != result.get()) {
                     static SurfaceComposerClientTransaction transaction;
                     transaction.SetLayer(result, INT_MAX);
-                    transaction.SetTrustedOverlay(result, true);
+                    // Trusted overlay ставится только скрытому от захвата слою:
+                    // снять его флагом с живого слоя нельзя, поэтому стример-мод
+                    // пересоздаёт слой уже без него (draw.cpp).
+                    if (!captureVisible) transaction.SetTrustedOverlay(result, true);
+                    transaction.SetFlags(result, captureVisible ? 0u : kLayerSecure, kLayerSecure);
                     transaction.Apply(false, true);
                 }
 
@@ -546,7 +555,7 @@ namespace anwc {
                 }
             }
 
-            auto surfaceControl = client.CreateSurface(name, width, height, hide, false);
+            auto surfaceControl = client.CreateSurface(name, width, height, hide, m_captureVisible);
             auto nativeWindow   = reinterpret_cast<ANativeWindow *>(surfaceControl.GetSurface());
             if (nullptr != nativeWindow) {
                 m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
@@ -564,7 +573,6 @@ namespace anwc {
         }
 
     private:
-        static constexpr uint32_t kLayerSecure = 0x04;
         inline static bool m_captureVisible = false;
 
         // Бит secure ставится/снимается транзакцией на уже созданный слой:
@@ -573,8 +581,8 @@ namespace anwc {
         static void ApplyCaptureFlags() {
             auto &f = detail::Functionals::GetInstance();
             if (nullptr == f.SurfaceComposerClient__Transaction__SetFlags) return;
-            const uint32_t mask  = kLayerSecure;
-            const uint32_t flags = m_captureVisible ? 0u : kLayerSecure;
+            const uint32_t mask  = detail::kLayerSecure;
+            const uint32_t flags = m_captureVisible ? 0u : detail::kLayerSecure;
             detail::SurfaceComposerClientTransaction transaction;
             bool any = false;
             for (auto &entry : m_cachedSurfaceControl) {

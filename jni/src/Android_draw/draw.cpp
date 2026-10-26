@@ -204,15 +204,63 @@ float overlay_pace_hz() {
     return OverlayPaceHz();
 }
 
-// Стример-мод: снимает с нашего слоя биты secure/skip-screenshot. Пока он
-// выключен, оверлея нет ни на скриншоте, ни в записи экрана; включённый —
-// оверлей пишется обычным рекордером как есть, включая меню и метки.
+// Стример-мод: слой оверлея создаётся заново без признаков, по которым
+// SurfaceFlinger уводит его из захвата (secure + trusted overlay). Флаги на
+// живом слое переключаются тоже, но trusted overlay снимается только при
+// создании, поэтому одного SetFlags мало — пересоздаём поверхность на границе
+// кадра (см. drawBegin).
+static bool g_overlay_recreate = false;
+
 void overlay_set_capture_visible(bool visible) {
+    if (anwc::ANativeWindowCreator::CaptureVisible() == visible) return;
     anwc::ANativeWindowCreator::SetCaptureVisible(visible);
+    g_overlay_recreate = true;
 }
 
 bool overlay_capture_visible() {
     return anwc::ANativeWindowCreator::CaptureVisible();
+}
+
+// Пересоздание слоя на тех же EGL-контексте и конфиге: новый слой создаётся
+// раньше, чем убивается старый, поэтому при любом отказе оверлей остаётся
+// живым на прежней поверхности.
+static bool RecreateOverlaySurface() {
+    if (display == EGL_NO_DISPLAY || context == EGL_NO_CONTEXT) return false;
+    static const char wn[] = {0x53,0x75,0x72,0x66,0x61,0x63,0x65,0x00};
+    ANativeWindow *fresh = anwc::ANativeWindowCreator::Create(
+        wn, native_window_screen_x, native_window_screen_y, false);
+    if (nullptr == fresh) return false;
+    ANativeWindow_acquire(fresh);
+
+    EGLint egl_format = 0;
+    if (eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &egl_format) != EGL_TRUE) {
+        ANativeWindow_release(fresh);
+        anwc::ANativeWindowCreator::Destroy(fresh);
+        return false;
+    }
+    ANativeWindow_setBuffersGeometry(fresh, 0, 0, egl_format);
+
+    EGLSurface fresh_surface = eglCreateWindowSurface(display, config, fresh, nullptr);
+    if (fresh_surface == EGL_NO_SURFACE ||
+        !eglMakeCurrent(display, fresh_surface, fresh_surface, context)) {
+        if (fresh_surface != EGL_NO_SURFACE) eglDestroySurface(display, fresh_surface);
+        ANativeWindow_release(fresh);
+        anwc::ANativeWindowCreator::Destroy(fresh);
+        return false;
+    }
+
+    EGLSurface old_surface = surface;
+    ANativeWindow *old_window = native_window;
+    surface = fresh_surface;
+    native_window = fresh;
+    ImGui_ImplAndroid_Init(native_window);
+    if (old_surface != EGL_NO_SURFACE) eglDestroySurface(display, old_surface);
+    if (old_window != nullptr) {
+        ANativeWindow_release(old_window);
+        anwc::ANativeWindowCreator::Destroy(old_window);
+    }
+    ApplyOverlayRefresh(native_window, OverlayPaceHz());
+    return true;
 }
 
 bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
@@ -305,6 +353,10 @@ bool ImGui_init() {
 }
 
 void drawBegin() {
+    if (g_overlay_recreate) {
+        g_overlay_recreate = false;
+        RecreateOverlaySurface();
+    }
     screen_config();
 
     if ((++g_refresh_tick % 180) == 0)

@@ -58,8 +58,9 @@ struct EspBox {
     // aim_valid[i] == false means the corresponding bone could not be read and
     // the caller should fall back to the box estimate.
     bool  aim_valid[3];
-    // Where the aim points came from: 0 none, 1 rig bones (exact),
-    // 2 KCC head transform (crouch-aware), 3 feet + pose height (estimate).
+    // Where the aim points came from: 0 none, 2 KCC head transform
+    // (crouch-aware), 3 feet + pose height (estimate). 1 (хитбокс головы) больше
+    // не выставляется: голова берётся по кости, хитбокс убран.
     int   aim_source;
     bool  crouched;
     float aim_pts[3][2];
@@ -67,6 +68,13 @@ struct EspBox {
     // degrees (yaw = +right, pitch = +up). Only meaningful when aim_valid[i].
     float aim_yaw[3];
     float aim_pitch[3];
+    // Угловая скорость точки прицела вокруг камеры, град/с (+right, +up). Петля
+    // аима прибавляет её к своему шагу: без этого при ровном стрее прицел висит
+    // за целью на постоянном угле v/k, и его приходилось прятать в задержку.
+    // Считается из той же скорости, которой ведётся упреждение, и по той же
+    // оси камеры, от которой меряются aim_yaw/aim_pitch.
+    float aim_rate_yaw[3] = {};
+    float aim_rate_pitch[3] = {};
     // Exact uncompensated bone position for the silent writer. Touch/Memory
     // retain their current angular compensation in aim_yaw/aim_pitch.
     float aim_world[3][3] = {};

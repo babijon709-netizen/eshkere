@@ -511,21 +511,6 @@ int main(int argc, char* argv[]) {
             stealth::ProtectProcess(getpid());
         }
         g_frame_done.store(false);
-        // Вскрытие тормозов оверлея (лог 07:37: кадр встаёт на 200–400 мс
-        // пачками, писатель при этом ровный — стоит именно main). Если кадр
-        // дольше 100 мс — пишем, в какой стадии он стоял и сколько из этого
-        // наш cpu: мало cpu = поток не работал, а ждал чужого (своп/GPU или
-        // чужую блокировку). Гладкие 60 fps (17 мс) молчат. Замеры — vdso,
-        // на кадр стоят сотни наносекунд.
-        const auto slowWall0 = std::chrono::steady_clock::now();
-        struct timespec slowCpu0{};
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &slowCpu0);
-        double slowT[7]; int slowI = 0;
-        auto slowMark = [&]() {
-            slowT[slowI++] = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - slowWall0).count();
-        };
-        slowMark();   // 0: начало кадра
         drawBegin();
 
         esp_mem_frame_begin();   // кадр начался: кэш блоков памяти игры сброшен
@@ -554,11 +539,8 @@ int main(int argc, char* argv[]) {
             }
         }
         DrawEspOverlay();
-        slowMark();   // 1: после ESP
         UpdateAim(ImGui::GetIO().DeltaTime);
-        slowMark();   // 2: после аима
         UpdateFarm(ImGui::GetIO().DeltaTime);
-        slowMark();   // 3: после фарма
         // Индикация привязки (тосты «игра найдена / не найдена») убрана:
         // состояние видно по счётчику игроков в пилюле.
         RenderMenu();
@@ -569,22 +551,13 @@ int main(int argc, char* argv[]) {
             g_frame_done.store(true, std::memory_order_release);
             break;
         }
-        slowMark();   // 4: после меню
         UpdateFreecam(ImGui::GetIO().DeltaTime);   // фрикам: полёт камеры
         AimEndFrame(); // закрыть lease, если меню/фрикам выключили сайлент позднее
-        slowMark();   // 5: после фрикама
         if (!main_thread_flag.load(std::memory_order_acquire)) {
             g_frame_done.store(true, std::memory_order_release);
             break;
         }
         drawEnd();
-        slowMark();   // 6: после свопа
-        if (slowT[6] - slowT[0] > 100.0) {
-            struct timespec slowCpu1{};
-            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &slowCpu1);
-            const double slowCpu = (slowCpu1.tv_sec - slowCpu0.tv_sec) * 1000.0 +
-                                   (slowCpu1.tv_nsec - slowCpu0.tv_nsec) * 1e-6;
-        }
         g_frame_done.store(true);
     }
     // Start the deadline before EGL teardown as well: the compositor itself

@@ -857,6 +857,43 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE66D238; // release 11978: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionary<uint, NetworkIdentity>; 0x28 handlers
 
+// ---- Mirror: сетевые таймнги (release 11978) --------------------------------
+// Поза удалённого игрока, которую читает чит, — это снапшот: он отстаёт от
+// удалённого времени на NetworkClient.bufferTime, и сам снапшот приехал к нам
+// через rtt/2. Попадание сервер считает в своём «сейчас», то есть через rtt/2
+// после нашей записи. Итого цель надо вести на flight + bufferTime + rtt.
+//   bufferTime = sendInterval * bufferTimeMultiplier
+//     NetworkClient.get_bufferTime, RVA 0xC8E89E0: ldr d1,[static+0x108];
+//     fmul на sendInterval (get_sendInterval, RVA 0xC8DBEDC).
+//   sendRate = NetworkServer.tickRate
+//     NetworkClient.get_sendRate, RVA 0xC8DBE54: ldr w0,[static_fields,#8].
+//   rtt = NetworkTime._rtt.Value
+//     NetworkTime.get_rtt, RVA 0xC8FD6F4: ldr d0,[static_fields,#0x20].
+// Слоты ниже — metadata usage, а не TypeInfo-кэш: [base+rva] даёт адрес слота,
+// [слот] — Il2CppClass*. Резолвер в game.cpp берёт класс только по точному
+// имени и namespace, поэтому сдвиг слота в чужом билде даёт откат к
+// константам, а не чтение мусора.
+inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE2F50A8;
+inline constexpr std::uint64_t NETWORK_CLIENT_STATICS_RVA  = 0xE2F55D0;
+inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA   = 0xE2F55E8;
+inline constexpr std::uint64_t NETWORK_CLIENT_BUFFER_MULTIPLIER = 0x108; // double
+inline constexpr std::uint64_t NETWORK_SERVER_TICK_RATE         = 0x8;   // int
+inline constexpr std::uint64_t NETWORK_TIME_RTT                 = 0x20;  // double, _rtt.Value
+
+// ---- CharacterSpeedConfig: скорости и прыжок персонажа ----------------------
+// Ассет висит на KCC локального игрока. Классов два (KCC и SingleKcc, оба
+// реализуют Yc), поле лежит на 0x80 у KCC и на 0x88 у SingleKcc — поэтому
+// читатель пробует оба и принимает только правдоподобные значения, а не
+// угадывает класс.
+inline constexpr std::uint64_t CHAR_SPEED_CONFIG_KCC        = 0x80;
+inline constexpr std::uint64_t CHAR_SPEED_CONFIG_SINGLE_KCC = 0x88;
+inline constexpr std::uint64_t CHAR_SPEED_SPRINT        = 0x18;  // StandSprintSpeed
+inline constexpr std::uint64_t CHAR_SPEED_JOG           = 0x1C;  // StandJogSpeed
+inline constexpr std::uint64_t CHAR_SPEED_WALK          = 0x20;  // StandWalkSpeed
+inline constexpr std::uint64_t CHAR_SPEED_BACK_FACTOR   = 0x2C;  // BackSpeedFactor
+inline constexpr std::uint64_t CHAR_SPEED_JUMP_HEIGHT   = 0x30;  // JumpHeight
+inline constexpr std::uint64_t CHAR_SPEED_GRAVITY       = 0x34;  // Gravity
+
 // System.Collections.Generic.Dictionary<uint, NetworkIdentity> (this BCL has no
 // _fastModMultiplier): _buckets 0x10, _entries 0x18, _count 0x20, _freeList 0x24.
 // Entry { int hashCode; int next; uint key; object value; } -> 24 bytes.

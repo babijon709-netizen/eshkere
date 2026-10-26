@@ -38,6 +38,10 @@ float AimFovRadiusPx(float sw, float sh) {
 
 // One short hold window for every ESP visual, including world-marker labels.
 constexpr double kEspHoldSeconds = 0.30;
+// Окно пропуска на ЗДОРОВОМ кадре: один-два кадра чтения игрока могут не
+// пройти, и бокс не должен гаснуть на 16 мс. 80 мс — это 5 кадров при 60 к/с,
+// дальше запись уже не «мерцание», а тень.
+constexpr double kEspMissSeconds = 0.08;
 static GLuint g_armor_atlas_texture = 0;
 static bool g_armor_atlas_attempted = false;
 
@@ -91,7 +95,7 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         if (!new_frame) {
             espboxhold::update(s_hold, esp_get_boxes(want_w, want_h),
                                esp_box_frame_transient(), mono_now(),
-                               kEspHoldSeconds,
+                               kEspHoldSeconds, kEspMissSeconds,
                                [](EspBox& box) { return esp_box_reproject(box); }, s_out);
             return s_out;
         }
@@ -143,7 +147,7 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         // Продление — только по мировому якорю: esp_box_reproject считает
         // экран заново текущей матрицей вида. Кадра без матрицы нет — записи
         // нет: приклеенный к экрану бокс хуже одной пропавшей.
-        espboxhold::update(s_hold, next, transient, now, kEspHoldSeconds,
+        espboxhold::update(s_hold, next, transient, now, kEspHoldSeconds, kEspMissSeconds,
                            [](EspBox& box) { return esp_box_reproject(box); }, s_out);
 
         static double diag_at = -1e9;
@@ -188,7 +192,7 @@ static const std::vector<EspMarker>& FrameMarkers() {
     // Метка тоже продлевается мировым якорем и перепроецируется текущей
     // камерой: повтор прошлых экранных координат приклеил бы её к экрану.
     espboxhold::update(hold, next, esp_marker_frame_transient(),
-                       now, kEspHoldSeconds,
+                       now, kEspHoldSeconds, kEspMissSeconds,
                        [](EspMarker& marker) { return esp_marker_reproject(marker); }, out);
     return out;
 }

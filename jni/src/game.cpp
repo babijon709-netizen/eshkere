@@ -4758,9 +4758,6 @@ static LocalAimState g_aim_state{};
 struct PlayerAux {
     uint64_t kcc = 0;
     uint64_t head_native = 0;   // native Transform of KCC.head
-    uint64_t head_hitbox_transform = 0; // native Transform of the Head HitBox
-    Vec3     head_hitbox_center{};      // HitBox.center (local to that transform)
-    bool     head_hitbox_valid = false;
     float    normal_height = 1.8F;
     float    crouch_height = 1.1F;
     uint64_t event_handler = 0; // PlayerManager.playerEventHandler (+0x28, hsN)
@@ -6082,28 +6079,6 @@ static PlayerAux& player_aux(uint64_t player) {
         aux.head_native = head ? rd_ptr(head + MANAGED_CACHED_PTR) : 0;
         if (aux.head_native && (aux.head_native < 0x10000 || aux.head_native >= 0x0001000000000000ULL))
             aux.head_native = 0;
-        // Head hit volume (what the server actually tests shots against).
-        aux.head_hitbox_valid = false;
-        uint64_t hb_root = rd_ptr(kcc + KCC_HITBOX_ROOT);
-        uint64_t hb_array = hb_root ? rd_ptr(hb_root + HITBOX_ROOT_ARRAY) : 0;
-        int32_t hb_count = hb_array ? rd<int32_t>(hb_array + IL2CPP_ARRAY_LENGTH) : 0;
-        if (hb_count > 0 && hb_count <= 64) {
-            for (int32_t i = 0; i < hb_count; ++i) {
-                uint64_t hb = rd_ptr(hb_array + IL2CPP_ARRAY_FIRST_ELEMENT + (uint64_t)i * 8);
-                if (!hb || rd<int32_t>(hb + HITBOX_AREA) != 0) continue;
-                Vec3 center = rd_v3(hb + HITBOX_CENTER);
-                Vec3 size = rd_v3(hb + HITBOX_SIZE);
-                if (!vec3_is_finite(center) || !vec3_is_finite(size)) continue;
-                if (fabsf(center.x) > 1.0F || fabsf(center.y) > 1.0F || fabsf(center.z) > 1.0F) continue;
-                if (!(size.x > 0.02F && size.x < 1.0F && size.y > 0.02F && size.y < 1.0F)) continue;
-                uint64_t transform = native_component_transform(managed_object_native(hb));
-                if (!skeleton_transform_ptr_valid(transform)) continue;
-                aux.head_hitbox_transform = transform;
-                aux.head_hitbox_center = center;
-                aux.head_hitbox_valid = true;
-                break;
-            }
-        }
         const uint64_t eh = rd_ptr(player + PLAYER_EVENT_HANDLER);
         if (valid_obj(eh)) aux.event_handler = eh;
         const uint64_t motor = rd_ptr(kcc + KCC_MOTOR_OFFSET);
@@ -6147,20 +6122,6 @@ static bool player_head_world(const PlayerAux& aux, Vec3& out) {
     return read_transform_hierarchy_position(aux.head_native, out) &&
            vec3_is_finite(out) && position_looks_like_world_space(out) &&
            !position_near_world_origin(out);
-}
-
-// World-space centre of the Head hit volume: transform TRS applied to the
-// local centre (HitBox.transform.TransformPoint(center)).
-static bool player_head_hitbox_world(const PlayerAux& aux, Vec3& out) {
-    if (!aux.head_hitbox_valid || !aux.head_hitbox_transform) return false;
-    Vec3 pos{}; Vec4 rot{};
-    const TransformHierarchyLayout& layout = g_skeleton_layout_valid ? g_skeleton_layout : g_transform_hierarchy_layout;
-    if (!(g_skeleton_layout_valid || g_transform_hierarchy_layout_valid)) return false;
-    if (!read_transform_hierarchy_layout(aux.head_hitbox_transform, layout, pos, &rot)) return false;
-    // Lossy scale is ~1 on character rigs; rotate the local centre and offset.
-    Vec3 offset = rotate_vector(rot, aux.head_hitbox_center);
-    out = {pos.x + offset.x, pos.y + offset.y, pos.z + offset.z};
-    return vec3_is_finite(out);
 }
 
 static void prune_player_aux(const std::vector<uint64_t>& players) {
@@ -7160,10 +7121,152 @@ static Vec3 g_aim_inherited_velocity{};
 // LS fit over observed position changes, see target_predictor.h). Reset to
 // invalid for bots / between frames so a stale player estimate never leaks.
 static tgtpred::Estimate g_aim_est{};
-// Server RTT/2 + remote snapshot interpolation + FixedUpdate (0.02s) /
-// BallisticIntegrator (0.03125s) step phase before jX.vLO (0x7BEAC38)
-// raycasts and FPHitscan.LOU (0x6D5029C) sends wiY to HitBoxRecorderRoot.mJ.
-static constexpr float kSilentStepLatency = 0.065F;
+// Что остаётся на нашу долю после снятия сетевых таймнгов: шаг FixedUpdate
+// (0.02 s) и шаг интегратора (0.03125 s), пока выстрел уже не догоняется
+// (jX.vLO 0x7BEAC38 raycast, FPHitscan.LOU 0x6D5029C). Раньше сюда же входили
+// rtt/2 и bufferTime снапшота — отсюда прежние 0.065; теперь они читаются из
+// статиков Mirror, см. NetTiming ниже.
+static constexpr float kAimStepLatency = 0.050F;
+
+// ---- Таймнги Mirror: из игры, а не из подбора -------------------------------
+// Две величины, которых не было в дампе смещений: насколько снапшот удалённого
+// игрока отстаёт от удалённого времени (bufferTime) и сколько идёт путь до
+// сервера и обратно (rtt). Обе — из статиков Mirror в той же памяти игры, что и
+// позиции. Перечитываются раз в секунду: Mirror сам двигает
+// bufferTimeMultiplier при смене качества связи, но не каждый кадр.
+struct NetTiming {
+    float buffer = 0.0F;   // NetworkClient.bufferTime, s
+    float rtt = 0.0F;      // NetworkTime.rtt, s
+    int   tick = 0;        // NetworkServer.tickRate, Hz
+    bool  valid = false;
+    // Снапшот, который мы читаем, отстаёт от серверного времени на buffer (его
+    // съедает интерполяция) плюс rtt/2 (столько он ехал к нам). Попадание при
+    // этом считается по времени выстрела, а не по времени прихода пакета:
+    // FPHitscan.LOU (RVA 0x6D5029C) кладёт в команду собственные double-метки
+    // времени, а HitBoxRecorderRoot.mJ (RVA 0x5F91800) откатывает историю
+    // хитбоксов к этому моменту (historyLimit, dr[] PvA — буфер записей).
+    // Значит сервер видит цель на нашей временной метке, и упреждение — ровно
+    // buffer + rtt/2. Flight time пули сюда не входит: его считает solver.
+    float lead() const { return buffer + 0.5F * rtt; }
+};
+
+static uint64_t g_network_client_class = 0;
+static uint64_t g_network_server_class = 0;
+static uint64_t g_network_time_class = 0;
+static NetTiming g_net_timing{};
+static double g_net_timing_at = -1e9;
+
+// Слот metadata usage: [base+rva] — адрес слота, [слот] — Il2CppClass*.
+// Класс принимается только по точному имени и namespace (== 1, не «живой»):
+// в чужом билде слот ведёт на другой класс, и тогда лучше остаться на
+// константах, чем вести прицел по мусору. Запасной вариант — одноуровневое
+// чтение: TypeInfo-кэш (NETWORK_CLIENT_TYPEINFO_RVA) устроен именно так.
+static uint64_t resolve_mirror_class(uint64_t& cache, uint64_t rva, const char* name) {
+    if (cache) return cache;
+    if (rva == 0) return 0;
+    const uint64_t slot = rd_ptr(g_il2cpp_base + rva);
+    if (slot) {
+        const uint64_t klass = rd_ptr(slot);
+        if (class_identity(klass, name, "Mirror") == 1) { cache = klass; return cache; }
+        if (class_identity(slot, name, "Mirror") == 1) { cache = slot; return cache; }
+    }
+    return 0;
+}
+
+// ---- CharacterSpeedConfig: скорости и прыжок --------------------------------
+// Гравитация и скорости персонажа — не догадка, а ассет игры: тот же, по
+// которому KCC двигает игрока. Пробуем оба известных смещения поля (классы KCC
+// и SingleKcc) и принимаем только связку значений, которая вообще может быть
+// телом: спринт 3..12 м/с, гравитация 5..45, высота прыжка 0.4..3 м. Мусорный
+// указатель такого набора не даёт.
+struct CharSpeed {
+    float sprint = 0.0F, jog = 0.0F, walk = 0.0F, back_factor = 1.0F;
+    float jump_height = 0.0F, gravity = 0.0F;
+    bool  valid = false;
+};
+
+static CharSpeed g_char_speed{};
+static double g_char_speed_at = -1e9;
+
+static bool read_char_speed(uint64_t config, CharSpeed& out) {
+    if (!config) return false;
+    CharSpeed c{};
+    c.sprint = rd<float>(config + CHAR_SPEED_SPRINT);
+    c.jog = rd<float>(config + CHAR_SPEED_JOG);
+    c.walk = rd<float>(config + CHAR_SPEED_WALK);
+    c.back_factor = rd<float>(config + CHAR_SPEED_BACK_FACTOR);
+    c.jump_height = rd<float>(config + CHAR_SPEED_JUMP_HEIGHT);
+    c.gravity = rd<float>(config + CHAR_SPEED_GRAVITY);
+    const bool ok = std::isfinite(c.sprint) && std::isfinite(c.jog) &&
+                    std::isfinite(c.walk) && std::isfinite(c.jump_height) &&
+                    std::isfinite(c.gravity) &&
+                    c.sprint > 3.0F && c.sprint < 12.0F &&
+                    c.jog > 1.0F && c.jog <= c.sprint &&
+                    c.walk > 0.5F && c.walk <= c.jog &&
+                    c.jump_height > 0.4F && c.jump_height < 3.0F &&
+                    c.gravity > 5.0F && c.gravity < 45.0F;
+    if (!ok) return false;
+    if (!(c.back_factor > 0.2F && c.back_factor < 1.0F)) c.back_factor = 1.0F;
+    out = c;
+    out.valid = true;
+    return true;
+}
+
+static void char_speed_refresh() {
+    const double now = memio::now_seconds();
+    if (now - g_char_speed_at < 2.0) return;
+    g_char_speed_at = now;
+    if (!g_local_player) return;
+    const uint64_t kcc = resolve_player_kcc(g_local_player);
+    if (!kcc) return;
+    CharSpeed fresh{};
+    if (!read_char_speed(rd_ptr(kcc + CHAR_SPEED_CONFIG_KCC), fresh) &&
+        !read_char_speed(rd_ptr(kcc + CHAR_SPEED_CONFIG_SINGLE_KCC), fresh)) return;
+    g_char_speed = fresh;
+    // Потолки предикта цели едут за ассетом: спринт конфига плюс небольшой
+    // запас на спуск с горы и сжатые сетевые тики.
+    tgtpred::set_limits(fresh.sprint * 1.04F, 14.0F);
+}
+
+static void net_timing_refresh() {
+    const double now = memio::now_seconds();
+    if (now - g_net_timing_at < 1.0) return;
+    g_net_timing_at = now;
+
+    if (!g_network_client_class) {
+        resolve_mirror_class(g_network_client_class, NETWORK_CLIENT_STATICS_RVA, "NetworkClient");
+        if (!g_network_client_class)
+            resolve_mirror_class(g_network_client_class, NETWORK_CLIENT_TYPEINFO_RVA, "NetworkClient");
+    }
+    resolve_mirror_class(g_network_server_class, NETWORK_SERVER_TYPEINFO_RVA, "NetworkServer");
+    resolve_mirror_class(g_network_time_class, NETWORK_TIME_TYPEINFO_RVA, "NetworkTime");
+
+    NetTiming timing{};
+    int tick = 0;
+    double multiplier = 0.0;
+    if (g_network_client_class) {
+        const uint64_t statics = get_class_static_fields(g_network_client_class);
+        if (statics) multiplier = rd<double>(statics + NETWORK_CLIENT_BUFFER_MULTIPLIER);
+    }
+    if (g_network_server_class) {
+        const uint64_t statics = get_class_static_fields(g_network_server_class);
+        if (statics) tick = rd<int32_t>(statics + NETWORK_SERVER_TICK_RATE);
+    }
+    // bufferTime = sendInterval * bufferTimeMultiplier, как в get_bufferTime.
+    if (tick >= 5 && tick <= 240 && std::isfinite(multiplier) &&
+        multiplier > 0.0 && multiplier < 10.0) {
+        timing.tick = tick;
+        timing.buffer = static_cast<float>(multiplier / static_cast<double>(tick));
+    }
+    if (g_network_time_class) {
+        const uint64_t statics = get_class_static_fields(g_network_time_class);
+        const double rtt = statics ? rd<double>(statics + NETWORK_TIME_RTT) : 0.0;
+        if (std::isfinite(rtt) && rtt >= 0.0 && rtt < 0.6) timing.rtt = static_cast<float>(rtt);
+    }
+    // Вне этих границ это не таймнги связи, а прочитанный мусор.
+    timing.valid = timing.tick > 0 && timing.buffer >= 0.004F && timing.buffer <= 0.25F;
+    g_net_timing = timing;
+}
 static std::unordered_map<uint64_t, tgtpred::Track> g_tgt_track;
 static aim_ballistics::Parameters g_aim_ballistic_params{};
 
@@ -7711,9 +7814,10 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             } else {
                 base_vel.y = est_vel.y;
             }
+            const float speed_cap = g_char_speed.valid ? g_char_speed.sprint : 6.8F;
             const float bh = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
-            if (bh > 6.8F) {
-                const float k = 6.8F / bh;
+            if (bh > speed_cap) {
+                const float k = speed_cap / bh;
                 base_vel.x *= k;
                 base_vel.z *= k;
             }
@@ -7730,18 +7834,26 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             }
         }
         Vec3 solve_vel = aim_ballistics::scale(base_vel, ballistic_vel_scale);
-        // CharacterSpeedConfig (character-shared-local bundle): Gravity 20, JumpHeight 1.35
-        // -> jump vy0 = sqrt(2*20*1.35) = 7.35 m/s, airtime 0.73 s. Sprint 6.6 m/s.
-        constexpr float kTargetGravity = 20.0F;
+        // Гравитация цели — из CharacterSpeedConfig, если он прочитался; 20 —
+        // запасное значение того же ассета (замер по прыжку: vy0 = sqrt(2*g*h)).
+        char_speed_refresh();
+        const float target_gravity = g_char_speed.valid ? g_char_speed.gravity : 20.0F;
         aim_ballistics::TargetModel path{};
         path.tau = vehicle_speed ? 3.0F : 1.5F;
         path.horizon = vehicle_speed ? 5.0F : 2.0F;
-        path.gravity = vehicle_speed ? 0.0F : kTargetGravity;
+        path.gravity = vehicle_speed ? 0.0F : target_gravity;
         path.airborne_vy = 1.15F;
         box.aim_speed = effective_horiz_speed;
-        const float base_latency = silent_mode
-            ? kSilentStepLatency
-            : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.055F : 0.065F);
+        // Задержка сети — из статиков Mirror, а не подбором: bufferTime
+        // снапшота плюс полный rtt (rtt/2 туда, rtt/2 обратно), плюс шаг самой
+        // игры. Без таймнгов (бета, чужой билд, игра ещё грузится) — прежние
+        // константы, подобранные под buffer 2 тика на 30 Гц и rtt ~60 мс.
+        net_timing_refresh();
+        const float base_latency = g_net_timing.valid
+            ? g_net_timing.lead() + kAimStepLatency
+            : (silent_mode
+                   ? 0.065F
+                   : (g_state.aim_mode == AIM_MODE_MEMORY ? 0.055F : 0.065F));
         if (use_est) {
             // Staleness of the snapshot we are aiming at is added on top, so a
             // position that was last refreshed 60..100 ms ago is led forward
@@ -7755,6 +7867,33 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
             path.accel_time = 0.25F;
         } else {
             path.latency = base_latency;
+        }
+        // Угловая скорость точки вокруг камеры — кормит feed-forward петли
+        // аима (aim.cpp). Оси те же, от которых aim_angles_for меряет
+        // aim_yaw/aim_pitch: right/up камеры либо прицельной позы. Делим
+        // поперечную скорость на проекцию на ось взгляда — это и есть d(угол)/dt
+        // при малых углах, без численного дифференцирования шумных позиций.
+        {
+            const bool use_ref = g_aim_ref_valid;
+            const Vec3& fwd = use_ref ? g_aim_ref_forward : g_cam_forward;
+            const Vec3& right = use_ref ? g_aim_ref_right : g_cam_right;
+            const Vec3& up = use_ref ? g_aim_ref_up : g_cam_up;
+            const Vec3 cam = use_ref ? g_aim_ref_origin : g_cam_pos;
+            if (use_ref || g_cam_pose_valid) {
+                const float dx = world.x - cam.x, dy = world.y - cam.y, dz = world.z - cam.z;
+                const float fz = dx * fwd.x + dy * fwd.y + dz * fwd.z;
+                if (aim_ballistics::finite(fz) && fz > 0.5F) {
+                    constexpr float rad2deg = 57.29577951F;
+                    const float ry = (solve_vel.x * right.x + solve_vel.y * right.y +
+                                      solve_vel.z * right.z) / fz;
+                    const float rp = (solve_vel.x * up.x + solve_vel.y * up.y +
+                                      solve_vel.z * up.z) / fz;
+                    if (aim_ballistics::finite(ry) && aim_ballistics::finite(rp)) {
+                        box.aim_rate_yaw[slot] = ry * rad2deg;
+                        box.aim_rate_pitch[slot] = rp * rad2deg;
+                    }
+                }
+            }
         }
         aim_ballistics::Solution solution{};
         if (aim_ballistics::solve(origin, world, solve_vel,
@@ -9468,6 +9607,17 @@ void esp_reset() {
 // bailed out before publishing anything.
 float g_last_overlay_sw = 1080.0F;
 float g_last_overlay_sh = 2400.0F;
+
+// Последний опубликованный кадр проекции. Нужен на случай, когда чтение камеры
+// в этом кадре сорвалось: холд визуалов перепроецирует записи ТОЛЬКО текущей
+// матрицей, и без неё честно гасит всё — на экране это «все визуалы мерцают».
+// Матрица прошлого кадра (16 мс) для перепроецирования точнее пустого экрана;
+// новые боксы по ней не строятся, её видит только reproject.
+static Mat4  g_last_good_vp{};
+static float g_last_good_sw = 0.0F, g_last_good_sh = 0.0F;
+static Vec3  g_last_good_local{};
+static bool  g_last_good_local_valid = false;
+static bool  g_last_good_valid = false;
 
 // Publish a frame (VP matrix + "local position") straight from the game
 // camera, with no players involved at all. This is what keeps markers and
@@ -11501,6 +11651,19 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     g_aim_ballistic_params = {};
     std::vector<EspBox> result;
     auto transient_return = [&](int tag) {
+        // Кадр не собрался. Если матрицы вида в нём нет, подставляем последнюю
+        // опубликованную — иначе холд не перепроецирует ни одной записи и весь
+        // оверлей гаснет на кадр.
+        if (!g_frame_vp_valid && g_last_good_valid) {
+            g_frame_vp = g_last_good_vp;
+            g_frame_vp_valid = true;
+            g_frame_sw = g_last_good_sw;
+            g_frame_sh = g_last_good_sh;
+            if (!g_frame_local_valid && g_last_good_local_valid) {
+                g_frame_local_pos = g_last_good_local;
+                g_frame_local_valid = true;
+            }
+        }
         watch_boxes(result, (size_t)-1, nullptr, tag);
         return result;
     };
@@ -11870,6 +12033,13 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     g_frame_sw = sw; g_frame_sh = sh;
     g_frame_local_pos = local;
     g_frame_local_valid = has_local_position;
+    if (g_frame_vp_valid) {
+        g_last_good_vp = vp;
+        g_last_good_sw = sw; g_last_good_sh = sh;
+        g_last_good_local = local;
+        g_last_good_local_valid = has_local_position;
+        g_last_good_valid = true;
+    }
     g_frame_publish_fail_streak = 0; // this frame is healthy
 
     // Fallback camera basis straight from the view matrix (rows: right, up,
@@ -12320,21 +12490,6 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                         box.aim_valid[s] = false;
                         box.aim_world_valid[s] = false;
                     }
-                }
-            }
-        }
-
-        // Head slot fallback from the server-side Head hit volume only when the
-        // skeleton head bone was not resolved above. Overwriting a live
-        // BONE_HEAD with head_hitbox (which can sit up to 45 cm off during
-        // animations) made the aim point jump left-right between two sources.
-        if (g_aim_bones_requested && !transform_camera_mode && !box.aim_valid[0]) {
-            Vec3 hb{};
-            if (player_head_hitbox_world(aux, hb)) {
-                float dy = hb.y - feet.y;
-                float dx = hb.x - feet.x, dz = hb.z - feet.z;
-                if (dy > 0.5F && dy < 2.4F && (dx * dx + dz * dz) < 1.0F) {
-                    if (set_aim_point(box, 0, hb, vp, sw, sh) && box.aim_source == 0) box.aim_source = 1;
                 }
             }
         }

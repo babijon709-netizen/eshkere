@@ -46,6 +46,8 @@ struct AimTarget {
     float sx = 0.f, sy = 0.f;       // screen position (px)
     float dist = 0.f;               // pixel distance from crosshair
     float world_dist = 0.f;
+    // Угловая скорость этой точки вокруг камеры, град/с (см. EspBox.aim_rate_*).
+    float rate_yaw = 0.f, rate_pitch = 0.f;
     float world[3] = {};            // точная мировая координата кости для silent-режима
     bool  world_valid = false;
     int   bone = -1;                // слот точки прицела (0 голова, 1 шея, 2 грудь)
@@ -201,16 +203,7 @@ struct RankedAimTarget {
 
 static AimPick s_touchPick;
 
-// Per-frame checks for memory and silent modes. Calibration, detached state,
-// freecam, and scope-only ADS can pause aiming. The reason is recorded in
-// AimMemDiag.inactive:
-//   1 disabled              2 game process detached
-//   4 zone calibration      6 freecam enabled
-//   7 scope-only without ADS  8 invalid screen   9 fire button not held
-// ADS state and its source are retained because the inactive path clears the
-// rest of the diagnostics.
-static int  s_adsState  = -1;   // 1 в прицеле, 0 нет, -1 режим выключен
-static int  s_adsSource = 0;    // 1 Aim, 2 isAiming, 0 не подтвердилась
+// ADS state is debounced: two agreeing reads change it, one bad frame does not.
 static bool s_adsDebounced = false;
 static int s_adsOnStreak = 0, s_adsOffStreak = 0;
 
@@ -245,20 +238,17 @@ static constexpr double kFireHoldSeconds = 0.30;
 static double s_fireUntil = -1e9;
 static float  s_hitMark = 0.f;
 static bool   s_hitMarkSeen = false;
-static int    s_fireState = -1;      // 1 стреляем, 0 нет, -1 режим выключен
 static bool   s_fireGateAllow = true;
 
 static void AimFireGateUpdate(double now) {
     if (!g_state.aim_fire_only) {
         s_fireGateAllow = true;
-        s_fireState = -1;
         s_hitMarkSeen = false;
         s_fireUntil = -1e9;
         return;
     }
     if (g_state.farm_on) {
         s_fireGateAllow = false;
-        s_fireState = -1;
         return;
     }
     bool held = false;
@@ -279,7 +269,6 @@ static void AimFireGateUpdate(double now) {
         }
     }
     const bool firing = now <= s_fireUntil;
-    s_fireState = firing ? 1 : 0;
     s_fireGateAllow = firing;
 }
 
@@ -294,7 +283,7 @@ static bool AimScreenSize(float& sw, float& sh) {
     return sw >= 100.f && sh >= 100.f;
 }
 
-static bool AimBegin(float& dt, float& sw, float& sh, int* why = nullptr) {
+static bool AimBegin(float& dt, float& sw, float& sh) {
     g_aimActive = false;
     // Calibration owns the physical touch used to select a screen point.
     // Freecam owns the camera and cannot share its look controller with aim.
@@ -304,8 +293,6 @@ static bool AimBegin(float& dt, float& sw, float& sh, int* why = nullptr) {
     // "Только с прицелом": only steer while the local player is ADS.
     if (g_state.aim_scope_only && g_esp_attached) {
         const bool rawAds = esp_local_player_is_aiming();
-        s_adsState = rawAds ? 1 : 0;
-        s_adsSource = esp_local_aim_source();
         if (rawAds) {
             if (s_adsOnStreak < 2) ++s_adsOnStreak;
             s_adsOffStreak = 0;
@@ -317,94 +304,24 @@ static bool AimBegin(float& dt, float& sw, float& sh, int* why = nullptr) {
         }
         if (active && !s_adsDebounced) active = false;
     } else {
-        s_adsState = -1;
-        s_adsSource = 0;
         s_adsDebounced = false;
         s_adsOnStreak = s_adsOffStreak = 0;
     }
     // «Только при стрельбе»: состояние посчитано в UpdateAim (оно общее для
     // всех трёх режимов); без выстрелов аим не ведёт.
     if (active && !s_fireGateAllow) active = false;
-    if (!active) {
-        // Причину пишем по первому же невыполненному условию: в логе 15:57
-        // «объект=0» шёл в 219 кадрах из 319, и без расшифровки это выглядело
-        // как «потерялся MouseLook», хотя проверка объекта даже не запускалась.
-        if (why) {
-            if (!g_state.aim_touch)                  *why = 1;
-            else if (!g_esp_attached)                *why = 2;
-            else if (g_calibMode != 0)               *why = 4;
-            else if (g_state.freecam_on)             *why = 6;
-            else if (!s_fireGateAllow)               *why = 9;
-            else                                     *why = 7;
-        }
-        return false;
-    }
+    if (!active) return false;
 
     if (dt <= 0.f || !std::isfinite(dt)) dt = 1.f / 60.f;
     if (dt > 0.1f) dt = 0.1f;
 
-    if (!AimScreenSize(sw, sh)) {
-        if (why) *why = 8;
-        return false;
-    }
+    if (!AimScreenSize(sw, sh)) return false;
     return true;
 }
 
 // Select a target for touch, memory, and silent modes; memory additionally filters its angles.
-
-static unsigned long s_dead_skipped = 0;   // мёртвых не взяли в цель (для лога)
-static unsigned long s_no_skeleton = 0;         // у цели нет скелета вовсе
-static unsigned long s_bones_not_projected = 0; // configured bone is unavailable/unprojected
-static unsigned long s_ally_skipped = 0;        // союзников не берём никогда
-static unsigned long s_offscreen_skipped = 0;   // есть кости, но точка вне экрана
-static unsigned long s_out_of_fov = 0;          // точка дальше круга обзора
-// Сколько всего игроков приходило на выбор цели за период (для лога): без
-// этой цифры «пропущено N» невозможно прочитать — непонятно, много это или
-// все, кого видно.
-static unsigned long s_seen_boxes = 0;
-// Сколько из них — боты (боксы с is_bot): сводка считает их отдельно, чтобы
-// «игроков N» читалось честно.
-static unsigned long s_seen_bots = 0;
-// Боты пропущены, потому что их ЕСП выключено (аим берёт ботов только
-// с включёнными маркерами).
-static unsigned long s_bot_noesp_skipped = 0;
-
-// why — причина, по которой цель НЕ выбрана (0 когда цель есть). Коды:
-//   1 боксов нет вовсе      2 все союзники      3 все мёртвые
-//   4 нет скелета           5 кости не легли на экран
-//   6 точка вне экрана      7 точка дальше круга обзора
-// Без этого кода кадр «аим активен, прицел есть, записей ноль» нечем
-// прочесть: в логе 17:06 таких было 32 из 92, и что именно не пустило
-// цель — отфильтровали трупа, круг обзора или пустой список — не видно.
-static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarget& best,
-                            int* why = nullptr) {
-    if (why) *why = 0;
-    const unsigned long was_ally = s_ally_skipped, was_dead = s_dead_skipped;
-    const unsigned long was_nosk = s_no_skeleton,  was_noproj = s_bones_not_projected;
-    const unsigned long was_off  = s_offscreen_skipped, was_fov = s_out_of_fov;
-    const unsigned long was_seen = s_seen_boxes;
+static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarget& best) {
     const std::vector<EspBox>& boxes = FrameBoxes(sw, sh);
-
-    // Сводку пропусков печатаем БЕЗ условий и ДО выбора. В сборке 829a1dc
-    // строка «мёртвых N» жила внутри ветки «кости не нашлись», и когда
-    // мёртвыми оказались вообще все игроки, в логе не появилось НИ ОДНОЙ
-    // строки: причину жалобы «аим вообще не нацеливается на игроков»
-    // (19.09) стало нечем подтвердить. Счётчик, который молчит именно
-    // тогда, когда сломалось, — не диагностика.
-    {
-        static double s_at = -1e9;
-        const double now = (double)clock() / CLOCKS_PER_SEC;
-        const unsigned long total = s_no_skeleton + s_bones_not_projected + s_dead_skipped +
-                                    s_ally_skipped + s_offscreen_skipped + s_out_of_fov +
-                                    s_bot_noesp_skipped;
-        if (now - s_at >= 5.0 && (total || s_seen_boxes)) {
-            s_at = now;
-            s_seen_boxes = 0; s_seen_bots = 0; s_bot_noesp_skipped = 0;
-            s_ally_skipped = 0; s_dead_skipped = 0;
-            s_no_skeleton = 0; s_bones_not_projected = 0;
-            s_offscreen_skipped = 0; s_out_of_fov = 0;
-        }
-    }
 
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
     const float fovR = AimFovRadiusPx(sw, sh);
@@ -428,15 +345,13 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         // что со скрытыми союзниками (показ выключен) аим работал по ним
         // как по врагам (вопрос 19.09). Признак своего — из групп/кланов
         // (game.cpp, groups_are_allied), он считается независимо от визуалов.
-        ++s_seen_boxes;
-        if (b.is_bot) ++s_seen_bots;
         // Боты — цели, только пока включено их ЕСП: выключил «Боты» —
         // аим их не трогает. Действует в обоих режимах (выбор цели общий).
-        if (b.is_bot && !g_state.esp_bots) { ++s_bot_noesp_skipped; continue; }
-        if (b.ally) { ++s_ally_skipped; continue; }
+        if (b.is_bot && !g_state.esp_bots) continue;
+        if (b.ally) continue;
         // Мёртвых не берём: труп ещё несколько секунд остаётся в списке
         // игроков с корректным скелетом, и прицел уезжал на него (19.09).
-        if (b.dead) { ++s_dead_skipped; continue; }
+        if (b.dead) continue;
         if (cfg::aim::vis_check && !b.visible) continue;
         AimTarget t;
         // Silent auto-zone: head/neck hitboxes are a few cm; on a runner or at range
@@ -465,17 +380,18 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
                 t.world_valid = t.world_valid && std::isfinite(t.world[i]);
             }
         } else {
-            if (b.has_skeleton) ++s_bones_not_projected; else ++s_no_skeleton;
             continue;
         }
         if (!t.valid) continue;
         t.id = b.id;
         t.health = b.health; t.respawning = b.respawning;
+        t.rate_yaw = b.aim_rate_yaw[usedBone];
+        t.rate_pitch = b.aim_rate_pitch[usedBone];
         t.skel_bones = b.skel_bones; t.skel_up = b.skel_up; t.skel_flat = b.skel_flat;
         t.death_flag = b.death_flag;
         const bool sticky = (pick.lastId != 0 && b.id == pick.lastId);
-        if (t.sx < -sw || t.sx > sw * 2.f || t.sy < -sh || t.sy > sh * 2.f) { ++s_offscreen_skipped; continue; }
-        if (g_state.aim_pos && !sticky && (t.sx < 0.f || t.sy < 0.f || t.sx > sw || t.sy > sh)) { ++s_offscreen_skipped; continue; }
+        if (t.sx < -sw || t.sx > sw * 2.f || t.sy < -sh || t.sy > sh * 2.f) continue;
+        if (g_state.aim_pos && !sticky && (t.sx < 0.f || t.sy < 0.f || t.sx > sw || t.sy > sh)) continue;
         float dx = t.sx - crossX, dy = t.sy - crossY;
         t.dist = sqrtf(dx * dx + dy * dy);
         t.world_dist = b.distance;
@@ -487,7 +403,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
             ? (inScreenFov || manes_aim_source::inside_angular_fov(
                   t.yaw, t.pitch, cfg::aim::fov, sticky ? fovRadiusDeg : 0.f))
             : inScreenFov;
-        if (!inFov) { ++s_out_of_fov; continue; }
+        if (!inFov) continue;
 
         const float pixelTerm = t.dist / (fovR > 1.f ? fovR : 1.f);
         const float angleTerm = angularDistance /
@@ -518,26 +434,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         }
     }
 
-    if (!haveBest) {
-        if (why) {
-            // Берём ту причину, которая в ЭТОМ кадре отсеяла больше всех:
-            // счётчики накопительные, а нужен ответ про конкретный кадр.
-            const unsigned long d[] = {
-                s_seen_boxes - was_seen, s_ally_skipped - was_ally,
-                s_dead_skipped - was_dead, s_no_skeleton - was_nosk,
-                s_bones_not_projected - was_noproj, s_offscreen_skipped - was_off,
-                s_out_of_fov - was_fov
-            };
-            // «Боксов нет» — только когда на выбор не пришёл НИ ОДИН игрок;
-            // иначе причина та, которой отсеяно больше всего.
-            int code = 1; unsigned long top = 0;
-            for (int i = 1; i < 7; ++i) if (d[i] > top) { top = d[i]; code = i + 1; }
-            if (d[0] > 0 && top == 0) code = 1;
-            if (d[0] == 0) code = 1;
-            *why = code;
-        }
-        return false;
-    }
+    if (!haveBest) return false;
 
     const bool targetChanged = best.id != pick.lastId;
     const bool selectionChanged = targetChanged || best.bone != pick.lastBone;
@@ -634,8 +531,12 @@ static void UpdateAimTouch(float dt) {
 
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;
     const float ex = best.sx - crossX, ey = best.sy - crossY;
+    // Палец нужен и когда прицел уже стоит на цели, но цель едет: скорость
+    // точки тянет камеру feed-forward-ом, и без касания петля снова отстаёт,
+    // пока ошибка не вырастет до порога. Отпускаем только стоящую цель.
+    const bool point_moving = fabsf(best.rate_yaw) > 1.0f || fabsf(best.rate_pitch) > 1.0f;
     if (!s_fingerDown) {
-        if (fabsf(ex) < 1.2f && fabsf(ey) < 1.2f) return;
+        if (!point_moving && fabsf(ex) < 1.2f && fabsf(ey) < 1.2f) return;
         s_fx = ptX;
         s_fy = ptY;
         Touch_Down(s_fx, s_fy);
@@ -654,10 +555,20 @@ static void UpdateAimTouch(float dt) {
     float ky = kx * 0.65f;
     if (ky > 0.42f) ky = 0.42f;
 
+    // Скорость точки в пикселях пальца: град/с * dt / (град/px). Коэффициент
+    // тот же, что у запасного град/px (0.10 при эталонной чувствительности) —
+    // иначе feed-forward ехал бы в других единицах, чем остальная петля.
+    bool gain_from_game = false;
+    const float deg_per_px = AimSensitivityGain(gain_from_game);
+    float ffx = 0.f, ffy = 0.f;
+    if (deg_per_px > 1e-4f) {
+        ffx = best.rate_yaw * dt / deg_per_px;
+        ffy = -best.rate_pitch * dt / deg_per_px;   // палец вниз = камера вниз
+    }
     float maxStep = (2500.f + (sm - 1.f) * 500.f) * dt;
     if (maxStep > 150.f) maxStep = 150.f;
-    float dx = (fabsf(ex) < 0.8f) ? 0.f : (ex * kx);
-    float dy = (fabsf(ey) < 1.2f) ? 0.f : (ey * ky);
+    float dx = ((fabsf(ex) < 0.8f) ? 0.f : (ex * kx)) + ffx;
+    float dy = ((fabsf(ey) < 1.2f) ? 0.f : (ey * ky)) + ffy;
     if (dx > maxStep) dx = maxStep;
     if (dx < -maxStep) dx = -maxStep;
     if (dy > maxStep) dy = maxStep;
@@ -682,30 +593,6 @@ static void UpdateAimTouch(float dt) {
     Touch_Move(s_fx, s_fy);
 }
 
-// ---- диагностика режимов: по 4 строки в секунду в лог (Загрузки) ----------
-// Главное, что должно быть видно: выигрывает ли запись гонку у игры. Поэтому
-// в сайленте печатается то, что лежало в оси ДО нашей записи, — если там наше
-// вчерашнее значение, значит игра ось в этом кадре не переписывала.
-static unsigned long s_frames = 0;
-static float         s_logTime = 0.f;
-
-static const char* aim_mode_name() {
-    switch (g_state.aim_mode) {
-        case AIM_MODE_MEMORY: return "память";
-        default:              return "тач";
-    }
-}
-
-// Сколько раз ось выстрелаdobили в конце кадра между двумя строками лога
-
-static void AimLogTick(float dt) {
-    s_logTime += dt;
-    if (s_logTime < 0.25f) return;
-    s_logTime = 0.f;
-    const AimMemDiag& d = AimMemoryDiag();
-    if (g_state.aim_mode == AIM_MODE_MEMORY)
-        ;
-}
 
 // ====================== Мемори-аим: «память» ===============================
 //
@@ -724,10 +611,6 @@ static void AimLogTick(float dt) {
 // приняла значение. Это только диагностика отклика в меню.
 static constexpr float kMemAckEps = 0.10f;
 
-static AimMemDiag s_memDiag;
-
-const AimMemDiag& AimMemoryDiag() { return s_memDiag; }
-
 // Convert remaining error into a smooth lock step. Use a small deadband near
 // the bone; farther away, acquisition speed depends on sensitivity and range.
 static float mem_axis_step(float err, float dt, float range) {
@@ -737,8 +620,6 @@ static float mem_axis_step(float err, float dt, float range) {
 static void UpdateAimMemory(float dt) {
     static AimPick pick;
     static int s_missFrames = 0;
-    static float s_lastCamYaw = 0.f, s_lastCamPitch = 0.f;
-    static bool  s_haveLast = false;
     // Последняя запись в накопитель (в тех же завёрнутых координатах, что
     // вернёт чтение): по совпадению видно, приняла ли игра запись.
     static float s_lastWriteX = 0.f, s_lastWriteY = 0.f;
@@ -749,59 +630,44 @@ static void UpdateAimMemory(float dt) {
     static float s_trimY = 0.f, s_trimX = 0.f;
     static bool  s_haveTrim = false;
     float sw = 0.f, sh = 0.f;
-    int why = 0;
-    if (!AimBegin(dt, sw, sh, &why)) {
-        s_memDiag = AimMemDiag{};
-        s_memDiag.inactive = why;   // печатается в той же строке «объект=…»
-        s_memDiag.ads = s_adsState; s_memDiag.ads_source = s_adsSource;
-        s_memDiag.fire = s_fireState;
-        pick.reset(); s_missFrames = 0; s_haveLast = false; s_haveLastWrite = false;
+    if (!AimBegin(dt, sw, sh)) {
+        pick.reset(); s_missFrames = 0; s_haveLastWrite = false;
         s_unconsumedT = 0.f; s_haveTrim = false;
         return;
     }
-    s_memDiag.inactive = 0;
-    s_memDiag.ads = s_adsState; s_memDiag.ads_source = s_adsSource;
-    s_memDiag.fire = s_fireState;
 
     // MouseLook нужен не ради чувствительности (накопитель уже в градусах), а
     // как проверка «объект тот»: m_Sensitivity в правдоподобных пределах —
     // значит это действительно MouseLook локального игрока.
     float sens = 0.f; bool invert = false, gyro = false;
     const bool haveParams = esp_mem_aim_look_params(sens, invert, gyro);
-    s_memDiag.params = haveParams;
     if (!haveParams) {
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
+        if (++s_missFrames > 6) { pick.reset(); s_haveTrim = false; }
         s_haveLastWrite = false;
         s_unconsumedT = 0.f;
         return;
     }
-    s_memDiag.gyro = gyro;
 
     // Текущий накопитель углов камеры. Запасная запись (без базы углов)
     // считается от него; абсолютной базе он не нужен, но прочитать его всё
     // равно необходимо: это самая дешёвая проверка, что объект жив.
     float accX = 0.f, accY = 0.f;
     if (!esp_mem_aim_read_angles(accX, accY)) {
-        // Самый молчаливый путь: цель есть, писать нечем, а ни один счётчик
-        // не растёт. Без отметки здесь кадр не отличить от «цели не было».
-        ++s_memDiag.read_fail;
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
+        // Накопитель не читается: цель может быть, писать некуда.
+        if (++s_missFrames > 6) { pick.reset(); s_haveTrim = false; }
         s_haveLastWrite = false;
         s_unconsumedT = 0.f;
         return;
     }
 
     AimTarget best;
-    int noTgtWhy = 0;
-    if (!AimSelectTarget(sw, sh, dt, pick, best, &noTgtWhy)) {
-        s_memDiag.no_target = noTgtWhy;
-        if (++s_missFrames > 6) { pick.reset(); s_haveLast = false; s_haveTrim = false; }
+    if (!AimSelectTarget(sw, sh, dt, pick, best)) {
+        if (++s_missFrames > 6) { pick.reset(); s_haveTrim = false; }
         s_haveLastWrite = false;
         s_unconsumedT = 0.f;
         return;
     }
     s_missFrames = 0;
-    s_memDiag.no_target = 0;
     if (pick.switched) {
         // Другая цель: подтверждение прошлой записи и дрейф по прежней кости
         // к ней не относятся.
@@ -815,35 +681,22 @@ static void UpdateAimMemory(float dt) {
         matchedLastWrite =
             fabsf(WrapDeg180(accY - s_lastWriteY)) < kMemAckEps &&
             fabsf(WrapDeg180(accX - s_lastWriteX)) < kMemAckEps;
-        if (matchedLastWrite) s_memDiag.responded = true;
     }
 
     // ---- камера: расхождение и отклик ---------------------------------------
-    // Накопитель и камера должны совпадать: в конце каждого ZJo игра кладёт в
-    // накопитель фактические углы камеры. Разошлись — это чужой MouseLook.
-    float camYaw = 0.f, camPitch = 0.f;
-    const bool haveCam = esp_aim_camera_angles(camYaw, camPitch) &&
-                         std::isfinite(camYaw) && std::isfinite(camPitch);
-    if (haveCam) {
-        s_memDiag.mismatch = fabsf(WrapDeg180(accY - camYaw)) +
-                             fabsf(WrapDeg180(accX + camPitch));
-        if (s_haveLast && s_memDiag.mismatch < 1.0f &&
-            (fabsf(WrapDeg180(camYaw - s_lastCamYaw)) > 0.05f ||
-             fabsf(camPitch - s_lastCamPitch) > 0.05f)) {
-            s_memDiag.responded = true;
-        }
-        s_lastCamYaw = camYaw; s_lastCamPitch = camPitch; s_haveLast = true;
-    } else {
-        s_haveLast = false;
-    }
-
     // ---- плавный жёсткий лок --------------------------------------------------
-    const float offYaw   = mem_axis_step(best.yaw, dt, best.world_dist);
-    const float offPitch = mem_axis_step(best.pitch, dt, best.world_dist);
+    // Команда = собственная скорость точки + поправка по ошибке. Из одной
+    // ошибки выходит постоянное отставание: ровный стрей даёт остаток v/k, где
+    // k — гейн петли, и на 20 м это сантиметры тридцать. Со слагаемым скорости
+    // остаток стремится к нулю: камера уже едет со скоростью цели, а петля
+    // доделывает только то, что не угадала.
+    const float offYaw   = mem_axis_step(best.yaw, dt, best.world_dist) +
+                           best.rate_yaw * dt;
+    const float offPitch = mem_axis_step(best.pitch, dt, best.world_dist) +
+                           best.rate_pitch * dt;
     if (offYaw == 0.f && offPitch == 0.f) {
         s_haveLastWrite = false;   // подтверждения больше нет — записи нет
         s_unconsumedT = 0.f;
-        ++s_memDiag.on_target;
         return;
     }
 
@@ -893,10 +746,8 @@ static void UpdateAimMemory(float dt) {
     // Градусы -> накопитель игры: X — «наклон вниз» (вверх — меньше),
     // Y — рысканье (вправо — больше).
     if (!esp_mem_aim_write_angles(writeX, writeY)) {
-        ++s_memDiag.fails;
         return;
     }
-    ++s_memDiag.writes;
     // Запомнить записанное — в обёрнутом виде: чтение возвращает обёрнутые
     // углы, и сравнение на следующем такте обязано быть в тех же координатах.
     s_lastWriteX = writeX; s_lastWriteY = writeY;
@@ -940,7 +791,6 @@ void AimEndFrame() {
 
 // Диспетчер: какой режим ведёт камеру в этом кадре.
 void UpdateAim(float dt) {
-    ++s_frames;
     const int mode = g_state.aim_mode;
     // Гейт «только при стрельбе» считается ДО диспетчера и один раз на кадр:
     // он общий для всех трёх режимов, а после смены режима меню могло успеть
@@ -955,7 +805,6 @@ void UpdateAim(float dt) {
         s_touchPick.reset();
         previousMode = mode;
     }
-    AimLogTick(dt);
     if (mode == AIM_MODE_MEMORY) UpdateAimMemory(dt);
     else if (mode == AIM_MODE_SILENT) UpdateAimSilent(dt);
     else                              UpdateAimTouch(dt);

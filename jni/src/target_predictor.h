@@ -22,7 +22,7 @@ constexpr double kWeightTau    = 0.22;   // s, recency weight e^(-age/tau)
 constexpr double kHoldSample   = 0.25;   // s, push a "still here" sample
 constexpr double kDeadAfter    = 0.70;   // s without any sample -> no estimate
 constexpr float  kMinStep      = 0.015f; // m, smaller = position not updated
-constexpr float  kMaxSpeed     = 6.8f;   // m/s (Oxide CharacterSpeedConfig Sprint = 6.6)
+constexpr float  kMaxSpeed     = 6.8f;   // m/s, запасное (Sprint ассета +4%)
 constexpr float  kMaxAccel     = 14.0f;  // m/s^2
 constexpr float  kTeleportDist = 3.0f;   // m in one step ...
 constexpr float  kTeleportSpeed= 25.0f;  // ... at > this m/s = respawn/teleport
@@ -30,6 +30,16 @@ constexpr float  kBadFitRms    = 0.30f;  // m, fit residual where confidence -> 
 constexpr float  kReversalMinSpeed = 1.5f;  // m/s on both sides of the flip
 constexpr float  kReversalCos  = -0.2f;  // cos(angle) below this = reversal
 constexpr double kAccelRidge   = 0.15;   // relative ridge on the accel term (noisy at 10 Hz)
+
+// Потолки приходят из CharacterSpeedConfig игры (game.cpp, char_speed_refresh):
+// иначе оценка обрезает спринт, который игра реально выдаёт. Значения по
+// умолчанию — тот же ассет до первого успешного чтения.
+inline float g_max_speed = kMaxSpeed;
+inline float g_max_accel = kMaxAccel;
+inline void set_limits(float max_speed, float max_accel) {
+    if (std::isfinite(max_speed) && max_speed > 1.0f && max_speed < 40.0f) g_max_speed = max_speed;
+    if (std::isfinite(max_accel) && max_accel > 1.0f && max_accel < 80.0f) g_max_accel = max_accel;
+}
 
 struct Sample { Vec3 p; double t = 0.0; };
 
@@ -193,11 +203,11 @@ inline Estimate estimate(const Track& tr, double now) {
 
     // Horizontal speed cap (keeps direction), vertical handled by the jump model.
     const float hs = std::sqrt(e.vel.x * e.vel.x + e.vel.z * e.vel.z);
-    if (hs > kMaxSpeed) { const float k = kMaxSpeed / hs; e.vel.x *= k; e.vel.z *= k; }
+    if (hs > g_max_speed) { const float k = g_max_speed / hs; e.vel.x *= k; e.vel.z *= k; }
     if (hs < 0.3f) { e.vel.x = 0.0f; e.vel.z = 0.0f; }
     e.accel.y = 0.0f;
     const float ha = std::sqrt(e.accel.x * e.accel.x + e.accel.z * e.accel.z);
-    if (ha > kMaxAccel) { const float k = kMaxAccel / ha; e.accel.x *= k; e.accel.z *= k; }
+    if (ha > g_max_accel) { const float k = g_max_accel / ha; e.accel.x *= k; e.accel.z *= k; }
     if (conf < 0.5f) { e.accel.x = 0.0f; e.accel.z = 0.0f; }
 
     const float speed = std::sqrt(e.vel.x * e.vel.x + e.vel.z * e.vel.z);

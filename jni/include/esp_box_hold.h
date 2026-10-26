@@ -4,6 +4,13 @@
 // Здоровый кадр авторитетен: холд заменяется целиком. Битый кадр (transient)
 // сливает читаемые записи по стабильному id и продлевает недостающие.
 //
+// Пропуск кадра — не повод мигать. Раньше здоровый кадр заменял список
+// целиком, и одна неудавшаяся читка позиции игрока (или один кадр без матрицы
+// вида) гасила его бокс ровно на кадр: на экране это «визуалы иногда мерцают на
+// миллисекунды». Поэтому короткое окно пропуска действует и на здоровом кадре —
+// запись перепроецируется текущей камерой, как и на битом, только окно короче
+// (miss_seconds), чтобы труп/вышедший не висел тенью.
+//
 // Продлевать можно ТОЛЬКО мировой якорь. Экранные координаты, посчитанные
 // прошлой матрицей вида, приклеены к экрану: как только камера поехала, бокс
 // (и метка) разъезжаются с объектом — это ровно жалоба «визуалы плавают по
@@ -39,18 +46,14 @@ inline void update(std::vector<Entry<Value>>& hold,
                    bool transient,
                    double now,
                    double hold_seconds,
+                   double miss_seconds,
                    Reproject&& reproject,
                    std::vector<Value>& out) {
-    if (!transient) {
-        hold.clear();
-        hold.reserve(fresh.size());
-        for (const Value& value : fresh) {
-            Entry<Value> entry;
-            entry.value = value;
-            entry.last_seen = now;
-            hold.push_back(entry);
-        }
-    } else {
+    // Окно жизни записи: на битом кадре — полное, на здоровом — короткое
+    // (столько, сколько нужно, чтобы пережить один-два пропущенных кадра).
+    const double window = transient ? hold_seconds
+                                    : (miss_seconds > 0.0 ? miss_seconds : hold_seconds);
+    {
         for (const Value& value : fresh) {
             auto found = std::find_if(hold.begin(), hold.end(), [&](const Entry<Value>& entry) {
                 return entry.value.id == value.id;
@@ -66,16 +69,13 @@ inline void update(std::vector<Entry<Value>>& hold,
             }
         }
         // last_seen == now бывает только у обновлённых этим кадром записей:
-        // всё, что старше, перепроецируется (или уходит).
+        // всё, что старше, либо вышло за окно, либо перепроецируется текущей
+        // камерой. Кадр без матрицы вида перепроецировать не может — тогда
+        // запись уходит сразу, а не висит приклеенной к экрану.
         for (std::size_t index = 0; index < hold.size();) {
             if (!(hold[index].last_seen < now)) { ++index; continue; }
-            if (!reproject(hold[index].value))
-                hold.erase(hold.begin() + (std::ptrdiff_t)index);
-            else
-                ++index;
-        }
-        for (std::size_t index = 0; index < hold.size();) {
-            if (now - hold[index].last_seen > hold_seconds)
+            if (now - hold[index].last_seen > window ||
+                !reproject(hold[index].value))
                 hold.erase(hold.begin() + (std::ptrdiff_t)index);
             else
                 ++index;

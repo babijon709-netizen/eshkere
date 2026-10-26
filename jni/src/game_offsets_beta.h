@@ -466,6 +466,24 @@ inline constexpr std::uint64_t IL2CPP_LIST_SIZE = game_offsets::IL2CPP_LIST_SIZE
 inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = game_offsets::IL2CPP_ARRAY_FIRST_ELEMENT;
 inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE646398;
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED = game_offsets::NETWORK_CLIENT_SPAWNED;
+// Таймнги Mirror: слота в бете нет — дампа беты не делали, а слоты metadata
+// usage двигаются каждый билд. Поля те же (Mirror не пересобирали), поэтому
+// смещения берём из release. Ноль в RVA = читать неоткуда, game.cpp остаётся
+// на прежних константах задержки.
+inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0;
+inline constexpr std::uint64_t NETWORK_CLIENT_STATICS_RVA = 0;
+inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA = 0;
+inline constexpr std::uint64_t NETWORK_CLIENT_BUFFER_MULTIPLIER = game_offsets::NETWORK_CLIENT_BUFFER_MULTIPLIER;
+inline constexpr std::uint64_t NETWORK_SERVER_TICK_RATE = game_offsets::NETWORK_SERVER_TICK_RATE;
+inline constexpr std::uint64_t NETWORK_TIME_RTT = game_offsets::NETWORK_TIME_RTT;
+inline constexpr std::uint64_t CHAR_SPEED_CONFIG_KCC = game_offsets::CHAR_SPEED_CONFIG_KCC;
+inline constexpr std::uint64_t CHAR_SPEED_CONFIG_SINGLE_KCC = game_offsets::CHAR_SPEED_CONFIG_SINGLE_KCC;
+inline constexpr std::uint64_t CHAR_SPEED_SPRINT = game_offsets::CHAR_SPEED_SPRINT;
+inline constexpr std::uint64_t CHAR_SPEED_JOG = game_offsets::CHAR_SPEED_JOG;
+inline constexpr std::uint64_t CHAR_SPEED_WALK = game_offsets::CHAR_SPEED_WALK;
+inline constexpr std::uint64_t CHAR_SPEED_BACK_FACTOR = game_offsets::CHAR_SPEED_BACK_FACTOR;
+inline constexpr std::uint64_t CHAR_SPEED_JUMP_HEIGHT = game_offsets::CHAR_SPEED_JUMP_HEIGHT;
+inline constexpr std::uint64_t CHAR_SPEED_GRAVITY = game_offsets::CHAR_SPEED_GRAVITY;
 inline constexpr std::uint64_t DICT_ENTRIES = game_offsets::DICT_ENTRIES;
 inline constexpr std::uint64_t DICT_COUNT = game_offsets::DICT_COUNT;
 inline constexpr std::uint64_t DICT_ENTRY_STRIDE = game_offsets::DICT_ENTRY_STRIDE;

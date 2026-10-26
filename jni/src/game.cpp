@@ -10057,6 +10057,7 @@ static struct MapDiag {
     int   stage = 0;
     int   mgr_open = 0;
     int   pres_open = 0;
+    int   zratio = 0;    // сколько отношений «мир / локальная точка» легло в медиану
     int   pins = 0;      // пар «мир / локальная точка» из маркеров интереса
     int   markers = 0;   // то же из словаря маркеров презентера
     float zry = 0.0F;
@@ -10181,18 +10182,23 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
     // считается из якорей, размер мира приходит из IQ-контекста), поэтому
     // берём zry с самих маркеров: у каждой метки есть мировая точка и её
     // локальная позиция на карте.
-    float best_zry = 0.0F;
-    float best_span = 0.0F;
+    // Раньше zry брался по одной самой дальней паре «мир / локальная точка».
+    // Один маркер врёт целиком: у метки, выехавшей за край или поставленной
+    // по своему якорю, локальная позиция перестаёт быть ровно world/zry.
+    // Одна такая пара уводила весь слой (трейс: 2.988 вместо 0.498).
+    // Поэтому копим отношения со всех пар и берём медиану — одиночный выброс
+    // её не сдвигает.
+    float ratios[48];
+    int   ratio_count = 0;
     auto consider_pair = [&](float world_coord, float local_coord) {
         const float aw = fabsf(world_coord);
         const float al = fabsf(local_coord);
         if (!std::isfinite(aw) || !std::isfinite(al) || aw < 4.0F || al < 0.5F) return;
         const float ratio = world_coord / local_coord;
-        if (std::isfinite(ratio) && ratio > 0.15F && ratio < 25.0F && aw > best_span) {
-            best_span = aw;
-            best_zry = ratio;
-        }
+        if (!std::isfinite(ratio) || ratio <= 0.15F || ratio >= 25.0F) return;
+        if (ratio_count < 48) ratios[ratio_count++] = ratio;
     };
+    float best_zry = 0.0F;
 
     if (valid_obj(static_interest)) {
         const uint64_t rects_list = rd_ptr(static_interest + game_offsets::STATIC_INTEREST_RECTS_LIST);
@@ -10245,6 +10251,13 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
             }
         }
     }
+
+    if (ratio_count > 0) {
+        if (ratio_count > 1) std::sort(ratios, ratios + ratio_count);
+        best_zry = (ratio_count & 1) ? ratios[ratio_count / 2]
+                                     : 0.5F * (ratios[ratio_count / 2 - 1] + ratios[ratio_count / 2]);
+    }
+    g_map_diag.zratio = ratio_count;
 
     if (best_zry > 0.0F) {
         g_cached_map_zry = best_zry;
@@ -13046,7 +13059,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             snprintf(note, sizeof(note),
                      "map stage=%d mgr=%d pres=%d open=%d pins=%d marks=%d "
                      "zry=%.3f canvas=%.0fx%.0f proj=%d/%d local=%.1f,%.1f px=%.0f,%.0f "
-                     "mpos=%.0f,%.0f why=%d floc=%.1f,%.1f fpx=%.0f,%.0f "
+                     "mpos=%.0f,%.0f zr=%d why=%d floc=%.1f,%.1f fpx=%.0f,%.0f "
                      "arr=%d loc=%d idx=%d lay=%d tr=%d sc=%.4f,%.4f nat=%llx mats=%llx inds=%llx "
                      "mm=%llx mv=%llx rt=%llx",
                      g_map_diag.stage, g_map_diag.mgr_open, g_map_diag.pres_open,
@@ -13056,7 +13069,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                      g_map_diag.local_x, g_map_diag.local_y,
                      g_map_diag.sx, g_map_diag.sy,
                      g_map_diag.map_pos_x, g_map_diag.map_pos_y,
-                     g_map_diag.fail_why,
+                     g_map_diag.zratio, g_map_diag.fail_why,
                      g_map_diag.fail_local_x, g_map_diag.fail_local_y,
                      g_map_diag.fail_sx, g_map_diag.fail_sy,
                      g_map_diag.arr_ok, g_map_diag.local_ok, g_map_diag.idx,

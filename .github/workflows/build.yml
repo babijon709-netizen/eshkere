@@ -67,16 +67,13 @@ jobs:
         run: |
           chmod +x build.sh
           ./build.sh 2>&1 | tee /tmp/build.log
-          # Отчёт обфускации выносим в annotations рана: видно без скачивания логов.
-          grep -E '^obf:|^build.sh:' /tmp/build.log | while IFS= read -r line; do
-            echo "::notice::$line"
-          done || true
-          readelf -h libs/arm64-v8a/benzware.sh \
-            | grep -E 'Number of section headers|Start of section headers' \
-            | while IFS= read -r line; do echo "::notice::$line"; done || true
-          readelf -lW libs/arm64-v8a/benzware.sh \
-            | grep -E '^  LOAD' \
-            | while IFS= read -r line; do echo "::notice::LOAD $line"; done || true
+          # Отчёт обфускации выносим в annotations рана: видно без скачивания
+          # логов. GitHub режет >10 notice на чек-ран, поэтому ключевые строки
+          # пакуем в один notice, а не по строке на каждый.
+          REPORT="$(grep -E 'зашифровано|секций \.rodata|таблица секций вырезана|контрольных строк: 0' /tmp/build.log | tr '\n' '|')"
+          echo "::notice::obf:$REPORT"
+          echo "::notice::ELF: section headers=$(readelf -h libs/arm64-v8a/benzware.sh | grep -E 'Number of section headers' | tr -d ' ')"
+          echo "::notice::LOAD: $(readelf -lW libs/arm64-v8a/benzware.sh | grep -E '^  LOAD' | tr '\n' '|')"
 
           file libs/arm64-v8a/benzware.sh
           sha256sum libs/arm64-v8a/benzware.sh | tee libs/arm64-v8a/benzware.sh.sha256

@@ -16,6 +16,7 @@
 #include "manes_aim_source.h"
 #include "aim_control.h"
 #include "aim_lead_learn.h"     // автокалибровка окна упреждения по попаданиям
+#include "aim_trace.h"          // CSV-трейс: метки выстрела и попадания
 #include "farm_joy.h"         // farmjoy::attack_held — кнопка атаки у игры
 #include <algorithm>
 #include <cmath>
@@ -269,7 +270,8 @@ static void AimFireGateUpdate(double now) {
     // попадание — это и есть размеченный пример, на котором учится масштаб
     // окна упреждения (aim_lead_learn.h). На автофарме не учимся: там огнём
     // командует фарм, и выстрел ничего не говорит о наведении.
-    if (markChanged) aimlead::hit(now);
+    if (markChanged) { aimlead::hit(now); aimtrace::hit(now); }
+    if (heldEdge) aimtrace::shot(now);
     if (heldEdge && g_aimActive && !g_state.farm_on)
         aimlead::shot(now, s_lastTargetSpeed);
     aimlead::tick(now);

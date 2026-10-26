@@ -9,6 +9,7 @@
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
 #include "aim_lead_learn.h"     // автокалибровка окна упреждения (aim.cpp кормит)
+#include "aim_trace.h"         // CSV-трейс: поза, авторитетная скорость, тайм-минги
 #include "target_predictor.h"
 #include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
@@ -11635,6 +11636,67 @@ float esp_game_frame_hz() {
     return s_game_frame_hz;
 }
 
+// CSV-трейс кадра (aim_trace.h): по строке на игрока. Якорь — наш сырой отсчёт
+// позиции (raw_feet из g_player_track), измеренная скорость, свежесть этого
+// отсчёта, кость головы из бокса и тайм-минги Mirror. Этого достаточно, чтобы
+// посчитать реальную задержку отрисовки кросс-корреляцией с авторитетной
+// скоростью, а не подбирать её константой.
+static void aim_trace_frame(const std::vector<EspBox>& boxes) {
+    if (!aimtrace::enabled()) return;
+    const double now = mono_seconds();
+    Vec3 local_pos{};
+    const bool have_local = g_frame_local_valid && aim_ballistics::finite(g_frame_local_pos);
+    if (have_local) local_pos = g_frame_local_pos;
+    Vec3 local_vel{};
+    if (g_local_player) player_authoritative_velocity(g_local_player, local_vel);
+    for (const EspBox& box : boxes) {
+        if (!box.id || box.is_bot) continue;
+        aimtrace::Row row;
+        row.time = now;
+        row.id = box.id;
+        row.dist = box.distance;
+        row.buffer_ms = g_net_timing.buffer * 1000.0F;
+        row.rtt_ms = g_net_timing.rtt * 1000.0F;
+        row.tick = g_net_timing.tick;
+        row.cam[0] = g_cam_pos.x; row.cam[1] = g_cam_pos.y; row.cam[2] = g_cam_pos.z;
+        row.fwd[0] = g_cam_forward.x; row.fwd[1] = g_cam_forward.y; row.fwd[2] = g_cam_forward.z;
+        if (have_local) {
+            row.local[0] = local_pos.x; row.local[1] = local_pos.y; row.local[2] = local_pos.z;
+        }
+        row.local_vel[0] = local_vel.x; row.local_vel[1] = local_vel.y; row.local_vel[2] = local_vel.z;
+        auto pt = g_player_track.find(box.id);
+        if (pt != g_player_track.end()) {
+            const PlayerTrack& track = pt->second;
+            if (track.has_last) {
+                row.raw_feet[0] = track.last.x;
+                row.raw_feet[1] = track.last.y;
+                row.raw_feet[2] = track.last.z;
+            }
+            row.vel[0] = track.vel.x; row.vel[1] = track.vel.y; row.vel[2] = track.vel.z;
+            if (track.have_vel_ref) {
+                const double age = now - track.vel_ref_t;
+                if (age >= 0.0 && age < 60.0) row.age_ms = (float)(age * 1000.0);
+            }
+        }
+        auto et = g_tgt_track.find(box.id);
+        if (et != g_tgt_track.end()) {
+            const tgtpred::Estimate estimate = tgtpred::estimate(et->second, now);
+            if (estimate.valid) row.age_ms = estimate.sample_age * 1000.0F;
+        }
+        if (box.aim_world_valid[0]) {
+            row.head[0] = box.aim_world[0][0];
+            row.head[1] = box.aim_world[0][1];
+            row.head[2] = box.aim_world[0][2];
+            row.head_valid = true;
+        }
+        // Наша нарисованная позиция — из якоря бокса (то, что видно на экране).
+        row.feet[0] = box.anchor_feet[0];
+        row.feet[1] = box.anchor_feet[1];
+        row.feet[2] = box.anchor_feet[2];
+        aimtrace::row(row);
+    }
+}
+
 std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     g_frame_bot_count = 0;
@@ -12720,6 +12782,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
     evaluate_boxes_visibility(g_local_player ? g_local_player : resolve_local_player(), sw, sh, result);
     g_box_frame_transient = false;
     watch_boxes(result, local_entity_index, &skip_reason, 0);
+    aim_trace_frame(result);
 
     return result;
 }

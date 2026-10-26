@@ -15,6 +15,7 @@
 #include "esp_draw.h"
 #include "aim.h"
 #include "aim_lead_learn.h"     // автокалибровка лида: тумблер и состояние
+#include "aim_trace.h"          // запись CSV-трейса предикта
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -181,10 +182,16 @@ float TabContent(int tab, float dt, float cW) {
                 snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · %.0f%%"), learn.scale, overall * 100.f);
             }
             if (SettingsHeader("##aim_learn", XS("Автокалибровка лида"), learnSummary)) {
-                CardBg(Layout::RowH);
+                CardBg(Layout::RowH * 2.f);
                 bool learnOn = learn.enabled;
-                if (ToggleRow("##ta8", XS("Учить по попаданиям"), &learnOn, g_state.a_aim_learn, true, true))
+                if (ToggleRow("##ta8", XS("Учить по попаданиям"), &learnOn, g_state.a_aim_learn, false, true))
                     aimlead::set_enabled(learnOn);
+                // Трейс: CSV в каталоге конфига (aimtrace.csv). Пишется по кадру
+                // на игрока, пока включён; по нему считается реальная задержка
+                // отрисовки вместо подбора константой.
+                bool traceOn = aimtrace::enabled();
+                if (ToggleRow("##ta9", XS("Запись трейса (CSV)"), &traceOn, g_state.a_aim_trace, true, false))
+                    aimtrace::set_enabled(traceOn);
             }
         }
 
@@ -1449,6 +1456,7 @@ void RenderMenu() {
     Tick(g_state.a_aim_scope,  g_state.aim_scope_only,     dt);
     Tick(g_state.a_aim_fire,   g_state.aim_fire_only,      dt);
     Tick(g_state.a_aim_learn,  aimlead::state().enabled,   dt);
+    Tick(g_state.a_aim_trace,  aimtrace::enabled(),        dt);
     Tick(g_state.a_silent_zone, g_state.silent_auto_zone,  dt);
     Tick(g_state.a_esp_box,    g_state.esp_box,            dt);
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);

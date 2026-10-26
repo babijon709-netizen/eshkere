@@ -296,11 +296,43 @@ def patch(path, key, keep_sections=False):
     if meta + META_HDR + len(ranges) * 16 > len(d):
         raise RuntimeError(f".bwmeta не вмещает {len(ranges)} диапазонов")
 
+    candidate_total = sum(s["size"] for s in candidates)
+    mask = bytearray(len(d))
     total = 0
     for va, fo, sz in ranges:
         for i in range(sz):
             d[fo + i] ^= stream_byte(va + i, key)
+        mask[fo:fo + sz] = b"\x01" * sz
         total += sz
+
+    # Если lld положил .rodata в один R|E-сегмент вместе с .text, 64K-блоки
+    # вокруг кода исключены — это законная дыра, но в ней не должно остаться
+    # ни одной читаемой строки. Проверяем ВСЕ незашифрованные байты
+    # кандидатов, а не только список контрольных строк.
+    leaks = []
+    for s in candidates:
+        base, n = s["off"], s["size"]
+        i = 0
+        while i < n:
+            if mask[base + i]:
+                i += 1
+                continue
+            j = i
+            while j < n and not mask[base + j]:
+                c = d[base + j]
+                if not (0x20 <= c < 0x7F or c >= 0xC0):
+                    break
+                j += 1
+            if j - i >= 8 and j < n and d[base + j] == 0:
+                leaks.append((base + i, bytes(d[base + i:base + j])))
+            i = max(j, i + 1)
+    if leaks:
+        for off, text in leaks[:8]:
+            print(f"  FAIL  незашифрованная строка {off:#x}: {text[:48]!r}",
+                  file=sys.stderr)
+        raise RuntimeError(f"в .rodata остались открытые строки: {len(leaks)}. "
+                           "Нужно -Wl,--rosegment, чтобы строки не делили "
+                           "страницу с кодом")
 
     # Метаданные: count + пары (vaddr, size).
     struct.pack_into("<Q", d, meta + 16, len(ranges))
@@ -308,7 +340,10 @@ def patch(path, key, keep_sections=False):
         struct.pack_into("<QQ", d, meta + META_HDR + i * 16, va, sz)
 
     print(f"obf: секций .rodata* = {len(candidates)}, диапазонов = {len(ranges)}, "
-          f"зашифровано = {total} байт, ключ = {key:#018x}")
+          f"зашифровано = {total}/{candidate_total} байт, ключ = {key:#018x}")
+    if total < candidate_total:
+        print(f"obf: WARN пропущено {candidate_total - total} байт (страницы с кодом/"
+              "relocations), проверка на открытые строки ниже")
     print("obf: проверка контрольных строк:")
     canary_report(elf, strict=True)
 

@@ -39,9 +39,13 @@ LOCAL_CFLAGS   := $(_CF) -std=c11
 
 # --icf=all сливает одинаковые функции (меньше кода и меньше зацепок для
 # дизассемблера), --exclude-libs,ALL прячет символы, приехавшие из c++_static.
+# --rosegment ВАЖЕН для обфускации: без него lld кладёт .rodata и .text в один
+# сегмент R|E, и расшифровщику приходится снимать X со страниц (а хвост строк
+# на границе с кодом вообще нельзя шифровать). С отдельным R-сегментом строки
+# лежат в R-страницах, mprotect делает просто R->RW->R.
 LOCAL_LDFLAGS := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none \
                  -Wl,--exclude-libs,ALL -Wl,--icf=all -pie $(_LTO) \
-                 -Wl,-z,separate-code
+                 -Wl,--rosegment -Wl,-z,separate-code
 
 # Собственная обфускация (bw_obf.h/cpp + tools/obf/elf_crypt.py) включена
 # ВСЕГДА и работает на стоковом NDK из CI. OBF=1 — дополнительные проходы

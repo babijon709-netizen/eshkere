@@ -544,6 +544,7 @@ inline constexpr std::uint64_t MODELINFO_RIGHT_WEAPON_HOLDER = 0x28;
 inline constexpr std::uint64_t MODELINFO_LEFT_WEAPON_HOLDER  = 0x30;
 inline constexpr std::uint64_t MODELINFO_HEAD                = 0x20;
 inline constexpr std::uint64_t MODELINFO_EQUIPMENT_HOLDER    = 0x38;
+inline constexpr std::uint64_t MODELINFO_HEAD_MODEL          = 0x48;  // headModel (Transform под головой)
 // HyperHug...NPC.NPCBrainHumanoid.modelInfo (0x148) -> NPCHumanoidModelInfo,
 // the bot rig (head 0x20, body 0x40, headModel 0x48). Same layout in release
 // 11946 and beta 11943 dumps; the class name at runtime is unqualified.

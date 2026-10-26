@@ -6811,14 +6811,37 @@ static bool read_player_armor_icons(uint64_t player, const PlayerAux& aux,
     memset(out, 0, armoresp::SlotCount);
     const uint64_t model_info = resolve_player_model_info(player, aux);
     if (!valid_obj(model_info)) return false;
+
+    // Три корня, а не один. В риге брони (equipmentHolder) висят торс, ноги и
+    // обувь, а шлемы и шапки игра сажает на сокет головы — в его поддерево они
+    // не попадают. Плюс сам headModel: у части префабов модель головы
+    // отдельная. Поэтому обходим все три и складываем узлы без повторов.
     const uint64_t holder = managed_object_native(
         rd_ptr(model_info + MODELINFO_EQUIPMENT_HOLDER));
-    if (!valid_obj(holder)) return false;
+    const uint64_t head_socket = managed_object_native(rd_ptr(model_info + MODELINFO_HEAD));
+    const uint64_t head_model = managed_object_native(rd_ptr(model_info + game_offsets::MODELINFO_HEAD_MODEL));
+    if (!valid_obj(holder) && !valid_obj(head_socket) && !valid_obj(head_model)) return false;
     if (!ensure_gameobject_name_offset(player)) return false;
 
+    // Потолок узлов выше прежних 192: один риг металлической брони в бандле —
+    // это 74 объекта, умноженные на LOD-копии, плюс скелет персонажа. Обход
+    // в ширину упирался в лимит и терял хвост — как раз ноги и обувь.
+    constexpr size_t kMaxNodes = 768;
     std::vector<uint64_t> nodes;
-    collect_transform_subtree(holder, nodes, 192);
+    auto collect = [&](uint64_t root) {
+        if (!valid_obj(root) || nodes.size() >= kMaxNodes) return;
+        std::vector<uint64_t> part;
+        collect_transform_subtree(root, part, kMaxNodes - nodes.size());
+        for (uint64_t node : part) {
+            if (node && std::find(nodes.begin(), nodes.end(), node) == nodes.end())
+                nodes.push_back(node);
+        }
+    };
+    collect(holder);
+    collect(head_socket);
+    collect(head_model);
     if (nodes.empty()) return false;
+
     bool got_any_name = false;
     for (uint64_t node : nodes) {
         char object_name[96] = {};

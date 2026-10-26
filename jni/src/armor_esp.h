@@ -50,9 +50,34 @@ inline bool has(const char* text, const char* needle) {
     return text && needle && std::strstr(text, needle) != nullptr;
 }
 
-// GameObject names from the player's equipment rig and item labels both occur
-// in the supplied Oxide bundles. Normalize separators/case, then match only
-// recognizable armor prefab tokens (never generic bones such as "Head").
+// Имена приходят из двух миров и пишутся по-разному: у предметов это
+// "metal.chestplate"/"bone.helmet", у заспавненных на игроке моделей —
+// префаб рига ("ArmorMetalHead", "ArmorLeatherShoes", "metal_boots_military").
+// Поэтому имя не сравнивается с фиксированным списком целиком: из него
+// вытаскивается материал и слот, а значок выбирается по паре (материал, слот).
+// Кости скелета при этом отсекаются сами: в них нет материала.
+inline int armor_material(const char* s) {
+    // 1 металл, 2 кожа, 3 кость, 4 дерево, 5 военное; 0 — не броня.
+    if (has(s, "military")) return 5;
+    if (has(s, "metal")) return 1;
+    if (has(s, "leather")) return 2;
+    if (has(s, "bone")) return 3;
+    if (has(s, "wood")) return 4;          // wood / wooden
+    return 0;
+}
+
+// Порядок важен: "ArmorMetalHead" содержит и "armor", и "head".
+inline int armor_slot_of(const char* s) {
+    if (has(s, "head") || has(s, "helmet") || has(s, "hat") || has(s, "mask") ||
+        has(s, "goggle") || has(s, "cone")) return Head;
+    if (has(s, "legs") || has(s, "leggin") || has(s, "pants")) return Legs;
+    if (has(s, "feet") || has(s, "boot") || has(s, "shoe") || has(s, "sandal") ||
+        has(s, "footwear")) return Feet;
+    if (has(s, "torso") || has(s, "chest") || has(s, "top") || has(s, "suit") ||
+        has(s, "armor") || has(s, "jacket") || has(s, "body")) return Torso;
+    return -1;
+}
+
 inline Match classify_name(const char* raw) {
     if (!raw) return {};
     char s[96]{};
@@ -65,55 +90,54 @@ inline Match classify_name(const char* raw) {
     s[n] = '\0';
     auto match = [](Slot slot, ArmorIconId icon) { return Match{slot, icon, true}; };
 
-    // Full-body outfits take precedence over per-piece tokens in their names.
+    // Цельный костюм: ни одного слотового токена в имени нет.
     if (has(s, "hazmat")) return match(Torso, ARMOR_ICON_HAZMAT);
-    if (has(s, "militaryarmor") || has(s, "militarysuit"))
-        return match(Torso, ARMOR_ICON_MILITARYTORSO);
 
-    if (has(s, "armormetalhead") || has(s, "metalhelmet"))
-        return match(Head, ARMOR_ICON_METALHEAD);
-    if (has(s, "metalmask")) return match(Head, ARMOR_ICON_METALMASK);
-    if (has(s, "armorleatherhelmet") || has(s, "leatherhelmet"))
-        return match(Head, ARMOR_ICON_LEATHERHEAD);
-    if (has(s, "bonehelmet")) return match(Head, ARMOR_ICON_BONEHEAD);
-    if (has(s, "woodhelmet") || has(s, "woodenhelmet"))
-        return match(Head, ARMOR_ICON_WOODHEAD);
+    // Головные уборы-исключения: свой значок, материала в имени может не быть,
+    // а у скинов материал стоит в том же имени — поэтому до общей таблицы.
     if (has(s, "witchhat")) return match(Head, ARMOR_ICON_WITCHHAT);
     if (has(s, "elfhat")) return match(Head, ARMOR_ICON_ELFHAT);
     if (has(s, "santahat")) return match(Head, ARMOR_ICON_SANTAHAT);
-    if (has(s, "pumpkinhead")) return match(Head, ARMOR_ICON_PUMPKINHEAD);
+    if (has(s, "pumpkin")) return match(Head, ARMOR_ICON_PUMPKINHEAD);
+    if (has(s, "snowman")) return match(Head, ARMOR_ICON_SNOWMANHEAD);
     if (has(s, "partycone")) return match(Head, ARMOR_ICON_PARTYCONE);
-    if (has(s, "snowmanhead")) return match(Head, ARMOR_ICON_SNOWMANHEAD);
+    // Лыжная шапка/очки: отдельного значка в атласе нет, ближе всего тёмная маска.
+    if (has(s, "ski") && (has(s, "head") || has(s, "goggle") || has(s, "mask")))
+        return match(Head, ARMOR_ICON_METALMASK);
 
-    if (has(s, "armormetaltorso") || has(s, "metalchestplate"))
-        return match(Torso, ARMOR_ICON_METALTORSO);
-    if (has(s, "armorleathertop") || has(s, "leatherchestplate"))
-        return match(Torso, ARMOR_ICON_LEATHERTORSO);
-    if (has(s, "bonechestplate")) return match(Torso, ARMOR_ICON_BONETORSO);
-    if (has(s, "woodchestplate") || has(s, "woodenchestplate"))
-        return match(Torso, ARMOR_ICON_WOODTORSO);
+    const int material = armor_material(s);
+    if (material == 0) return {};
+    const int slot = armor_slot_of(s);
+    if (slot < 0) return {};
 
-    if (has(s, "armormetallegs") || has(s, "metalleggings"))
-        return match(Legs, ARMOR_ICON_METALLEGS);
-    if (has(s, "armorleatherlegs") || has(s, "leatherleggings"))
-        return match(Legs, ARMOR_ICON_LEATHERLEGS);
-    if (has(s, "boneleggings")) return match(Legs, ARMOR_ICON_BONELEGS);
-    if (has(s, "woodleggings") || has(s, "woodenleggings"))
-        return match(Legs, ARMOR_ICON_WOODLEGS);
-    if (has(s, "metallegginsmilitary") || has(s, "militaryleggings"))
-        return match(Legs, ARMOR_ICON_MILITARYLEGS);
-
-    if (has(s, "armormetalfeet") || has(s, "metalboots"))
-        return match(Feet, ARMOR_ICON_METALFEET);
-    if (has(s, "armorleathershoes") || has(s, "leatherboots"))
-        return match(Feet, ARMOR_ICON_LEATHERFEET);
-    if (has(s, "boneshoes") || has(s, "boneboots"))
-        return match(Feet, ARMOR_ICON_BONEFEET);
-    if (has(s, "woodfootwear") || has(s, "woodensandals"))
-        return match(Feet, ARMOR_ICON_WOODFEET);
-    if (has(s, "metalbootsmilitary") || has(s, "militaryboots"))
-        return match(Feet, ARMOR_ICON_MILITARYFEET);
-    return {};
+    switch (material) {
+        case 1:  // металл
+            if (slot == Head) return match(Head, has(s, "mask") ? ARMOR_ICON_METALMASK
+                                                               : ARMOR_ICON_METALHEAD);
+            if (slot == Torso) return match(Torso, ARMOR_ICON_METALTORSO);
+            if (slot == Legs) return match(Legs, ARMOR_ICON_METALLEGS);
+            return match(Feet, ARMOR_ICON_METALFEET);
+        case 2:  // кожа
+            if (slot == Head) return match(Head, ARMOR_ICON_LEATHERHEAD);
+            if (slot == Torso) return match(Torso, ARMOR_ICON_LEATHERTORSO);
+            if (slot == Legs) return match(Legs, ARMOR_ICON_LEATHERLEGS);
+            return match(Feet, ARMOR_ICON_LEATHERFEET);
+        case 3:  // кость
+            if (slot == Head) return match(Head, ARMOR_ICON_BONEHEAD);
+            if (slot == Torso) return match(Torso, ARMOR_ICON_BONETORSO);
+            if (slot == Legs) return match(Legs, ARMOR_ICON_BONELEGS);
+            return match(Feet, ARMOR_ICON_BONEFEET);
+        case 4:  // дерево
+            if (slot == Head) return match(Head, ARMOR_ICON_WOODHEAD);
+            if (slot == Torso) return match(Torso, ARMOR_ICON_WOODTORSO);
+            if (slot == Legs) return match(Legs, ARMOR_ICON_WOODLEGS);
+            return match(Feet, ARMOR_ICON_WOODFEET);
+        default:  // военное: маска идёт под металлическую, своего значка нет
+            if (slot == Head) return match(Head, ARMOR_ICON_METALMASK);
+            if (slot == Torso) return match(Torso, ARMOR_ICON_MILITARYTORSO);
+            if (slot == Legs) return match(Legs, ARMOR_ICON_MILITARYLEGS);
+            return match(Feet, ARMOR_ICON_MILITARYFEET);
+    }
 }
 
 inline bool valid_icon(unsigned icon) {

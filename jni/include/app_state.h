@@ -55,9 +55,6 @@ struct AppState {
     bool  esp_radar = false;
     float esp_radar_size = 170.f;
     float esp_radar_range = 100.f;
-    // Мапхак: при открытии внутриигровой карты отображает на ней позиции и
-    // ники всех игроков.
-    bool  esp_maphack = true;
     // По умолчанию стрелка только там, где противника НЕ видно: в кадре его
     // рисуют обычные визуалы, и дубль только засвечивает центр экрана.
     bool  esp_arrows_offscreen = true;
@@ -163,7 +160,7 @@ struct AppState {
     float a_esp_ore_stone = 1, a_esp_ore_iron = 1, a_esp_ore_sulfur = 1;
     float a_esp_bots = 0, a_esp_vehicles = 0, a_esp_scrap = 0, a_esp_house_boxes = 0;
     float a_esp_arrows = 0, a_esp_arrows_off = 0, a_esp_arrows_dist = 0;
-    float a_esp_radar = 0, a_esp_maphack = 1;
+    float a_esp_radar = 0;
     float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0, a_esp_pumpkins = 0;
     float a_always_day = 0, a_no_grass = 0;
     float a_ui_dark = 1;

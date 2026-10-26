@@ -288,8 +288,7 @@ static void WriteExt2Trailer(std::ostream& f) {
               (cfg::esp::fill        ? (1u << 13) : 0u) |
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
-              (g_state.esp_armor     ? (1u << 16) : 0u) |
-              (g_state.esp_maphack   ? 0u : (1u << 17));
+              (g_state.esp_armor     ? (1u << 16) : 0u);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
     t.esp_radar_size   = g_state.esp_radar_size;
     t.esp_radar_range  = g_state.esp_radar_range;
@@ -505,8 +504,7 @@ static void ConfigSaveToPath(const std::string& path) {
                           (g_state.esp_arrows_offscreen ? 0 : 16384) |
                           (g_state.esp_arrows_dist ? 32768 : 0) |
                           (g_state.esp_radar ? 131072 : 0) |
-                          (g_state.no_grass ? 262144 : 0) |
-                          (g_state.esp_maphack ? 0 : 524288);
+                          (g_state.no_grass ? 262144 : 0);
         auto ch = [](float v) { int i = (int)(v * 255.f + 0.5f); return i < 0 ? 0 : (i > 255 ? 255 : i); };
         const float packed = (float)(ch(cfg::esp::pickup_col.x) * 65536
                                    + ch(cfg::esp::pickup_col.y) * 256
@@ -670,7 +668,6 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.esp_arrows_dist = (flags & 32768) != 0;
         g_state.esp_radar = (flags & 131072) != 0;
         g_state.no_grass = (flags & 262144) != 0;
-        g_state.esp_maphack = (flags & 524288) == 0;
         cfg::aim::fire_only = g_state.aim_fire_only;
         g_state.marker_dist = (s.esp_extra.y >= 25.f && s.esp_extra.y <= 300.f) ? s.esp_extra.y : 150.f;
         int pr = (int)(s.esp_extra.z + 0.5f) - 1;
@@ -788,7 +785,6 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
             g_state.esp_armor      = (ext2.flags & (1u << 16)) != 0;
-            g_state.esp_maphack    = (ext2.flags & (1u << 17)) == 0;
 
             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);

@@ -313,25 +313,6 @@ const std::vector<EspBearing>& esp_get_bearings();
 // только пока оверлей действительно рисует стрелки.
 void        esp_set_bearings_enabled(bool enabled);
 
-// ---- Мапхак: игроки на полноэкранной карте (MapManager / MapView) ----------
-// Когда открыта внутриигровая карта (MapManager + 0x94 != 0), собирает всех
-// живых игроков из реестра без ограничения по 3D-дистанции (300м) и фрустуму
-// камеры, проецируя их мировые координаты (x, z) прямо в экранные координаты
-// открытого MapView.map.
-struct EspMapPlayer {
-    unsigned long long id = 0;      // PlayerManager*
-    float x = 0.0F, y = 0.0F;       // экранные координаты на карте
-    float distance = -1.0F;         // метры от локального игрока (-1 если неизвестно)
-    bool  ally = false;             // сокомандник / соклановец
-    bool  has_name = false;
-    char  name[32] = {};
-    bool  has_tag = false;
-    char  tag[16] = {};
-};
-void        esp_set_maphack_enabled(bool enabled);
-bool        esp_map_is_open();
-const std::vector<EspMapPlayer>& esp_get_map_players();
-
 // Диагностика конвейера костей для терминальной команды `benzware skel`
 // (см. skeleton_diag.h): печатает в out состояние всех шагов построения
 // скелета по первым max_players игрокам. Возврат: 0 — скелеты строятся,

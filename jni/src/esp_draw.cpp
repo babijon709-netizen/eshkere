@@ -104,7 +104,6 @@ const std::vector<EspBox>& FrameBoxes(float sw, float sh) {
         // respawn у тех, кто отсеян по экрану), поэтому они нужны ровно пока
         // рисуются стрелки.
         esp_set_bearings_enabled(g_state.esp_arrows || g_state.esp_radar);
-        esp_set_maphack_enabled(g_state.esp_maphack);
         // Кости нужны аиму в обоих режимах: и касание, и память считают ошибку
         // по точке на шее, взятой из костей. Раньше запрос включался только от
         // касания, и в режиме «память» при выключенном скелете в ESP кости не
@@ -216,7 +215,7 @@ void DrawEspOverlay() {
     // Список обязан совпадать с тем, что ниже рисуется: шкафы (esp_cupboards)
     // в нём отсутствовали, и с одним включённым тумблером «Шкафы» функция
     // выходила здесь — тумблер не делал ничего, пока не включишь ещё и горшки.
-    if (!g_state.esp_box && !g_state.esp_chams && !g_state.esp_wall && !g_state.esp_tracer && !g_state.esp_skeleton && !g_state.esp_name && !g_state.esp_weapon && !g_state.esp_ore && !g_state.esp_animal && !g_state.esp_loot && !g_state.esp_pickup && !g_state.esp_bots && !g_state.esp_vehicles && !g_state.esp_scrap && !g_state.esp_turrets && !g_state.esp_backpacks && !g_state.esp_sleepers && !g_state.esp_house_boxes && !g_state.esp_cupboards && !g_state.esp_pumpkins && !g_state.esp_arrows && !g_state.esp_radar && !g_state.esp_maphack) return;
+    if (!g_state.esp_box && !g_state.esp_chams && !g_state.esp_wall && !g_state.esp_tracer && !g_state.esp_skeleton && !g_state.esp_name && !g_state.esp_weapon && !g_state.esp_ore && !g_state.esp_animal && !g_state.esp_loot && !g_state.esp_pickup && !g_state.esp_bots && !g_state.esp_vehicles && !g_state.esp_scrap && !g_state.esp_turrets && !g_state.esp_backpacks && !g_state.esp_sleepers && !g_state.esp_house_boxes && !g_state.esp_cupboards && !g_state.esp_pumpkins && !g_state.esp_arrows && !g_state.esp_radar) return;
 
     const std::vector<EspBox>& boxes = FrameBoxes(sw, sh);
     constexpr int BOX_EDGES[][2] = {
@@ -257,34 +256,6 @@ void DrawEspOverlay() {
         dl->AddText(espFont, fsz, ImVec2(cx - tsz.x * 0.5f, y + padY), textCol, text);
     };
 
-    if (g_state.esp_maphack && esp_map_is_open()) {
-        const auto& map_players = esp_get_map_players();
-        const float pin_r = 4.5f;
-        for (const auto& mp : map_players) {
-            if (mp.ally && !g_state.esp_team) continue;
-            if (!std::isfinite(mp.x) || !std::isfinite(mp.y)) continue;
-            const ImU32 dot_col = ColU32(mp.ally ? cfg::esp::ally_col : cfg::esp::box_col);
-            const ImU32 txt_col = ColU32(mp.ally ? cfg::esp::ally_col : cfg::esp::name_col);
-            dl->AddCircleFilled(ImVec2(mp.x, mp.y), pin_r + 1.5f, IM_COL32(15, 17, 24, 230), 16);
-            dl->AddCircleFilled(ImVec2(mp.x, mp.y), pin_r, dot_col, 16);
-            dl->AddCircleFilled(ImVec2(mp.x, mp.y), 1.6f, IM_COL32(255, 255, 255, 240), 12);
-            const char* base = (mp.has_name && mp.name[0]) ? mp.name : "PLAYER";
-            char label[64];
-            if (mp.has_tag && mp.tag[0])
-                snprintf(label, sizeof(label), "[%s] %s", mp.tag, base);
-            else
-                snprintf(label, sizeof(label), "%s", base);
-            const float nh = PillH(label, 0.88f);
-            EspPill(mp.x, mp.y - pin_r - nh - 3.f, label, txt_col, 0.88f);
-            if (g_state.esp_wall && mp.distance >= 0.f && std::isfinite(mp.distance)) {
-                char dist_buf[24];
-                snprintf(dist_buf, sizeof(dist_buf), "%.0fm", mp.distance);
-                EspPill(mp.x, mp.y + pin_r + 3.f, dist_buf,
-                        ColU32(mp.ally ? cfg::esp::ally_col : cfg::esp::distance_col), 0.78f);
-            }
-        }
-        return;
-    }
     // A far away player projects to a couple of pixels, which used to make the
     // box degenerate (corners gone, top/bottom strokes fused into one line).
     // Every visual therefore works on a rect that is grown around its own

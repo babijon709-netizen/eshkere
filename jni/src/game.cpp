@@ -6458,26 +6458,6 @@ static bool aim_sample_offset(uint64_t player, Vec3& out) {
     return true;
 }
 
-// Возраст сетевого отсчёта цели в тиках: насколько присланный отсчёт новее
-// того, что игра успела применить к отрисованному телу (Move.Tick). Оба тика —
-// из часов одного и того же игрока, поэтому разница осмысленна без синхронизации
-// с нашим временем. 0 — тело уже на отсчёте или ушло вперёд экстраполяцией;
-// -1 — прочитать не удалось.
-static int aim_sample_tick_lag(uint64_t player) {
-    if (!valid_obj(player)) return -1;
-    const PlayerAux& aux = player_aux(player);
-    if (!valid_obj(aux.kcc)) return -1;
-    if (rd<uint8_t>(aux.kcc + KCC_HAS_OBSERVER_MOVE) != 1) return -1;
-    const uint32_t sample_tick = rd<uint32_t>(aux.kcc + KCC_OBSERVER_MOVE + OBSERVER_MOVE_TICK);
-    const uint32_t body_tick   = rd<uint32_t>(aux.kcc + KCC_MOVE + 0x34);   // Move.Tick
-    if (sample_tick == 0 || body_tick == 0) return -1;
-    const int32_t lag = (int32_t)(sample_tick - body_tick);
-    // Больше восьми тиков — это не «отстаёт», это замороженный/пересевший
-    // объект (пауза, загрузка, смена владельца пула). Такой лид только вредит.
-    if (lag > 8) return -1;
-    return lag > 0 ? lag : 0;
-}
-
 static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
     PlayerTrack& track = g_player_track[player];
     if (--track.uid_recheck <= 0) {
@@ -7795,12 +7775,13 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     // вперёд истины (см. aim_sample_offset). Сдвигаем точку прицела на разницу
     // между последним присланным положением и отрисованным: на снайперке, где
     // полёт 0.2-0.3 с, это как раз те промахи «впереди бегущего».
-    Vec3 net_fix{};
-    const bool anchored_to_sample = !box.is_bot && aim_sample_offset(box.id, net_fix);
-    if (anchored_to_sample) {
-        world.x += net_fix.x;
-        world.y += net_fix.y;
-        world.z += net_fix.z;
+    if (!box.is_bot) {
+        Vec3 net_fix{};
+        if (aim_sample_offset(box.id, net_fix)) {
+            world.x += net_fix.x;
+            world.y += net_fix.y;
+            world.z += net_fix.z;
+        }
     }
 
     bool ballisticSolved = false;
@@ -7911,22 +7892,7 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         // наш ход пальцем доедет до игры. Масштаб из aim_lead_learn остаётся
         // выключенным по умолчанию: он был попыткой угадать эту же задержку
         // бинарным сигналом «попал/не попал».
-        // Возраст сетевого отсчёта в тиках — как лид он нужен только когда
-        // прицел стоит на ОТРИСОВАННОМ теле (бот, стоящая цель, отсчёт не
-        // прочитался): тогда тело отстаёт от последнего присланного положения.
-        // Если точка уже взята по отсчёту, тики учтены позицией и второй раз их
-        // прибавлять нельзя — это ровно то двойное упреждение, что давало
-        // «предикт слишком сильный».
-        float sample_lag = 0.0F;
-        if (!anchored_to_sample) {
-            const int lag_ticks = aim_sample_tick_lag(box.id);
-            float hz = g_net_timing.tick > 0 ? static_cast<float>(g_net_timing.tick)
-                                             : esp_game_frame_hz();
-            if (!(hz > 1.0F)) hz = 30.0F;
-            if (lag_ticks > 0) sample_lag = static_cast<float>(lag_ticks) / hz;
-            if (sample_lag > 0.20F) sample_lag = 0.20F;
-        }
-        path.latency = (g_aim_delay_seconds + kAimControlFrame + sample_lag) * aimlead::scale();
+        path.latency = (g_aim_delay_seconds + kAimControlFrame) * aimlead::scale();
         // Потолок смещения — по физике, а не константой: столько, сколько цель
         // может пройти за (задержку + полёт) на скорости 8 м/с (спринт с
         // запасом), у транспорта 60. Фиксированные 0.6 м резали снайперский

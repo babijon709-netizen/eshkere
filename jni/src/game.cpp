@@ -7763,7 +7763,27 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         const bool use_est = g_aim_est.valid && !vehicle_speed;
         Vec3 base_vel = g_aim_velocity;
         float effective_horiz_speed = aim_ballistics::finite(horiz_speed) ? horiz_speed : 0.0F;
-        if (use_est) {
+        // Скорость для упреждения — из самой игры: KCC.Move.RealVelocity это
+        // ровно тот вектор, которым клиент ведёт тело, его считает владелец и
+        // присылает каждый тик. Наша же производная по отрисованной позе
+        // квантована шагом сети: по трейсу поза обновляется раз в 34 мс шагами
+        // по 0.18 м, и остаток скорости — 0.57 м/с. На полёте 0.3 с это ±17 см,
+        // то есть «иногда мимо» на снайперке при верном в среднем упреждении.
+        Vec3 game_vel{};
+        const bool have_game_vel = !box.is_bot && !vehicle_speed &&
+                                   player_authoritative_velocity(box.id, game_vel) &&
+                                   aim_ballistics::finite(game_vel);
+        if (have_game_vel) {
+            base_vel = game_vel;
+            const float speed_cap = g_char_speed.valid ? g_char_speed.sprint : 6.8F;
+            const float bh = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
+            if (bh > speed_cap) {
+                const float k = speed_cap / bh;
+                base_vel.x *= k;
+                base_vel.z *= k;
+            }
+            effective_horiz_speed = std::sqrt(base_vel.x * base_vel.x + base_vel.z * base_vel.z);
+        } else if (use_est) {
             const float trust = 0.65F + 0.35F * g_aim_est.confidence;
             Vec3 est_vel = aim_ballistics::scale(g_aim_est.vel, trust);
             if (aim_ballistics::finite(horiz_speed) && horiz_speed > 0.30F) {

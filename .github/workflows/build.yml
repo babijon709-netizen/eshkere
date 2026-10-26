@@ -70,7 +70,15 @@ jobs:
           # Отчёт обфускации выносим в annotations рана: видно без скачивания
           # логов. GitHub режет >10 notice на чек-ран, поэтому ключевые строки
           # пакуем в один notice, а не по строке на каждый.
-          REPORT="$(grep -E 'зашифровано|секций \.rodata|PF_W добавлен|WARN 16K|рантайм-карта|таблица секций вырезана|контрольных строк: 0' /tmp/build.log | tr '\n' '|')"
+          # Ключ шифрования НЕ должен попасть ни в логи, ни в annotations:
+          # репозиторий публичный, elf_crypt.py тоже — по ключу строки снимаются
+          # оффлайн. Redact + жёсткая проверка на случай, если ключ снова
+          # начнёт печатать какой-нибудь другой шаг.
+          if grep -qE 'ключ = 0x[0-9a-f]{16}' /tmp/build.log; then
+            echo "::error::ключ обфускации утёк в лог сборки" >&2
+            exit 1
+          fi
+          REPORT="$(grep -E 'зашифровано|секций \.rodata|PF_W добавлен|WARN 16K|рантайм-карта|таблица секций вырезана|контрольных строк: 0' /tmp/build.log | sed -E 's/ключ = 0x[0-9a-f]+/ключ = <hidden>/g' | tr '\n' '|')"
           echo "::notice::obf:$REPORT"
           echo "::notice::ELF: section headers=$(readelf -h libs/arm64-v8a/benzware.sh | grep -E 'Number of section headers' | tr -d ' ')"
           echo "::notice::LOAD: $(readelf -lW libs/arm64-v8a/benzware.sh | grep -E '^  (LOAD|GNU_RELRO)' | tr '\n' '|')"

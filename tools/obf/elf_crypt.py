@@ -416,8 +416,12 @@ def patch(path, key, keep_sections=False):
     seg_desc = ",".join(
         f"[{p['va']:#x},{p['va'] + p['msz']:#x}) fl={p['fl']} align={p['al']:#x}"
         for p in elf.phdrs if p["fo"] in touched) or "уже RW"
+    # Ключ НЕ печатаем: логи и annotations публичного рана видны всем, а рядом
+    # лежит этот же скрипт — по ключу .rodata расшифровывается оффлайн за
+    # секунду. Для локальной отладки: BW_OBF_SHOW_KEY=1.
+    key_note = f", ключ = {key:#018x}" if os.environ.get("BW_OBF_SHOW_KEY") else ""
     print(f"obf: секций .rodata* = {len(candidates)}, диапазонов = {len(ranges)}, "
-          f"зашифровано = {total}/{candidate_total} байт, ключ = {key:#018x}, "
+          f"зашифровано = {total}/{candidate_total} байт{key_note}, "
           f"vaddr=[{rlo:#x},{rhi:#x}), meta_vaddr={meta_vaddr:#x}, LOAD={seg_desc}")
     if total < candidate_total:
         print(f"obf: WARN пропущено {candidate_total - total} байт (страницы с кодом/"

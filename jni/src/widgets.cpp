@@ -939,10 +939,11 @@ static float DrawPopoverContentFG(ImDrawList* fg, ImFont* fn, float fs, int secI
 
     if (secId == 0) {
         FgSHdr(XS("Куда целиться"));
-        FgCardBg(rH * 3);
+        FgCardBg(rH * 4);
         FgRadioRow(0, &g_state.aim_bone, g_state.ra_aim_head,   &g_state.a_aim_head,   XS("Голова"), false);
         FgRadioRow(1, &g_state.aim_bone, g_state.ra_aim_chest,  &g_state.a_aim_chest,  XS("Шея"), false);
-        FgRadioRow(2, &g_state.aim_bone, g_state.ra_aim_pelvis, &g_state.a_aim_pelvis, XS("Тело"), true);
+        FgRadioRow(2, &g_state.aim_bone, g_state.ra_aim_pelvis, &g_state.a_aim_pelvis, XS("Тело"), false);
+        FgRadioRow(3, &g_state.aim_bone, g_state.ra_aim_auto,   &g_state.a_aim_auto,   XS("Авто (по броне)"), true);
 
         FgSHdr(XS("Выбор цели"));
         FgCardBg(rH * 3);

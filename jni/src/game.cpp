@@ -12201,7 +12201,9 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                 tc.ally = local_group_valid && groups_are_allied(local_group, group);
                 snprintf(tc.tag, sizeof(tc.tag), "%s", group.tag);
                 tc.has_tag = tc.tag[0] != '\0';
-                if (g_state.esp_armor) {
+                // Броня читается и без визуалов: по ней автовыбор кости
+                // решает, есть ли на цели шлем.
+                if (g_state.esp_armor || g_state.aim_bone == 3) {
                     uint8_t armor[armoresp::SlotCount]{};
                     if (read_player_armor_icons(s_transforms[i], aux, armor)) {
                         memcpy(tc.armor_icons, armor, sizeof(tc.armor_icons));
@@ -12219,7 +12221,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             box.ally = tc.ally;
             box.has_tag = tc.has_tag;
             if (tc.has_tag) memcpy(box.tag, tc.tag, sizeof(box.tag));
-            if (g_state.esp_armor && tc.has_armor)
+            if ((g_state.esp_armor || g_state.aim_bone == 3) && tc.has_armor)
                 memcpy(box.armor_icons, tc.armor_icons, sizeof(box.armor_icons));
         }
         for (size_t corner = 0; corner < 8; ++corner) {

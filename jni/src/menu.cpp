@@ -14,8 +14,6 @@
 #include "str.h"
 #include "esp_draw.h"
 #include "aim.h"
-#include "aim_lead_learn.h"     // автокалибровка лида: тумблер и состояние
-#include "aim_trace.h"          // запись CSV-трейса предикта
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -124,7 +122,7 @@ float TabContent(int tab, float dt, float cW) {
 
         // Keep the feature switch visible; settings do not enable the feature.
         const char* const modes[] = {XS("Тач"), XS("Память"), XS("Сайлент")};
-        const char* const bones[] = {XS("Голова"), XS("Шея"), XS("Тело")};
+        const char* const bones[] = {XS("Голова"), XS("Шея"), XS("Тело"), XS("Авто (по броне)")};
         const char* const priorities[] = {XS("Умный"), XS("Ближе к прицелу"), XS("Ближе ко мне")};
         SHdr(XS("Аим"));
         CardBg(Layout::RowH);
@@ -134,10 +132,10 @@ float TabContent(int tab, float dt, float cW) {
 
         char targetSummary[160];
         snprintf(targetSummary, sizeof(targetSummary), "%s · %s",
-                 bones[ImClamp(g_state.aim_bone, 0, 2)], priorities[ImClamp(g_state.aim_priority, 0, 2)]);
+                 bones[ImClamp(g_state.aim_bone, 0, 3)], priorities[ImClamp(g_state.aim_priority, 0, 2)]);
         if (SettingsHeader("##aim_target", XS("Выбор цели"), targetSummary)) {
             SHdr(XS("Куда целиться"), 4.f);
-            if (ChoiceRow("##aim_bone", &g_state.aim_bone, bones, 3)) {
+            if (ChoiceRow("##aim_bone", &g_state.aim_bone, bones, 4)) {
                 char text[160]; snprintf(text, sizeof(text), XS("%s|%s"), XS("Куда целиться"), bones[g_state.aim_bone]);
                 ShowToast(text);
             }
@@ -164,41 +162,6 @@ float TabContent(int tab, float dt, float cW) {
             SliderRow("##afov", XS("Радиус"), &g_state.gun_fov, 5.f, 180.f, XS("%.0f°"), false, true, g_state.sl_gun_fov, dt);
             SliderRow("##asmt", XS("Скорость"), &g_state.gun_str, 1.f, 10.f, "%.0f", false, false, g_state.sl_gun_str, dt);
             ToggleRow("##ta3", XS("Круг FOV"), &g_state.aim_special, g_state.a_aim_spec, true, false, &cfg::aim::fov_col);
-        }
-
-        // ---- Автокалибровка упреждения ------------------------------------
-        // Масштаб окна лида подбирается сам по доле попаданий: игра отмечает
-        // попадание, промах виден как тишина после выстрела. В строке заголовка
-        // — что выучено сейчас и сколько это даёт попаданий.
-        {
-            const aimlead::State& learn = aimlead::state();
-            char learnSummary[64];
-            const float overall = aimlead::overall_rate();
-            const float delay_ms = esp_aim_delay_ms();
-            if (!learn.enabled) {
-                // Обычный режим: показываем то, что реально решает лид —
-                // измеренную задержку позы, а не масштаб бандита.
-                if (delay_ms > 0.f)
-                    snprintf(learnSummary, sizeof(learnSummary), XS("задержка %.0f мс"), delay_ms);
-                else
-                    snprintf(learnSummary, sizeof(learnSummary), "%s", XS("ждём движения цели"));
-            } else if (overall < 0.f) {
-                snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · ждём выстрелы"), learn.scale);
-            } else {
-                snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · %.0f%%"), learn.scale, overall * 100.f);
-            }
-            if (SettingsHeader("##aim_learn", XS("Автокалибровка лида"), learnSummary)) {
-                CardBg(Layout::RowH * 2.f);
-                bool learnOn = learn.enabled;
-                if (ToggleRow("##ta8", XS("Учить по попаданиям"), &learnOn, g_state.a_aim_learn, false, true))
-                    aimlead::set_enabled(learnOn);
-                // Трейс: CSV в каталоге конфига (aimtrace.csv). Пишется по кадру
-                // на игрока, пока включён; по нему считается реальная задержка
-                // отрисовки вместо подбора константой.
-                bool traceOn = aimtrace::enabled();
-                if (ToggleRow("##ta9", XS("Запись трейса (CSV)"), &traceOn, g_state.a_aim_trace, true, false))
-                    aimtrace::set_enabled(traceOn);
-            }
         }
 
         if (g_state.aim_mode == AIM_MODE_SILENT &&
@@ -579,9 +542,14 @@ float TabContent(int tab, float dt, float cW) {
         }
 
         if (SettingsHeader("##options_appearance", XS("Оформление"), XS("Тема и цвет интерфейса"))) {
-            CardBg(Layout::RowH * 1);
-            if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, true))
+            CardBg(Layout::RowH * 2);
+            if (ToggleRow("##ud2", XS("Тёмная тема"), &g_state.ui_dark_mode, g_state.a_ui_dark, true, false))
                 g_darkTheme = g_state.ui_dark_mode;
+            // Стример-мод: слой оверлея снимается с защиты от захвата, и его
+            // целиком пишет обычный рекордер экрана. Выключен — меток и меню
+            // нет ни на скриншоте, ни в записи.
+            if (ToggleRow("##ud3", XS("Стример-мод"), &g_state.streamer_mode, g_state.a_streamer, false, true))
+                overlay_set_capture_visible(g_state.streamer_mode);
 
             // ---- Акцент: палитра стиля всего GUI -------------------------------
             // Ряд кругов: 8 пресетов + свой цвет (тап открывает палитру, как точки
@@ -1460,8 +1428,7 @@ void RenderMenu() {
     Tick(g_state.a_aim_spec,   g_state.aim_special,        dt);
     Tick(g_state.a_aim_scope,  g_state.aim_scope_only,     dt);
     Tick(g_state.a_aim_fire,   g_state.aim_fire_only,      dt);
-    Tick(g_state.a_aim_learn,  aimlead::state().enabled,   dt);
-    Tick(g_state.a_aim_trace,  aimtrace::enabled(),        dt);
+    Tick(g_state.a_aim_auto,   g_state.aim_bone == 3,      dt);
     Tick(g_state.a_silent_zone, g_state.silent_auto_zone,  dt);
     Tick(g_state.a_esp_box,    g_state.esp_box,            dt);
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);
@@ -1501,6 +1468,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_tracer, g_state.esp_tracer,         dt);
     Tick(g_state.a_esp_skeleton, g_state.esp_skeleton,     dt);
     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
+    Tick(g_state.a_streamer,   g_state.streamer_mode,      dt);
     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);

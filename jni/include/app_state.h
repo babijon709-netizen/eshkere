@@ -21,7 +21,7 @@ struct AppState {
     // (см. aim.cpp — признак там и у игры, и у хендлера ввода). Пара к
     // «Только в прицеле»: тот смотрит на прицел, этот — на огонь.
     bool  aim_fire_only = false;
-    int   aim_bone = 1;   // 0 голова, 1 шея, 2 тело (как слоты аима)
+    int   aim_bone = 1;   // 0 голова, 1 шея, 2 тело, 3 авто (по броне цели)
     // Чем именно аим крутит прицел: 0 тач (синтетический палец), 1 память
     // (запись ввода взгляда в игру), 2 сайлент (запись оси выстрела).
     // Значения — enum AimMode в aim.h.
@@ -137,6 +137,11 @@ struct AppState {
     ImVec4 ui_accent_rgb = {0.545f, 0.486f, 1.000f, 1.0f};
     // Положение панели вкладок: true = слева (по умолчанию), false = снизу.
     bool  ui_panel_left = true;
+    // Стример-мод: слой оверлея снимается с захвата (по умолчанию его нет ни
+    // на скриншоте, ни в записи экрана), включённый — пишется рекордером как
+    // есть. Сессионное: бинарный CfgBlob заморожен версией (config.cpp).
+    bool  streamer_mode = false;
+    float a_streamer = 0.f;
 
     float tab_alpha = 1.f, tab_slide = 0.f, tab_slide_vel = 0.f;
     float a_aim_touch = 0, a_aim_pos = 0, a_aim_spec = 0, a_aim_scope = 0;
@@ -145,8 +150,8 @@ struct AppState {
     float a_aim_trace = 0;
     float a_aim_mode0 = 1, a_aim_mode1 = 0, a_aim_mode2 = 0;
     RadioAnim ra_aim_mode0, ra_aim_mode1, ra_aim_mode2;
-    float a_aim_head  = 1, a_aim_chest = 0, a_aim_pelvis = 0;
-    RadioAnim ra_aim_head, ra_aim_chest, ra_aim_pelvis;
+    float a_aim_head  = 1, a_aim_chest = 0, a_aim_pelvis = 0, a_aim_auto = 0;
+    RadioAnim ra_aim_head, ra_aim_chest, ra_aim_pelvis, ra_aim_auto;
     float a_aim_pr0 = 1, a_aim_pr1 = 0, a_aim_pr2 = 0;
     RadioAnim ra_aim_pr0, ra_aim_pr1, ra_aim_pr2;
     // Растяг экрана (Aspect Ratio): множитель к полю aspect камеры ИГРЫ —

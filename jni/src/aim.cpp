@@ -15,6 +15,7 @@
 #include "esp_draw.h"            // FrameBoxes, AimFovRadiusPx
 #include "manes_aim_source.h"
 #include "aim_control.h"
+#include "armor_esp.h"          // автовыбор кости: шлем на голове или нет
 #include "aim_lead_learn.h"     // автокалибровка окна упреждения по попаданиям
 #include "aim_trace.h"          // CSV-трейс: метки выстрела и попадания
 #include "farm_joy.h"         // farmjoy::attack_held — кнопка атаки у игры
@@ -350,7 +351,8 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
     // Read the current menu/config selection on every target-selection pass.
     // Slots are [0] head, [1] neck, and [2] chest.
     int wantBone = g_state.aim_bone;
-    if (wantBone < 0 || wantBone > 2) wantBone = 1;
+    if (wantBone < 0 || wantBone > 3) wantBone = 1;
+    constexpr int kAutoBone = 3;
 
     // ---- choose target ----
     static std::vector<RankedAimTarget> candidates;
@@ -380,8 +382,14 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         // any position error misses the body. Use the chest (largest zone) there.
         constexpr float kSilentZoneSpeed = 2.0f;   // m/s
         constexpr float kSilentZoneRange = 60.0f;  // m
-        int candidateBone = wantBone;
-        if (g_state.aim_mode == AIM_MODE_SILENT && g_state.silent_auto_zone && wantBone < 2 &&
+        // Авто: голова открыта — ведём в неё, шлем надет — в корпус. Броня
+        // читается тем же обходом рига, что и в ESP (armor_esp.h), поэтому
+        // выбор стоит на реальном шлеме, а не на догадке по модели.
+        int baseBone = wantBone;
+        if (baseBone == kAutoBone)
+            baseBone = armoresp::valid_icon(b.armor_icons[armoresp::Head]) ? 2 : 0;
+        int candidateBone = baseBone;
+        if (g_state.aim_mode == AIM_MODE_SILENT && g_state.silent_auto_zone && baseBone < 2 &&
             (b.aim_speed > kSilentZoneSpeed || b.distance > kSilentZoneRange))
             candidateBone = 2;
         int usedBone = aim_control::configured_bone_slot(candidateBone, b.aim_valid);

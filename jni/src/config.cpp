@@ -739,7 +739,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         g_state.gun_str = num(g_state.gun_str, 1.f, 10.f, 5.f);
         cfg::aim::fov = num(cfg::aim::fov, 5.f, 180.f, 80.f);
         g_state.gun_trigger_delay = num(g_state.gun_trigger_delay, 0.f, 1.f, 0.f);
-        if (g_state.aim_bone < 0 || g_state.aim_bone > 2) g_state.aim_bone = 0;
+        if (g_state.aim_bone < 0 || g_state.aim_bone > 3) g_state.aim_bone = 0;
         cfg::aim::bone = g_state.aim_bone;
         // Цвет: каналы 0..1; alpha 0 из старого слота делал фичу «включена,
         // но невидима» (классика у скелетов) — поднимаем до непрозрачной.

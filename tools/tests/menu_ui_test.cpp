@@ -31,6 +31,7 @@ int g_configCount = 0, g_configToDelete = -1, g_cfgLoadedIdx = -1;
 char g_loadedConfigName[64] = {};
 float g_cfgLoadAnim[kMaxConfigs] = {};
 static int loads = 0, saves = 0, updates = 0, applies = 0;
+void overlay_set_capture_visible(bool) {}
 void ShowToast(const char*) {}
 void PlaySound(SoundId) {}
 void ConfigSave() { ++saves; }

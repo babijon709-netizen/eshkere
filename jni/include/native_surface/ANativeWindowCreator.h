@@ -515,6 +515,22 @@ namespace anwc {
             return result;
         }
 
+        // ---- захват экрана -----------------------------------------------------
+        // По умолчанию слой помечен secure: SurfaceFlinger выкидывает такие слои
+        // и из скриншота, и из записи экрана. Стример-мод снимает биты, и оверлей
+        // целиком попадает в обычную запись.
+        //
+        // Флаг — layer_state_t (SurfaceFlinger): eLayerSecure 0x04 (он же
+        // FLAG_SECURE окна: слой выпадает и из скриншота, и из записи).
+        // Маска та же, поэтому "показать" — это записать ноль по этому биту;
+        // остальные флаги слоя (opaque, hidden и прочее) не трогаются.
+        static void SetCaptureVisible(bool visible) {
+            m_captureVisible = visible;
+            ApplyCaptureFlags();
+        }
+
+        static bool CaptureVisible() { return m_captureVisible; }
+
         static ANativeWindow *Create(const char *name, int32_t width = -1, int32_t height = -1, bool hide = true) {
             auto &client = GetComposerInstance();
 
@@ -532,8 +548,10 @@ namespace anwc {
 
             auto surfaceControl = client.CreateSurface(name, width, height, hide, false);
             auto nativeWindow   = reinterpret_cast<ANativeWindow *>(surfaceControl.GetSurface());
-            if (nullptr != nativeWindow)
+            if (nullptr != nativeWindow) {
                 m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
+                if (!m_captureVisible) ApplyCaptureFlags();
+            }
             return nativeWindow;
         }
 
@@ -546,6 +564,29 @@ namespace anwc {
         }
 
     private:
+        static constexpr uint32_t kLayerSecure = 0x04;
+        inline static bool m_captureVisible = false;
+
+        // Бит secure ставится/снимается транзакцией на уже созданный слой:
+        // пересоздавать поверхность ради записи экрана не нужно, и оверлей не
+        // мигает при каждом переключении тумблера.
+        static void ApplyCaptureFlags() {
+            auto &f = detail::Functionals::GetInstance();
+            if (nullptr == f.SurfaceComposerClient__Transaction__SetFlags) return;
+            const uint32_t mask  = kLayerSecure;
+            const uint32_t flags = m_captureVisible ? 0u : kLayerSecure;
+            detail::SurfaceComposerClientTransaction transaction;
+            bool any = false;
+            for (auto &entry : m_cachedSurfaceControl) {
+                if (nullptr == entry.second.data) continue;
+                detail::StrongPointer<void> sc;
+                sc.pointer = entry.second.data;
+                transaction.SetFlags(sc, flags, mask);
+                any = true;
+            }
+            if (any) transaction.Apply(true, true);
+        }
+
         inline static std::unordered_map<ANativeWindow *, detail::SurfaceControl> m_cachedSurfaceControl;
     };
 }

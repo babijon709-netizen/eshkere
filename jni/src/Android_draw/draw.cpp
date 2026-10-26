@@ -204,6 +204,17 @@ float overlay_pace_hz() {
     return OverlayPaceHz();
 }
 
+// Стример-мод: снимает с нашего слоя биты secure/skip-screenshot. Пока он
+// выключен, оверлея нет ни на скриншоте, ни в записи экрана; включённый —
+// оверлей пишется обычным рекордером как есть, включая меню и метки.
+void overlay_set_capture_visible(bool visible) {
+    anwc::ANativeWindowCreator::SetCaptureVisible(visible);
+}
+
+bool overlay_capture_visible() {
+    return anwc::ANativeWindowCreator::CaptureVisible();
+}
+
 bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     orientation = displayInfo.orientation;
     if (!init_egl(_screen_x, _screen_y, log)) return false;

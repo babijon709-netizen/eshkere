@@ -192,6 +192,12 @@ constexpr float kFlickerGiveUp = 1.0f;   // с прыжков — больше �
 constexpr float kDepletedFrac  = 0.005f;
 constexpr int   kDepletedFrames = 2;     // дебаунс чтения остатка
 constexpr float kStuckTime     = 2.20f;  // нет продвижения к точке подхода
+// После смены узла бот сначала доворачивается на новую цель и только потом
+// идёт. Без этого он с первого кадра давил вперёд по прежнему курсу — у
+// срубленного дерева это ровно пень, — упирался, и до kStuckTime копился
+// «нет продвижения»: со стороны выглядело как бег вокруг добытого места.
+constexpr float kFreshTurnTime  = 0.55f;  // с: доворот на новую цель
+constexpr float kFreshTurnYaw   = 12.0f;  // град: с этого угла уже идём
 constexpr float kEvadeTime     = 1.70f;  // ~0.6 назад + ~1.1 вбок
 constexpr int   kEvadeMax      = 4;
 constexpr float kBlockedTime   = 0.30f;  // узел перекрыт дольше — пробуем обойти
@@ -257,6 +263,7 @@ static void UpdateFarmInner(float dt) {
     static int   s_depletedFrames = 0;
     static float s_lastWalk = 1e9f;   // лучшая дистанция до точки подхода
     static float s_stuckTime = 0.f;
+    static float s_freshTurn = 0.f;   // остаток доворота на новую цель
     static float s_evadeTime = 0.f;   // > 0: идёт манёвр обхода препятствия
     static float s_evadeDir = 1.f;    // +1 вправо, -1 влево
     static int   s_evadeCount = 0;
@@ -294,7 +301,7 @@ static void UpdateFarmInner(float dt) {
         s_mineTime = 0.f; s_fracStart = -1.f; s_bestStreak = 0;
         s_healthStart = -1.f; s_blockedTime = 0.f; s_clearTime = 0.f;
         s_depletedFrames = 0;
-        s_lastWalk = 1e9f; s_stuckTime = 0.f;
+        s_lastWalk = 1e9f; s_stuckTime = 0.f; s_freshTurn = 0.f;
         s_evadeTime = 0.f; s_evadeCount = 0; s_evadeWhy = 0;
         s_walkOffTime = 0.f; s_noRayTime = 0.f;
         s_rayMissTime = 0.f; s_nudgeTimer = 0.f;
@@ -454,6 +461,7 @@ static void UpdateFarmInner(float dt) {
         s_healthStart = tgt.node_health;
         s_blockedTime = 0.f;
         if (hadNode) { releaseAll(); s_settle = kSettleTime; }
+        s_freshTurn = kFreshTurnTime;
     }
 
     // Уже добытый узел уходит в чёрный список на месте, а не обходится кругами:
@@ -467,6 +475,7 @@ static void UpdateFarmInner(float dt) {
             releaseAll();
             resetNode();
             s_settle = kSettleTime;
+            s_freshTurn = kFreshTurnTime;   // следующий узел — сперва доворот
             g_farmPhase = 0;
             return;
         }
@@ -753,6 +762,19 @@ static void UpdateFarmInner(float dt) {
         else if (s_moveDown) {
             s_walkOffTime += dt;
             if (s_walkOffTime < kWalkOffHold) wantWalk = true; // держим, гасим дёрганье
+        }
+
+        // Доворот на новую цель: пока камера смотрит в сторону прежнего узла,
+        // стик не жмём вовсе — иначе бот идёт по старому курсу и упирается в
+        // пень. Таймер «нет продвижения» в это время не тикает.
+        if (s_freshTurn > 0.f) {
+            s_freshTurn -= dt;
+            if (fabsf(tgt.walk_yaw) <= kFreshTurnYaw || aimSettled) {
+                s_freshTurn = 0.f;
+            } else {
+                wantWalk = false;
+                s_stuckTime = 0.f;
+            }
         }
 
         if (wantWalk) {

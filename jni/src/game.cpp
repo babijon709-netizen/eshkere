@@ -9425,6 +9425,21 @@ static bool read_ui_transform_local_pos(uint64_t managed_rt, Vec3& out) {
     return vec3_is_finite(out);
 }
 
+// Собственный localScale трансформа (без предков). Нужен как замена
+// накопленному масштабу, когда обход цепочки упёрся в предка с нулевым
+// масштабом: рисовать карта всё равно умеет, и её собственный масштаб —
+// единственная честная оценка «местных единиц на пиксель канвы».
+static bool read_ui_transform_local_scale(uint64_t managed_rt, Vec3& out) {
+    uint64_t matrices = 0, indices = 0;
+    int32_t index = -1;
+    if (!resolve_ui_transform_arrays(managed_rt, matrices, indices, index)) return false;
+    Matrix34 m{};
+    if (!rd_exact(matrices + (uint64_t)index * sizeof(Matrix34), m) || !matrix34_is_valid(m))
+        return false;
+    out = {m.scale.x, m.scale.y, m.scale.z};
+    return std::isfinite(out.x) && std::isfinite(out.y);
+}
+
 static bool read_ui_transform_world_trs_and_root(uint64_t managed_rt,
                                                  Vec3& pos,
                                                  Vec4& rot,
@@ -9462,8 +9477,11 @@ static bool read_ui_transform_world_trs_and_root(uint64_t managed_rt,
         if (!rd_exact(indices + (uint64_t)parent * sizeof(int32_t), parent)) return false;
     }
     if (parent != -1 || depth >= 128) return false;
-    return vec3_is_finite(pos) && std::isfinite(scale.x) && fabsf(scale.x) > 1e-5F &&
-           std::isfinite(scale.y) && fabsf(scale.y) > 1e-5F;
+    // Масштаб не проверяется: у UI-канвы предки-обёртки держат нулевой
+    // localScale, и требование |scale| > 0 отбрасывало уже собранную позицию
+    // карты (трейс: стадия 63 при loc=1). Нулевой масштаб значит лишь, что
+    // предок не растягивает, а не что цепочка не прочиталась.
+    return vec3_is_finite(pos) && std::isfinite(scale.x) && std::isfinite(scale.y);
 }
 
 // Мягкий обход цепочки трансформа — для UI карты.
@@ -9510,7 +9528,7 @@ static bool read_ui_transform_world_soft(uint64_t managed_rt, Vec3& pos, Vec4& r
         ++levels;
         if (!rd_exact(indices + (uint64_t)parent * sizeof(int32_t), parent)) break;
     }
-    return vec3_is_finite(pos) && std::isfinite(scale.x) && fabsf(scale.x) > 1e-5F;
+    return vec3_is_finite(pos) && std::isfinite(scale.x);
 }
 
 struct MapProjection {
@@ -10026,6 +10044,8 @@ static struct MapDiag {
     int   local_ok = -1;                   // читается ли локальная позиция карты
     int   idx = -1;                        // индекс трансформа карты в иерархии
     uint64_t native_rt = 0, matrices = 0, indices = 0;
+    int   tr_ok = -1;                      // цепочка трансформа карты прочиталась
+    float scale_x = 0.0F, scale_y = 0.0F;  // накопленный масштаб трансформа карты
     int   proj_ok = 0, proj_fail = 0;      // игроки: попали в экран карты / нет
     float local_x = 0.0F, local_y = 0.0F;  // первый игрок в координатах карты
     float sx = 0.0F, sy = 0.0F;            // и его экранная точка
@@ -10064,6 +10084,10 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
     if (!valid_obj(map_rt)) { g_map_diag.stage = 5; return false; }
     g_map_diag.map_rt = map_rt;
 
+    // Трансформ нужен только проекции, а масштаб мир→карта считается по
+    // маркерам. Поэтому отказ трансформа больше не выкидывает из разбора:
+    // zry и счётчики пар дочитываются, а стадия отказа остаётся в трейсе.
+    bool have_transform = true;
     Vec3 root_pos{};
     if (!read_ui_transform_world_trs_and_root(map_rt, out.map_pos, out.map_rot, out.map_scale, root_pos)) {
         // Строгий обход не прошёл (трейс: стадия 6 при открытой карте).
@@ -10086,13 +10110,24 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
                                           root_pos, levels)) {
             g_map_diag.stage = g_map_diag.arr_ok == 0 ? 61
                              : (g_map_diag.local_ok == 0 ? 62 : 63);
-            return false;
+            have_transform = false;
+        } else {
+            g_map_diag.layers = levels;
+            g_map_diag.stage = 60 + (levels < 10 ? levels : 9);
         }
-        g_map_diag.layers = levels;
-        g_map_diag.stage = 60 + (levels < 10 ? levels : 9);
     }
+    g_map_diag.tr_ok = have_transform ? 1 : 0;
+    if (have_transform && fabsf(out.map_scale.x) < 1e-4F) {
+        Vec3 self_scale{};
+        if (read_ui_transform_local_scale(map_rt, self_scale) && fabsf(self_scale.x) > 1e-4F) {
+            out.map_scale.x = self_scale.x;
+            out.map_scale.y = self_scale.y;
+        }
+    }
+    g_map_diag.scale_x = out.map_scale.x;
+    g_map_diag.scale_y = out.map_scale.y;
 
-    if (std::isfinite(root_pos.x) && std::isfinite(root_pos.y) &&
+    if (have_transform && std::isfinite(root_pos.x) && std::isfinite(root_pos.y) &&
         root_pos.x > 100.0F && root_pos.y > 100.0F &&
         root_pos.x < 10000.0F && root_pos.y < 10000.0F) {
         out.canvas_w = root_pos.x * 2.0F;
@@ -10102,6 +10137,12 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
         out.canvas_h = sh;
     }
 
+    // Масштаб мир→карта. Игра считает его в MapView.Zry() как
+    // worldSize / width(RectTransform карты) и делит мир на него в MapView.Qz();
+    // обе величины живут в полях, которых в памяти нет (RectTransform.rect
+    // считается из якорей, размер мира приходит из IQ-контекста), поэтому
+    // берём zry с самих маркеров: у каждой метки есть мировая точка и её
+    // локальная позиция на карте.
     float best_zry = 0.0F;
     float best_span = 0.0F;
     auto consider_pair = [&](float world_coord, float local_coord) {
@@ -10219,6 +10260,7 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
         }
     }
 
+    if (!have_transform) return false;
     out.valid = true;
     g_map_diag.stage = 100;
     g_map_diag.zry = out.zry;
@@ -12959,7 +13001,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             snprintf(note, sizeof(note),
                      "map stage=%d mgr=%d pres=%d open=%d pins=%d marks=%d "
                      "zry=%.3f canvas=%.0fx%.0f proj=%d/%d local=%.1f,%.1f px=%.0f,%.0f "
-                     "arr=%d loc=%d idx=%d lay=%d nat=%llx mats=%llx inds=%llx "
+                     "arr=%d loc=%d idx=%d lay=%d tr=%d sc=%.4f,%.4f nat=%llx mats=%llx inds=%llx "
                      "mm=%llx mv=%llx rt=%llx",
                      g_map_diag.stage, g_map_diag.mgr_open, g_map_diag.pres_open,
                      g_frame_map_open ? 1 : 0, g_map_diag.pins, g_map_diag.markers,
@@ -12968,7 +13010,8 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                      g_map_diag.local_x, g_map_diag.local_y,
                      g_map_diag.sx, g_map_diag.sy,
                      g_map_diag.arr_ok, g_map_diag.local_ok, g_map_diag.idx,
-                     g_map_diag.layers,
+                     g_map_diag.layers, g_map_diag.tr_ok,
+                     g_map_diag.scale_x, g_map_diag.scale_y,
                      (unsigned long long)g_map_diag.native_rt,
                      (unsigned long long)g_map_diag.matrices,
                      (unsigned long long)g_map_diag.indices,

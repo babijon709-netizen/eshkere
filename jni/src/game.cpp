@@ -10022,6 +10022,10 @@ static struct MapDiag {
     float zry = 0.0F;
     float canvas_w = 0.0F, canvas_h = 0.0F;
     int   layers = -1;                     // сколько уровней прошёл мягкий обход
+    int   arr_ok = -1;                     // resolve_ui_transform_arrays для карты
+    int   local_ok = -1;                   // читается ли локальная позиция карты
+    int   idx = -1;                        // индекс трансформа карты в иерархии
+    uint64_t native_rt = 0, matrices = 0, indices = 0;
     int   proj_ok = 0, proj_fail = 0;      // игроки: попали в экран карты / нет
     float local_x = 0.0F, local_y = 0.0F;  // первый игрок в координатах карты
     float sx = 0.0F, sy = 0.0F;            // и его экранная точка
@@ -10065,9 +10069,23 @@ static bool resolve_map_projection(float sw, float sh, MapProjection& out) {
         // Строгий обход не прошёл (трейс: стадия 6 при открытой карте).
         // Пробуем мягкий и запоминаем, сколько уровней он осилил.
         int levels = 0;
+        // Разложить отказ на три причины: не разрешились массивы иерархии,
+        // матрица трансформа не прошла проверку, или обход сорвался на предке.
+        {
+            int32_t probe_idx = -1;
+            uint64_t m = 0, n = 0;
+            g_map_diag.arr_ok = resolve_ui_transform_arrays(map_rt, m, n, probe_idx) ? 1 : 0;
+            g_map_diag.idx = probe_idx;
+            g_map_diag.matrices = m;
+            g_map_diag.indices = n;
+            g_map_diag.native_rt = resolve_native_transform(map_rt);
+            Vec3 local{};
+            g_map_diag.local_ok = read_ui_transform_local_pos(map_rt, local) ? 1 : 0;
+        }
         if (!read_ui_transform_world_soft(map_rt, out.map_pos, out.map_rot, out.map_scale,
                                           root_pos, levels)) {
-            g_map_diag.stage = 6;
+            g_map_diag.stage = g_map_diag.arr_ok == 0 ? 61
+                             : (g_map_diag.local_ok == 0 ? 62 : 63);
             return false;
         }
         g_map_diag.layers = levels;
@@ -12941,6 +12959,7 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
             snprintf(note, sizeof(note),
                      "map stage=%d mgr=%d pres=%d open=%d pins=%d marks=%d "
                      "zry=%.3f canvas=%.0fx%.0f proj=%d/%d local=%.1f,%.1f px=%.0f,%.0f "
+                     "arr=%d loc=%d idx=%d lay=%d nat=%llx mats=%llx inds=%llx "
                      "mm=%llx mv=%llx rt=%llx",
                      g_map_diag.stage, g_map_diag.mgr_open, g_map_diag.pres_open,
                      g_frame_map_open ? 1 : 0, g_map_diag.pins, g_map_diag.markers,
@@ -12948,6 +12967,11 @@ std::vector<EspBox> esp_get_boxes(int overlay_width, int overlay_height) {
                      g_map_diag.proj_ok, g_map_diag.proj_fail,
                      g_map_diag.local_x, g_map_diag.local_y,
                      g_map_diag.sx, g_map_diag.sy,
+                     g_map_diag.arr_ok, g_map_diag.local_ok, g_map_diag.idx,
+                     g_map_diag.layers,
+                     (unsigned long long)g_map_diag.native_rt,
+                     (unsigned long long)g_map_diag.matrices,
+                     (unsigned long long)g_map_diag.indices,
                      (unsigned long long)g_map_diag.map_mgr,
                      (unsigned long long)g_map_diag.map_view,
                      (unsigned long long)g_map_diag.map_rt);

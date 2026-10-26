@@ -6425,39 +6425,6 @@ static bool player_authoritative_velocity(uint64_t player, Vec3& out) {
     return false;
 }
 
-// Насколько отрисованное тело цели ушло от последнего ПРИСЛАННОГО отсчёта.
-//
-// Чужого игрока клиент ведёт сам: между отсчётами тянет последнюю скорость
-// (ObserverMove.RealVelocity) и мягко подтягивает позицию к присланной. На
-// развороте или стопе это даёт до полуметра вперёд истины, а на длинной
-// дистанции — промах, потому что сервер проверяет попадание по записанным
-// позициям хитбоксов (KCC.hitBoxRecorderRoot), а не по нашей экстраполяции.
-//
-// Возвращает (последний отсчёт - отрисованное тело) в мировых метрах. Ноль при
-// любом сомнении: бот/транспорт, тела ещё нет, отсчёт мусорный, прыжок больше
-// 2.5 м (респаун, смена владельца пула, посадка в транспорт).
-static bool aim_sample_offset(uint64_t player, Vec3& out) {
-    out = {};
-    if (!valid_obj(player)) return false;
-    const PlayerAux& aux = player_aux(player);
-    if (!valid_obj(aux.kcc)) return false;
-    if (rd<uint8_t>(aux.kcc + KCC_HAS_OBSERVER_MOVE) != 1) return false;   // отсчёта ещё не было
-    Vec3 body{}, sample{};
-    if (!rd_exact(aux.kcc + KCC_MOVE + 0x0C, body)) return false;                    // Move.Position
-    if (!rd_exact(aux.kcc + KCC_OBSERVER_MOVE + OBSERVER_MOVE_POSITION, sample)) return false;
-    if (!vec3_is_finite(body) || !vec3_is_finite(sample)) return false;
-    // Стоящего не трогаем: у него смещение — это догоняющая коррекция после
-    // остановки, и она меньше пули, а шум больше.
-    const Vec3 vel = rd_v3(aux.kcc + KCC_OBSERVER_MOVE + OBSERVER_MOVE_VELOCITY);
-    if (!vec3_is_finite(vel)) return false;
-    if (vel.x * vel.x + vel.z * vel.z < 0.25F) return false;
-    const Vec3 delta{sample.x - body.x, sample.y - body.y, sample.z - body.z};
-    const float len = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-    if (!std::isfinite(len) || len > 2.5F) return false;
-    out = delta;
-    return true;
-}
-
 static PlayerTrack& track_player(uint64_t player, const Vec3& position) {
     PlayerTrack& track = g_player_track[player];
     if (--track.uid_recheck <= 0) {
@@ -7771,18 +7738,6 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
     const bool silent_mode = g_state.aim_mode == AIM_MODE_SILENT;
     Vec3 world{world_in.x, world_in.y, world_in.z};
     if (slot == 0) world.y += head_lift_for_range(world_in);
-    // Кость читается из отрисованного тела, а тело между отсчётами уезжает
-    // вперёд истины (см. aim_sample_offset). Сдвигаем точку прицела на разницу
-    // между последним присланным положением и отрисованным: на снайперке, где
-    // полёт 0.2-0.3 с, это как раз те промахи «впереди бегущего».
-    if (!box.is_bot) {
-        Vec3 net_fix{};
-        if (aim_sample_offset(box.id, net_fix)) {
-            world.x += net_fix.x;
-            world.y += net_fix.y;
-            world.z += net_fix.z;
-        }
-    }
 
     bool ballisticSolved = false;
     if (g_state.aim_touch && haveOrigin) {

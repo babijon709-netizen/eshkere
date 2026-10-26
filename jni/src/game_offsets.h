@@ -787,7 +787,6 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET     = 0x90; // float, eye 
 inline constexpr std::uint64_t KCC_MOVE                   = 0x1AC;  // 11966: 0x13C; State +0x0 (uint8), Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
 inline constexpr std::uint64_t KCC_VISIBILITY             = 0x308;  // [SyncVar(hook = "OnVisibilityChanged")] public Visibility visibility (0 = Visible, 1 = Hidden); 11966: 0x298
 inline constexpr std::uint64_t KCC_MOTOR_ENABLED          = 0x30D;  // [SyncVar] private bool motorEnabled (bhP); 11966: 0x29D
-inline constexpr std::uint64_t KCC_OBSERVER_MOVE          = 0x380;  // private ObserverMove bhF — последний ПРИСЛАННЫЙ отсчёт тела (полный ключевой кадр или слитый частичный); пишется обработчиком KCC.QQN/kZS/ZcT
 inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x3C0;  // private bool bhA (11966: RMu @0x350) — сразу после полного ObserverMove bhF @0x380; 1 after first full ObserverMove on remote client
 // MoveState значения (enum MoveState 11978 TypeDefIndex 4450, сверен с 11949):
 // 0 IDLE, 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE, 5 CLIMBING,
@@ -799,17 +798,6 @@ inline constexpr std::int32_t KCC_MOVE_STATE_DEAD          = 7;
 // значения — нет: сверено по dump.cs обеих сборок (struct Move, TypeDefIndex
 // 4309 / 4453): State 0x00, Pose 0x04, Aim 0x08, Position 0x0C,
 // RealVelocity 0x18, MoveDirection 0x24, BaseVelocity 0x38.
-// Внутренние смещения ObserverMove (dump 11978, TypeDefIndex 4454) — раскладка
-// сетевого отсчёта, из которого клиент ведёт чужое тело:
-//   +0x00 uint Tick        +0x04 byte Mask (Flags1 Yaw2 Direction4 Velocity8
-//   Position16 Carrier32; полный кадр каждые 8 тиков)
-//   +0x05 MoveState State  +0x06 bool Crouch  +0x0C float YRotation
-//   +0x10 Vector2 MoveDirection  +0x18 Vector3 RealVelocity
-//   +0x24 Vector3 Position       +0x30 uint CarrierNetId
-inline constexpr std::uint64_t OBSERVER_MOVE_TICK          = 0x00; // uint
-inline constexpr std::uint64_t OBSERVER_MOVE_MASK          = 0x04; // uint8
-inline constexpr std::uint64_t OBSERVER_MOVE_POSITION      = 0x24; // Vector3
-inline constexpr std::uint64_t OBSERVER_MOVE_VELOCITY      = 0x18; // Vector3
 inline constexpr std::uint64_t KCC_MOVE_STATE              = 0x00; // int32 MoveState
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY      = 0x18; // Vector3
 inline constexpr std::uint64_t KCC_MOVE_REAL_VELOCITY_Y    = 0x1C; // float .y

@@ -38,6 +38,7 @@
 #include "audio.h"                   // PlaySound
 #include "str.h"                     // XS()
 #include "ui_util.h"                 // WasTappedHere
+#include "bw_obf.h"                  // BW_GUARD на экранах выбора
 
 namespace modesel {
 
@@ -85,6 +86,7 @@ static bool ModeButton(const char* id, float w, float h, const char* title,
 // ---- выбор версии игры ---------------------------------------------------
 
 static bool RunVersionSelect() {
+    BW_GUARD();
     RestoreLang();
     RestoreAccent();
     ApplyTheme();
@@ -155,6 +157,7 @@ static bool RunVersionSelect() {
 // закрыли (сигнал/терминал), не дав выбрать: вызывающий выходит тем же
 // порядком teardown, что и обычный выход из main().
 static bool RunModeSelect() {
+    BW_GUARD();
     // Язык и акцент применяем заранее: в main() это делается позже (после
     // потока привязки), а на этом экране подписи уже должны быть на месте.
     RestoreLang();

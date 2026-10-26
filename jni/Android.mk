@@ -11,6 +11,14 @@ LOCAL_MODULE := benzware
 _BUILD_SHA  := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
 _BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# LTO — главный структурный обфускатор: границы функций исчезают, константы
+# и helper'ы вклеиваются в огромные процедуры, --icf=all дополнительно склеивает
+# одинаковые куски. BW_NO_LTO=1 ./build.sh выключает (для отладки падений).
+_LTO := -flto
+ifneq ($(filter 1 yes true,$(BW_NO_LTO)),)
+    _LTO :=
+endif
+
 _CF := -DBENZWARE_BUILD_SHA=\"$(_BUILD_SHA)\" -DBENZWARE_BUILD_DATE=\"$(_BUILD_DATE)\" \
        -O3 -ffast-math -march=armv8-a+simd \
        -fomit-frame-pointer -ffunction-sections -fdata-sections \
@@ -21,6 +29,8 @@ _CF := -DBENZWARE_BUILD_SHA=\"$(_BUILD_SHA)\" -DBENZWARE_BUILD_DATE=\"$(_BUILD_D
        -fno-unwind-tables \
        -fno-asynchronous-unwind-tables \
        -fno-ident \
+       -fno-jump-tables \
+       $(_LTO) \
        -ffile-prefix-map=$(LOCAL_PATH)/=. -fmacro-prefix-map=$(LOCAL_PATH)/=. \
        -fstrict-aliasing
 
@@ -30,12 +40,14 @@ LOCAL_CFLAGS   := $(_CF) -std=c11
 # --icf=all сливает одинаковые функции (меньше кода и меньше зацепок для
 # дизассемблера), --exclude-libs,ALL прячет символы, приехавшие из c++_static.
 LOCAL_LDFLAGS := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none \
-                 -Wl,--exclude-libs,ALL -Wl,--icf=all -pie
+                 -Wl,--exclude-libs,ALL -Wl,--icf=all -pie $(_LTO) \
+                 -Wl,-z,separate-code
 
-# Обфускация потока управления. Нужен clang с проходами OLLVM/obfuscator-llvm:
-# в стоковом NDK их нет, поэтому флаги включаются только явно — OBF=1 ./build.sh.
-# -fla (flattening), -bcf (bogus control flow), -sub (instruction substitution),
-# -sobf (шифрование строк), -split (разбиение блоков).
+# Собственная обфускация (bw_obf.h/cpp + tools/obf/elf_crypt.py) включена
+# ВСЕГДА и работает на стоковом NDK из CI. OBF=1 — дополнительные проходы
+# OLLVM/obfuscator-llvm, если вместо стокового clang подложен форк с этими
+# проходами (-fla, -bcf, -sub, -sobf, -split). Стоковый NDK их не имеет:
+# флаги уйдут в LLVM warnings, но сборку не сломают.
 ifneq ($(filter 1 yes true,$(OBF)),)
     _CF += -mllvm -fla -mllvm -bcf -mllvm -sub -mllvm -sobf -mllvm -split
 endif
@@ -43,7 +55,7 @@ endif
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include $(LOCAL_PATH)/include/ImGui $(LOCAL_PATH)/include/ImGui/backends $(LOCAL_PATH)/src
 
 LOCAL_SRC_FILES := \
-    src/main.cpp \
+    src/main.cpp src/bw_obf.cpp \
     src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
     src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
     src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp \

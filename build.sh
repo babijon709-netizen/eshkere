@@ -36,6 +36,19 @@ fi
 echo "build.sh: using $NDK_BUILD"
 echo "build.sh: ndk $(cat "$(dirname "$NDK_BUILD")/source.properties" 2>/dev/null | tr -d '\r' | tail -n1)"
 
+# ---- ключ сборки ---------------------------------------------------------
+# Случайный на каждую сборку: два артефакта одной и той же ревизии имеют
+# разные шифротексты .rodata. Ключ живёт только в сгенерированном заголовке
+# (в git не попадает) и в immediates кода splitmix64 — готовой строки/таблицы
+# с ключом в бинаре нет.
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "build.sh: нужен python3 (генерация ключа + elf_crypt.py)" >&2
+    exit 1
+fi
+OBF_KEY="$(python3 -c 'import secrets; print("0x%016x" % secrets.randbits(64))')"
+printf '#pragma once\n// Сгенерировано build.sh. Не коммитить: ключ уникален для сборки.\n#define BW_BUILD_KEY %sULL\n' \
+    "$OBF_KEY" > jni/include/bw_build_key.h
+
 rm -rf obj libs
 
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -100,5 +113,12 @@ if [ -n "$FAILED" ]; then
     echo "build.sh: в бинаре остались следы сборки:$FAILED" >&2
     exit 1
 fi
+
+# ---- пост-линковочное шифрование .rodata --------------------------------
+# Делаем ПОСЛЕ readelf-проверок: elf_crypt.py вырезает таблицу секций, и
+# llvm-strip/readelf после него уже бесполезны. Внутри — собственная проверка
+# контрольных строк; любая уцелевшая открытая строка роняет сборку.
+python3 tools/obf/elf_crypt.py "$BIN_SH" --key "$OBF_KEY" || exit 1
+python3 tools/obf/elf_crypt.py "$BIN_SH" --check || exit 1
 
 echo "build.sh: ok -> $(ls -l "libs/$ABI/benzware.sh")"

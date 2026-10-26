@@ -63,7 +63,7 @@ void update(std::vector<espboxhold::Entry<Value>>& hold,
             const std::vector<Value>& fresh,
             bool transient, double now, double hold_seconds,
             std::vector<Value>& out) {
-    espboxhold::update(hold, fresh, transient, now, hold_seconds, FrameOk<Value>, out);
+    espboxhold::update(hold, fresh, transient, now, hold_seconds, 0.001, FrameOk<Value>, out);
 }
 
 EspMarker make_marker(unsigned long long id, float x) {
@@ -208,14 +208,14 @@ int main() {
     //     камера едет, — это и есть «визуалы плавают по экрану».
     {
         std::vector<Entry> hold; std::vector<EspBox> out;
-        espboxhold::update(hold, roster({0x1000, 0x2000}), false, 1.0, kHold,
+        espboxhold::update(hold, roster({0x1000, 0x2000}), false, 1.0, kHold, 0.001,
                            FrameOk<EspBox>, out);
         CHECK(out.size() == 2, "healthy frame with camera");
-        espboxhold::update(hold, {}, true, 1.05, kHold, FrameMissing<EspBox>, out);
+        espboxhold::update(hold, {}, true, 1.05, kHold, 0.001, FrameMissing<EspBox>, out);
         CHECK(out.empty(), "no camera frame: held boxes are not drawn");
         // Кадр вернулся — состав берётся из конвейера заново, без пустых
         // экранных координат из прошлого.
-        espboxhold::update(hold, roster({0x1000, 0x2000}), false, 1.10, kHold,
+        espboxhold::update(hold, roster({0x1000, 0x2000}), false, 1.10, kHold, 0.001,
                            FrameOk<EspBox>, out);
         CHECK(out.size() == 2, "healthy frame restores the roster after a dropped tick");
     }
@@ -224,16 +224,16 @@ int main() {
     //     этим кадр и пересчитывает экран из мирового якоря.
     {
         std::vector<Entry> hold; std::vector<EspBox> out;
-        espboxhold::update(hold, roster({0x1000}), false, 1.0, kHold, FrameOk<EspBox>, out);
+        espboxhold::update(hold, roster({0x1000}), false, 1.0, kHold, 0.001, FrameOk<EspBox>, out);
         int calls = 0;
         unsigned long long last_id = 0;
         // Игрок пропал из сбойного среза: запись удержана и перепроецируется.
-        espboxhold::update(hold, {}, true, 1.05, kHold,
+        espboxhold::update(hold, {}, true, 1.05, kHold, 0.001,
                            [&](EspBox& box) { ++calls; last_id = box.id; return true; }, out);
         CHECK(calls == 1, "reproject called for the held entry");
         CHECK(last_id == 0x1000, "reproject sees the held entry");
         calls = 0;
-        espboxhold::update(hold, roster({0x1000}), true, 1.10, kHold,
+        espboxhold::update(hold, roster({0x1000}), true, 1.10, kHold, 0.001,
                            [&](EspBox&) { ++calls; return true; }, out);
         CHECK(calls == 0, "freshly updated entries are not reprojected again");
     }

@@ -1,4 +1,5 @@
 #include "silent_aim_core.h"
+#include "bw_obf.h"
 #include "game.h"      // esp_silent_* — память игры через выбранный транспорт
 #include <chrono>
 #include <condition_variable>
@@ -122,7 +123,7 @@ public:
 };
 Writer& writer() { static Writer value; return value; }
 }
-bool publish(const Command& command) { return writer().publish(command); }
+bool publish(const Command& command) { BW_GUARD(); return writer().publish(command); }
 void clear() { writer().clear(); }
 void shutdown() { writer().stop(); }
 Stats stats() { return writer().stats(); }

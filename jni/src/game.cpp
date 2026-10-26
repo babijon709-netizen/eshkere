@@ -1,4 +1,5 @@
 #include "game.h"
+#include "bw_obf.h"           // BW_GUARD: привязка и транспорт
 #include "aim.h"
 #include "app_state.h"
 #include "cfg.h"
@@ -65,6 +66,7 @@ memio::Reader g_mem;
 static int g_mem_backend = ESP_MEM_EXTERNAL;
 
 void esp_set_mem_backend(int backend) {
+    BW_GUARD();
     g_mem_backend = backend;
     memio::Transport* t = &memio::procfs_transport();
     if (backend == ESP_MEM_FT || backend == ESP_MEM_DITPRO) {
@@ -9011,6 +9013,7 @@ static EspAttachState g_attach_state = ESP_ATTACH_OK;
 EspAttachState esp_attach_state() { return g_attach_state; }
 
 bool esp_init(pid_t pid, bool package_verified_release) {
+    BW_GUARD();
     std::lock_guard<std::recursive_mutex> viewmodel_guard(viewmodel_session_mutex());
     esp_reset();
     g_pid = pid;

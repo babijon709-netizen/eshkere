@@ -9,6 +9,7 @@
 #include "menu.h"                // g_calibMode
 #include "widgets.h"             // g_sheet/g_pop: меню открыто — тач-аим на паузе
 #include "process.h"             // g_esp_attached
+#include "bw_obf.h"              // BW_GUARD в выборе цели
 #include "ui_util.h"
 #include "str.h"               // XS(): строки интерфейса зашифрованы в бинарнике
 #include "hud.h"               // ShowToast: мемори-режимы сообщают о поломке тостом
@@ -344,6 +345,7 @@ static bool AimBegin(float& dt, float& sw, float& sh) {
 
 // Select a target for touch, memory, and silent modes; memory additionally filters its angles.
 static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarget& best) {
+    BW_GUARD();
     const std::vector<EspBox>& boxes = FrameBoxes(sw, sh);
 
     const float crossX = sw * 0.5f, crossY = sh * 0.5f;

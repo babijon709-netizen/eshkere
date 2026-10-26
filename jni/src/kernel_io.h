@@ -76,6 +76,7 @@
 #include <unistd.h>
 
 #include "mem_io.h"
+#include "bw_obf.h"          // ABI-коды драйвера не лежат immediates
 
 namespace memio {
 
@@ -132,11 +133,12 @@ static_assert(sizeof(DitProRwReq) == 0x28, "ditPro 131 request ABI changed");
 static_assert(sizeof(DitProBaseReq) == 0x20, "ditPro 131 base request ABI changed");
 
 inline long ditpro_probe_result() {
+    BW_GUARD();
     errno = 0;
-    const long v = syscall(kDitProSyscall, kDitPro131CmdVersion, 0L, 0L);
+    const long v = syscall(BW_CONST(kDitProSyscall), BW_CONST(kDitPro131CmdVersion), 0L, 0L);
     if (v == 131) return 131;
     errno = 0;
-    if (syscall(kDitProSyscall, kDitPro131CmdCheck, 0L, 0L) == 616) return 131;
+    if (syscall(BW_CONST(kDitProSyscall), BW_CONST(kDitPro131CmdCheck), 0L, 0L) == 616) return 131;
     return -1;
 }
 
@@ -211,6 +213,7 @@ struct CmdProbe {
 // таком типе дают EAFNOSUPPORT/EPROTONOSUPPORT. Без root create() драйвера
 // отвечает EAFNOSUPPORT и маячок не виден.
 inline int driver_find_family(int* beacon_out = nullptr) {
+    BW_GUARD();
     const int beacons[2] = { kDriverProbeErrno, kGongProbeErrno };
     for (int b = 0; b < 2; ++b) {
         for (int dom = kDriverFamilyFirst; dom <= kDriverFamilyLast; ++dom) {

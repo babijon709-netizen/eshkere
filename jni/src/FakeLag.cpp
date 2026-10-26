@@ -1,4 +1,5 @@
 #include "FakeLag.h"
+#include "bw_obf.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -18,6 +19,7 @@ static const char* UNBLOCK_RAW =
 // Выполняет команду без popen/malloc в многопоточном процессе: если уже root
 // (euid == 0), вызываем sh напрямую без лишнего su-процесса.
 static void executeRoot(const char* cmd) {
+    BW_GUARD();
     const pid_t pid = fork();
     if (pid < 0) return;
     if (pid == 0) {
@@ -111,6 +113,7 @@ void FakeLag::setPercent(int percent) {
 }
 
 void FakeLag::apply(bool enable) {
+    BW_GUARD();
     if (enable) {
         if (m_running.load()) return;   // уже запущен
         // Чистим след прошлого запуска ДО установки своего: иначе два

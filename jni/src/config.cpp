@@ -1,4 +1,5 @@
 #include "config.h"
+#include "bw_obf.h"          // BW_CONST: магию профиля не отдаём immediates
 #include <cmath>
 #include "str.h"
 #include "app_state.h"
@@ -212,7 +213,7 @@ static void LayoutFromArray(const float* v) {
 
 static void WriteUiTrailer(std::ostream& f) {
     CfgUiTrailer t{};
-    t.magic = kCfgUiMagic;
+    t.magic = static_cast<uint32_t>(BW_CONST(kCfgUiMagic));
     t.version = 1;
     const int idx = g_state.ui_accent_idx;
     t.accent_idx = (uint32_t)((idx >= 0 && idx <= 8) ? idx : 0);
@@ -443,8 +444,9 @@ int CfgSavedMemBackend() {
 }
 
 static void ConfigSaveToPath(const std::string& path) {
+    BW_GUARD();
     CfgBlob s;
-    s.magic   = 0x58564345U;
+    s.magic   = static_cast<uint32_t>(BW_CONST(0x58564345U));
     s.version = 4;
     s.aim_touch   = g_state.aim_touch;   s.aim_pos     = g_state.aim_pos;
     s.aim_special = g_state.aim_special;
@@ -569,6 +571,7 @@ void ConfigUpdate(int idx) {
 }
 
 static void LoadCfgByName(const char* name, bool announce) {
+    BW_GUARD();
     std::string path = CfgPath(name);
     std::ifstream f(path, std::ios::binary);
     if (!f) { if (announce) ShowToast(XS("Файл не найден")); return; }

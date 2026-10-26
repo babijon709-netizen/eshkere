@@ -23,6 +23,7 @@
 // Исполняемый файл не удаляется: запуск через _exit и аварийное завершение
 // не должны оставлять каталог без бинарника.
 
+#include "bw_obf.h"          // BW_GUARD: размазываем маскировку процесса
 #include <dirent.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -69,6 +70,7 @@ inline void WriteTextFile(const char* path, const char* data, size_t len) {
 // категорий s0:cXXX,cYYY в KernelSU/APatch) процесс игры вообще не виден в
 // /proc, а открытие /proc/<pid>/maps и process_vm_readv возвращают EACCES.
 inline void ElevateCredentials() {
+    BW_GUARD();
     (void)::setgid(0);
     (void)::setuid(0);
 
@@ -269,6 +271,7 @@ inline void DaemonizeEarly() {
 // Вызывать строго ПОСЛЕ разбора аргументов (строки argv затираются) и до
 // создания потоков (наследуют comm).
 inline void ApplyEarly(int argc, char* argv[]) {
+    BW_GUARD();
     // Закрываем только унаследованные от MT Manager / терминала дескрипторы
     // (/dev/pts/*, /data/*, pipe/socket от шелла), не трогая системные fd
     // bionic/линкера (/dev/__properties__ и т.д.).
@@ -343,6 +346,7 @@ inline void ApplyTracerGuard() {
 // ---- 3) рантайм-скрытие: терминал -----------------------------------------
 // Вызывать после успешного подъёма оверлея и тача, до экрана выбора режима.
 inline void ApplyRuntime() {
+    BW_GUARD();
     // Отвязка от терминала: без сессии ps показывает TTY «?». Отказ не
     // критичен (если мы уже лидер сессии после DaemonizeEarly).
     setsid();

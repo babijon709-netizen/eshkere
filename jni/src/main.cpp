@@ -22,6 +22,7 @@
 #include "kernel_io.h"
 #include "stealth.h"
 #include "FakeLag.h"
+#include "bw_obf.h"          // BW_GUARD / BW_CONST: непрозрачные ветвления
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <cerrno>
@@ -50,6 +51,7 @@
 namespace driver_check {
 
 static int Run(bool full_scan) {
+    BW_GUARD();
     struct utsname un{};
     if (uname(&un) != 0) un.release[0] = 0;
     printf("== benzware: проверка кернел режима%s ==\n",
@@ -359,6 +361,7 @@ namespace startup_key {
 static constexpr char kLaunchKey[] = "t.me/benzware";
 
 static bool Verify() {
+    BW_GUARD();
     std::cout << "Введите ключ для запуска: " << std::flush;
     std::string entered;
     if (!std::getline(std::cin, entered)) {
@@ -374,6 +377,7 @@ static bool Verify() {
 }  // namespace startup_key
 
 int main(int argc, char* argv[]) {
+    BW_GUARD();
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
     // (базовая) или --scan-driver (полный скан кодов команд) — без GUI,
     // до запуска оверлея и игры.

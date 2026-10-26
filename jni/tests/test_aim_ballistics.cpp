@@ -98,7 +98,10 @@ int main() {
     assert(near(motion_confidence(0.05f), 1.0f, 1e-6f));
     assert(motion_confidence(0.2f) > 0.0f && motion_confidence(0.2f) < 1.0f);
     assert(near(motion_confidence(0.4f), 0.0f, 1e-6f));
-    assert(motion_age_lead(0.2f) > 0.12f && motion_age_lead(0.2f) < 0.2f);
+    // motion_age_lead() убран вместе со старым интегратором доверия:
+    // предикт теперь берёт latency/accel/max_offset. Проверяем монотонность
+    // самого confidence — это то, на чём держится затухание скорости.
+    assert(motion_confidence(0.2f) > motion_confidence(0.3f));
 
     // BallisticProfile.cQi and ShaftedProjectile.GetBallisticParams pass their
     // gravity field (5.0 for firearms, 1.0..3.5 for projectiles) directly into

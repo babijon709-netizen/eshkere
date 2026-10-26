@@ -7821,28 +7821,24 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         // Потолок самого смещения: любая ошибка в слагаемых (не тот muzzle
         // speed, мусорный rtt) упирается в полшага тела, а не уводит прицел
         // на метры. Транспорт едет куда быстрее — у него свой предел.
-        path.max_offset = vehicle_speed ? 6.0F : 1.0F;
+        path.max_offset = vehicle_speed ? 4.0F : 0.6F;
         box.aim_speed = effective_horiz_speed;
-        const float stale = use_est
-            ? (g_aim_est.sample_age < 0.22F ? g_aim_est.sample_age : 0.22F)
-            : 0.0F;
-        // Упреждение по цели — три честных слагаемых и ни одного запаса:
-        //   rtt/2  — столько снапшот ехал к нам;
-        //   lag    — возраст отсчёта, но не больше kAimLagMax;
-        //   шаг    — FixedUpdate (0.02), за который игра успевает подвинуть
-        //            и цель, и наш выстрел.
-        // Раньше возраст отсчёта брался целиком до 0.22 с, да ещё поверх
-        // buffer/подобранных констант: на 10..30 Гц снапшотах это давало
-        // 0.2..0.3 с упреждения, то есть до метра впереди бегущего — ровно
-        // «предикт слишком сильный». Тайм-минги Mirror уточняют rtt, но больше
-        // не меняют саму формулу: иначе при неразрешённых статиках лид уезжал
-        // на старые константы и правка не ощущалась вообще.
+        // Упреждение по цели — только то, что реально отделяет наш отсчёт от
+        // момента, когда игра проверит попадание:
+        //   возраст снапшота — в среднем ПОЛОВИНА интервала снапшотов (отсчёт
+        //     приходит в случайной фазе), а не полный rtt с буфером;
+        //   кадр оверлея (16 мс) — пока наш ход пальцем/осью доедет до игры.
+        // Сетевой rtt из лида убран совсем: выстрел считается по той позе
+        // цели, которую игра отрисовала у нас (клиентский рейкаст FPHitscan),
+        // и полный путь до сервера в упреждении — двойной счёт. Именно он давал
+        // 0.5 м впереди бегущего на ближней дистанции (5..10 м), где полёт
+        // пули — 10..20 мс, то есть «предикт слишком сильный».
         net_timing_refresh();
-        constexpr float kAimLagMax = 0.060F;
-        constexpr float kAimStep = 0.020F;
-        const float lag = stale < kAimLagMax ? stale : kAimLagMax;
-        const float half_rtt = g_net_timing.valid ? 0.5F * g_net_timing.rtt : 0.030F;
-        path.latency = half_rtt + lag + kAimStep;
+        constexpr float kAimControlFrame = 0.016F;
+        const float snapshot_half = g_net_timing.valid && g_net_timing.tick > 0
+            ? 0.5F / static_cast<float>(g_net_timing.tick)
+            : 0.016F;
+        path.latency = snapshot_half + kAimControlFrame;
         if (use_est) {
             if (g_aim_est.straight) { path.tau = 0.0F; path.horizon = 2.0F; }
             else                    { path.tau = 1.5F; path.horizon = 1.1F; }

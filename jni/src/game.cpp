@@ -8,6 +8,7 @@
 #include "viewmodel.h"
 #include "game_viewmodel_internal.h"
 #include "aim_ballistics.h"
+#include "aim_lead_learn.h"     // автокалибровка окна упреждения (aim.cpp кормит)
 #include "target_predictor.h"
 #include "bot_lead.h"
 #include "mem_io.h"                // чтение/запись памяти игры: транспорт + кэш блоков
@@ -7834,7 +7835,9 @@ static bool set_aim_point(EspBox& box, int slot, const Vec3& world_in, const Mat
         const float snapshot_half = g_net_timing.valid && g_net_timing.tick > 0
             ? 0.5F / static_cast<float>(g_net_timing.tick)
             : 0.016F;
-        path.latency = snapshot_half + kAimControlFrame;
+        // Выученный масштаб окна: 1.0 — номинал, меньше — короче лид. Полёт
+        // пули не масштабируется, это физика (см. aim_lead_learn.h).
+        path.latency = (snapshot_half + kAimControlFrame) * aimlead::scale();
         // Потолок смещения — по физике, а не константой: столько, сколько цель
         // может пройти за (задержку + полёт) на скорости 8 м/с (спринт с
         // запасом), у транспорта 60. Фиксированные 0.6 м резали снайперский

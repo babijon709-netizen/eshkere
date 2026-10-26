@@ -144,6 +144,7 @@ struct AppState {
     float tab_alpha = 1.f, tab_slide = 0.f, tab_slide_vel = 0.f;
     float a_aim_touch = 0, a_aim_pos = 0, a_aim_spec = 0, a_aim_scope = 0;
     float a_aim_fire = 0;
+    float a_aim_learn = 0;
     float a_aim_mode0 = 1, a_aim_mode1 = 0, a_aim_mode2 = 0;
     RadioAnim ra_aim_mode0, ra_aim_mode1, ra_aim_mode2;
     float a_aim_head  = 1, a_aim_chest = 0, a_aim_pelvis = 0;

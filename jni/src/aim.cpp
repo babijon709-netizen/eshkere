@@ -15,6 +15,7 @@
 #include "esp_draw.h"            // FrameBoxes, AimFovRadiusPx
 #include "manes_aim_source.h"
 #include "aim_control.h"
+#include "aim_lead_learn.h"     // автокалибровка окна упреждения по попаданиям
 #include "farm_joy.h"         // farmjoy::attack_held — кнопка атаки у игры
 #include <algorithm>
 #include <cmath>
@@ -51,6 +52,7 @@ struct AimTarget {
     float world[3] = {};            // точная мировая координата кости для silent-режима
     bool  world_valid = false;
     int   bone = -1;                // слот точки прицела (0 голова, 1 шея, 2 грудь)
+    float speed = 0.f;              // горизонтальная скорость цели, м/с (вход автокалибровки лида)
     float health = -1.f;            // здоровье цели (для лога и проверки смерти)
     bool  respawning = false;       // PlayerManager.respawning (для лога)
     // Поза выбранной цели — те же габариты скелета, по которым решается
@@ -239,24 +241,19 @@ static double s_fireUntil = -1e9;
 static float  s_hitMark = 0.f;
 static bool   s_hitMarkSeen = false;
 static bool   s_fireGateAllow = true;
+// Огонь и отметка попадания читаются РАЗ на кадр и обслуживают две вещи:
+// гейт «только при стрельбе» и автокалибровку окна упреждения. Второй
+// независимый читатель стоил бы лишних syscall'ов в кадре.
+static bool   s_attackHeldLast = false;
+static float  s_lastTargetSpeed = 0.f;   // горизонтальная скорость цели, м/с
 
 static void AimFireGateUpdate(double now) {
-    if (!g_state.aim_fire_only) {
-        s_fireGateAllow = true;
-        s_hitMarkSeen = false;
-        s_fireUntil = -1e9;
-        return;
-    }
-    if (g_state.farm_on) {
-        s_fireGateAllow = false;
-        return;
-    }
     bool held = false;
-    // Прочитали — окно открывает само нажатие. Не прочитали (хендлёр ввода не
-    // нашёлся) — остаётся только хвост от отметки попадания: ведём то, что
-    // уже началось, и не стартуем вслепую.
-    if (farmjoy::attack_held(held) && held) s_fireUntil = now + kFireHoldSeconds;
+    const bool heldNow = farmjoy::attack_held(held) && held;
+    const bool heldEdge = heldNow && !s_attackHeldLast;
+    s_attackHeldLast = heldNow;
     float mark = 0.f;
+    bool markChanged = false;
     if (esp_mem_aim_last_shot(mark)) {
         if (!s_hitMarkSeen) {
             // Первая удачная читка только задаёт точку отсчёта: «значение
@@ -265,11 +262,34 @@ static void AimFireGateUpdate(double now) {
             s_hitMark = mark;
         } else if (mark != s_hitMark) {
             s_hitMark = mark;
-            if (now + kFireHoldSeconds > s_fireUntil) s_fireUntil = now + kFireHoldSeconds;
+            markChanged = true;
         }
     }
-    const bool firing = now <= s_fireUntil;
-    s_fireGateAllow = firing;
+    // Автокалибровка: выстрел ушёл под нашим прицелом и игра подтвердила
+    // попадание — это и есть размеченный пример, на котором учится масштаб
+    // окна упреждения (aim_lead_learn.h). На автофарме не учимся: там огнём
+    // командует фарм, и выстрел ничего не говорит о наведении.
+    if (markChanged) aimlead::hit(now);
+    if (heldEdge && g_aimActive && !g_state.farm_on)
+        aimlead::shot(now, s_lastTargetSpeed);
+    aimlead::tick(now);
+
+    if (!g_state.aim_fire_only) {
+        s_fireGateAllow = true;
+        s_fireUntil = -1e9;
+        return;
+    }
+    if (g_state.farm_on) {
+        s_fireGateAllow = false;
+        return;
+    }
+    // Прочитали — окно открывает само нажатие. Не прочитали (хендлёр ввода не
+    // нашёлся) — остаётся только хвост от отметки попадания: ведём то, что
+    // уже началось, и не стартуем вслепую.
+    if (heldNow) s_fireUntil = now + kFireHoldSeconds;
+    if (markChanged && now + kFireHoldSeconds > s_fireUntil)
+        s_fireUntil = now + kFireHoldSeconds;
+    s_fireGateAllow = now <= s_fireUntil;
 }
 
 static bool AimScreenSize(float& sw, float& sh) {
@@ -384,6 +404,7 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         }
         if (!t.valid) continue;
         t.id = b.id;
+        t.speed = b.aim_speed;
         t.health = b.health; t.respawning = b.respawning;
         t.rate_yaw = b.aim_rate_yaw[usedBone];
         t.rate_pitch = b.aim_rate_pitch[usedBone];
@@ -477,6 +498,9 @@ static bool AimSelectTarget(float sw, float sh, float dt, AimPick& pick, AimTarg
         g_aim_pulse_at.store(now, std::memory_order_relaxed);
     }
     g_aim_hold_at.store(now, std::memory_order_relaxed);
+    // Скорость цели на этот такт — вход для автокалибровки лида: по стоящей
+    // цели выстрел ничего не говорит о масштабе окна упреждения.
+    s_lastTargetSpeed = best.speed;
     pick.lastId = best.id; pick.lastBone = best.bone;
     return true;
 }

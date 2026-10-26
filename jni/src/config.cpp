@@ -9,6 +9,7 @@
 #include "lang.h"
 #include "game.h"
 #include "cfg_pick.h"
+#include "aim_lead_learn.h"     // выученный масштаб лида живёт в легаси-слоте расширения
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -529,9 +530,11 @@ static void ConfigSaveToPath(const std::string& path) {
                            (g_state.esp_backpacks ? 256u : 0u) |
                            (g_state.esp_sleepers ? 512u : 0u) |
                            (g_state.esp_cupboards ? 1024u : 0u);
-        // Поле упреждения сохранено в формате расширения для совместимости;
-        // автоматический предикт больше не имеет пользовательской настройки.
-        extension.aim_lead_ms = 0.f;
+        // Легаси-слот упреждения расширения (aim_lead_ms, 0..150) занят
+        // выученным масштабом окна: 50 мс = номинал 1.0. Раскладка конфига не
+        // меняется, версия остаётся 4/7, старые читатели это поле игнорируют,
+        // а мы после перезапуска стартуем с уже найденного масштаба.
+        extension.aim_lead_ms = aimlead::learned_ms();
         uint8_t extra[sizeof(extension)];
         memcpy(extra, &extension, sizeof(extra));
         XorBuf(extra, sizeof(extra));
@@ -605,6 +608,7 @@ static void LoadCfgByName(const char* name, bool announce) {
         if (extension.magic == 0x31574d56u &&
             (extension.version >= 3 && extension.version <= 7) &&
             extension.size == extraGot) {
+            aimlead::restore_ms(extension.aim_lead_ms);
             g_state.esp_turrets = (extension.flags & 128u) != 0;
             g_state.esp_backpacks = (extension.flags & 256u) != 0;
             g_state.esp_sleepers = (extension.flags & 512u) != 0;

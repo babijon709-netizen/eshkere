@@ -14,6 +14,7 @@
 #include "str.h"
 #include "esp_draw.h"
 #include "aim.h"
+#include "aim_lead_learn.h"     // автокалибровка лида: тумблер и состояние
 #include "media/tab_icons.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -162,6 +163,29 @@ float TabContent(int tab, float dt, float cW) {
             SliderRow("##afov", XS("Радиус"), &g_state.gun_fov, 5.f, 180.f, XS("%.0f°"), false, true, g_state.sl_gun_fov, dt);
             SliderRow("##asmt", XS("Скорость"), &g_state.gun_str, 1.f, 10.f, "%.0f", false, false, g_state.sl_gun_str, dt);
             ToggleRow("##ta3", XS("Круг FOV"), &g_state.aim_special, g_state.a_aim_spec, true, false, &cfg::aim::fov_col);
+        }
+
+        // ---- Автокалибровка упреждения ------------------------------------
+        // Масштаб окна лида подбирается сам по доле попаданий: игра отмечает
+        // попадание, промах виден как тишина после выстрела. В строке заголовка
+        // — что выучено сейчас и сколько это даёт попаданий.
+        {
+            const aimlead::State& learn = aimlead::state();
+            char learnSummary[64];
+            const float overall = aimlead::overall_rate();
+            if (!learn.enabled) {
+                snprintf(learnSummary, sizeof(learnSummary), "%s", XS("выкл"));
+            } else if (overall < 0.f) {
+                snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · ждём выстрелы"), learn.scale);
+            } else {
+                snprintf(learnSummary, sizeof(learnSummary), XS("×%.2f · %.0f%%"), learn.scale, overall * 100.f);
+            }
+            if (SettingsHeader("##aim_learn", XS("Автокалибровка лида"), learnSummary)) {
+                CardBg(Layout::RowH);
+                bool learnOn = learn.enabled;
+                if (ToggleRow("##ta8", XS("Учить по попаданиям"), &learnOn, g_state.a_aim_learn, true, true))
+                    aimlead::set_enabled(learnOn);
+            }
         }
 
         if (g_state.aim_mode == AIM_MODE_SILENT &&
@@ -1424,6 +1448,7 @@ void RenderMenu() {
     Tick(g_state.a_aim_spec,   g_state.aim_special,        dt);
     Tick(g_state.a_aim_scope,  g_state.aim_scope_only,     dt);
     Tick(g_state.a_aim_fire,   g_state.aim_fire_only,      dt);
+    Tick(g_state.a_aim_learn,  aimlead::state().enabled,   dt);
     Tick(g_state.a_silent_zone, g_state.silent_auto_zone,  dt);
     Tick(g_state.a_esp_box,    g_state.esp_box,            dt);
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);

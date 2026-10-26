@@ -8,30 +8,42 @@
 // (0..100 зарезервированы), раньше всех обычных C++ static initializers,
 // которые лежат в простой .init_array. .preinit_array в этом бинаре пустой
 // (проверено на arm64-артефакте: обе записи 0/-1, лоадер их пропускает).
+//
+// ЗДЕСЬ НЕТ mprotect И dl_iterate_phdr. Оба были в первой версии и оба стали
+// причиной SIGSEGV на устройстве:
+//   * dlpi_addr для главного бинаря на bionic не гарантирован как load bias —
+//     прошлая версия писала XOR по адресу вида 0x1d140 вместо base+0x1d140;
+//   * mprotect(R→RW→R) на 16K-страничном ядре захватывал страницы соседнего
+//     R E-сегмента (сегменты с p_align=0x1000 делят 16K-страницу), снимал с
+//     них X и ронял исполнение. Плюс отказ mprotect игнорировался.
+// Теперь билдер САМ выставляет PF_W строковым PT_LOAD (см. elf_crypt.py),
+// лоадер мапит их RW, а конструктор просто пишет — без единого syscall.
 
 #include "bw_obf.h"
 
-#include <elf.h>
-#include <link.h>
 #include <sys/auxv.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <cstdint>
 
-namespace {
-
-// Таблица диапазонов. Билдер (tools/obf/elf_crypt.py) находит эти 16 байт в
-// файле и пишет сразу за ними: count (u64 LE), затем count пар
-// (vaddr u64, size u64). Секция .bwmeta лежит в RW и НЕ шифруется.
-constexpr size_t   kMaxRanges = 1024;
-constexpr size_t   kMetaSize  = 24 + kMaxRanges * 16;
-
-} // namespace
+// .bwmeta: magic(16) | count(8) | meta_vaddr(8) | flags(8) | ranges[]
+// meta_vaddr — линковочный vaddr первого байта маркера. По нему конструктор
+// считает load bias как (&g_bw_meta[0] - meta_vaddr): это собственный адрес
+// страницы в памяти, а не то, что вернул лоадер в dlpi_addr.
+// flags bit0 = все строковые сегменты уже RW в program headers.
+static constexpr size_t kMetaCount = 16;
+static constexpr size_t kMetaVaddr = 24;
+static constexpr size_t kMetaFlags = 32;
+static constexpr size_t kMetaHdr   = 40;
+static constexpr size_t kMaxRanges = 1024;
+static constexpr size_t kMetaSize  = kMetaHdr + kMaxRanges * 16;
+static constexpr uint64_t kFlagSegmentsRW = 1;
+// Образ целиком ~2.5 МБ. Всё, что выходит за 256 МБ — битая метадата.
+static constexpr uint64_t kImageLimit = 0x10000000ULL;
 
 // Магические 16 байт НЕ выносим в отдельный constexpr-массив: компилятор
 // положил бы его копию в .rodata, и билдер нашёл бы два маркера вместо одного.
+// Секция лежит в RW и НЕ шифруется.
 __attribute__((used, section(".bwmeta"), aligned(8)))
 volatile uint8_t g_bw_meta[kMetaSize] = {
     0xB7, 0x53, 0x1E, 0x9A, 0x44, 0xC0, 0xF1, 0x6D,
@@ -42,36 +54,6 @@ volatile uint8_t g_bw_meta[kMetaSize] = {
 };
 
 namespace {
-
-struct PhdrView {
-    const ElfW(Phdr)* ph   = nullptr;
-    ElfW(Half)         n   = 0;
-    uintptr_t          bias = 0;
-};
-
-int phdr_cb(struct dl_phdr_info* info, size_t, void* out) noexcept {
-    PhdrView* v = static_cast<PhdrView*>(out);
-    v->ph   = info->dlpi_phdr;
-    v->n    = static_cast<ElfW(Half)>(info->dlpi_phnum);
-    v->bias = static_cast<uintptr_t>(info->dlpi_addr);
-    return 1; // первый callback — главный исполняемый файл
-}
-
-int prot_of(const PhdrView& v, uintptr_t va) noexcept {
-    for (ElfW(Half) i = 0; i < v.n; ++i) {
-        const ElfW(Phdr)& p = v.ph[i];
-        if (p.p_type != PT_LOAD) continue;
-        const uintptr_t lo = v.bias + static_cast<uintptr_t>(p.p_vaddr);
-        const uintptr_t hi = lo + static_cast<uintptr_t>(p.p_memsz);
-        if (va < lo || va >= hi) continue;
-        int r = 0;
-        if (p.p_flags & PF_R) r |= PROT_READ;
-        if (p.p_flags & PF_W) r |= PROT_WRITE;
-        if (p.p_flags & PF_X) r |= PROT_EXEC;
-        return r ? r : PROT_READ;
-    }
-    return PROT_READ | PROT_WRITE;
-}
 
 uint64_t rd64(const volatile uint8_t* p) noexcept {
     uint64_t v = 0;
@@ -90,47 +72,37 @@ uint64_t runtime_seed() noexcept {
     return bw::mix64(s);
 }
 
-// mprotect нужен только если строки попали в read-only PT_LOAD (обычный
-// случай: lld кладёт .rodata в R/RX-сегмент). Пишем через raw syscall, чтобы
-// не светить импорт лишний раз. Страницы, в которых лежит ХОТЯ БЫ ОДИН байт
-// .text, билдер из шифрования исключает — то есть во время RW-окна наш же
-// код на этих страницах не исполняется.
 __attribute__((constructor(101))) void bw_decrypt_all() noexcept {
     const uint64_t seed = runtime_seed();
     bw::g_q  = seed;
     bw::g_ok = bw::mix64(seed);
 
     const volatile uint8_t* meta = g_bw_meta;
-    const uint64_t count = rd64(meta + 16);
+    const uint64_t count = rd64(meta + kMetaCount);
     if (count == 0 || count > kMaxRanges) return; // не пропатчено — выходим
 
-    PhdrView view{};
-    dl_iterate_phdr(phdr_cb, &view);
-    if (!view.ph) return;
+    const uint64_t meta_vaddr = rd64(meta + kMetaVaddr);
+    const uint64_t flags = rd64(meta + kMetaFlags);
+    // Строки в read-only сегменте, который билдер не смог сделать RW: писать
+    // туда нельзя. Молча выходим лучше, чем падать (билдер в этом случае
+    // вообще не даёт собрать артефакт — см. elf_crypt.py).
+    if (!meta_vaddr || meta_vaddr > kImageLimit) return;
+    if ((flags & kFlagSegmentsRW) == 0) return;
 
-    uintptr_t page = static_cast<uintptr_t>(getauxval(AT_PAGESZ));
-    if (page < 4096 || (page & (page - 1)) != 0) page = 4096;
+    const uintptr_t base =
+        reinterpret_cast<uintptr_t>(&g_bw_meta[0]) - static_cast<uintptr_t>(meta_vaddr);
 
     for (uint64_t i = 0; i < count; ++i) {
-        const volatile uint8_t* rec = meta + 24 + static_cast<size_t>(i) * 16;
+        const volatile uint8_t* rec = meta + kMetaHdr + static_cast<size_t>(i) * 16;
         const uint64_t va = rd64(rec);
         const uint64_t sz = rd64(rec + 8);
-        if (!va || !sz || sz > (1u << 28)) continue;
+        if (!va || va > kImageLimit || !sz || sz > kImageLimit) continue;
+        const uintptr_t addr = base + static_cast<uintptr_t>(va);
+        if (addr < 0x10000u || addr + sz < addr) continue;
 
-        uint8_t* p = reinterpret_cast<uint8_t*>(view.bias + static_cast<uintptr_t>(va));
-        const uintptr_t lo = reinterpret_cast<uintptr_t>(p) & ~(page - 1);
-        const uintptr_t hi = (reinterpret_cast<uintptr_t>(p) + static_cast<size_t>(sz)
-                              + page - 1) & ~(page - 1);
-        const int orig = prot_of(view, reinterpret_cast<uintptr_t>(p));
-        const bool need_rw = (orig & PROT_WRITE) == 0;
-        if (need_rw)
-            (void)syscall(SYS_mprotect, reinterpret_cast<void*>(lo),
-                          static_cast<size_t>(hi - lo), PROT_READ | PROT_WRITE);
+        uint8_t* p = reinterpret_cast<uint8_t*>(addr);
         for (uint64_t j = 0; j < sz; ++j)
             p[j] ^= bw::stream_byte(va + j);
-        if (need_rw)
-            (void)syscall(SYS_mprotect, reinterpret_cast<void*>(lo),
-                          static_cast<size_t>(hi - lo), orig);
     }
 }
 

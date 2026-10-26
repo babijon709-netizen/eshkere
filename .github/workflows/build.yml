@@ -70,10 +70,10 @@ jobs:
           # Отчёт обфускации выносим в annotations рана: видно без скачивания
           # логов. GitHub режет >10 notice на чек-ран, поэтому ключевые строки
           # пакуем в один notice, а не по строке на каждый.
-          REPORT="$(grep -E 'зашифровано|секций \.rodata|таблица секций вырезана|контрольных строк: 0' /tmp/build.log | tr '\n' '|')"
+          REPORT="$(grep -E 'зашифровано|секций \.rodata|PF_W добавлен|WARN 16K|таблица секций вырезана|контрольных строк: 0' /tmp/build.log | tr '\n' '|')"
           echo "::notice::obf:$REPORT"
           echo "::notice::ELF: section headers=$(readelf -h libs/arm64-v8a/benzware.sh | grep -E 'Number of section headers' | tr -d ' ')"
-          echo "::notice::LOAD: $(readelf -lW libs/arm64-v8a/benzware.sh | grep -E '^  LOAD' | tr '\n' '|')"
+          echo "::notice::LOAD: $(readelf -lW libs/arm64-v8a/benzware.sh | grep -E '^  (LOAD|GNU_RELRO)' | tr '\n' '|')"
 
           file libs/arm64-v8a/benzware.sh
           sha256sum libs/arm64-v8a/benzware.sh | tee libs/arm64-v8a/benzware.sh.sha256

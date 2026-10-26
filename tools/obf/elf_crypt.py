@@ -7,9 +7,12 @@ splitmix64-шифром, ключованным на ВИРТУАЛЬНЫЙ АД
 bw_obf.cpp снимает шифровку до любого C++ static initializer.
 
 Что делает ещё:
-  * исключает из шифрования 64K-блоки, где лежит хотя бы байт .text (иначе
-    mprotect на RW-окне снял бы X с исполняемой страницы);
-  * исключает 8-байтные слоты, в которые лоадер пишет relocations;
+  * выставляет PF_W строковым PT_LOAD — лоадер мапит их RW, и рантайму НЕ
+    нужен mprotect (он и стал причиной SIGSEGV на устройстве: R→RW→R окно
+    на 16K-страницах захватывало соседний R E-сегмент и снимало с него X);
+  * если строки попали в исполняемый сегмент — ПАДАЕТ: R|W|X не делаем,
+    silently-шифровать то, что нельзя расшифровать, тоже не делаем;
+  * исключает 64K-блоки с .text и 8-байтные слоты relocations;
   * проверяет, что контрольные строки исчезли из файла;
   * обнуляет таблицу заголовков секций и обрезает хвост файла — section
     names / .comment / .shstrtab не достаются дизассемблеру.
@@ -43,16 +46,27 @@ DT_ANDROID_RELA = 0x60000011
 DT_ANDROID_RELASZ = 0x60000012
 
 # 64 KiB — консервативная гранулярность: покрывает устройства с 4K/16K/64K
-# страницами. Реальный mprotect в бинаре берёт AT_PAGESZ.
+# страницами. Страницы с кодом из шифрования исключаем всегда.
 GUARD_GRAN = 0x10000
+PF_X = 0x1
+PF_W = 0x2
 
 MAGIC = bytes([
     0xB7, 0x53, 0x1E, 0x9A, 0x44, 0xC0, 0xF1, 0x6D,
     0x2A, 0x88, 0x37, 0xDE, 0x90, 0x0B, 0x65, 0xEC,
 ])
 MAX_RANGES = 1024
-META_HDR = 24
+# .bwmeta layout: magic(16) | count(8) | meta_vaddr(8) | flags(8) | ranges
+# meta_vaddr — линковочный vaddr первого байта маркера. Конструктор считает
+# load bias как (&g_bw_meta[0] - meta_vaddr): это не зависит от LOOKUP-адреса
+# главного бинаря в dl_iterate_phdr (на bionic он может быть 0).
+# flags bit0 = сегменты строк уже RW в program headers, mprotect не нужен.
+META_COUNT = 16
+META_VADDR = 24
+META_FLAGS = 32
+META_HDR = 40
 META_SIZE = META_HDR + MAX_RANGES * 16
+FLAG_SEGMENTS_RW = 1
 
 # Длинные уникальные строки, которые в НЕзашифрованном бинаре лежат именно
 # в строковых .rodata (проверено на arm64-артефакте). Если после патча хоть
@@ -101,7 +115,8 @@ class Elf:
         for i in range(self.phnum):
             o = self.phoff + i * self.phentsize
             t, fl, off, va, pa, fsz, msz, al = struct.unpack_from("<IIQQQQQQ", d, o)
-            self.phdrs.append(dict(t=t, fl=fl, off=off, va=va, fsz=fsz, msz=msz))
+            self.phdrs.append(dict(t=t, fl=fl, off=off, va=va, fsz=fsz, msz=msz,
+                                   al=al, fo=o))
         self.secs = []
         if self.shoff and self.shnum:
             strtab = self._raw_section(self.shstrndx)
@@ -237,6 +252,10 @@ def patch(path, key, keep_sections=False):
     meta = magic_hits[0]
     if meta + META_HDR + 16 > len(d):
         raise RuntimeError(".bwmeta обрезана")
+    meta_sec = section_at(elf, meta)
+    if not meta_sec or not meta_sec["addr"]:
+        raise RuntimeError(".bwmeta не в alloc-секции — конструктор не найдёт её в памяти")
+    meta_vaddr = meta_sec["addr"] + (meta - meta_sec["off"])
 
     # Страницы с кодом не трогаем ТОЛЬКО в том сегменте, где они правда
     # исполняемые: если .rodata лежит в R-сегменте ( -z separate-code ),
@@ -280,6 +299,8 @@ def patch(path, key, keep_sections=False):
             fo = s["off"] + (va - base)
             ranges.append((va, fo, ve - va))
     ranges.sort()
+    if not ranges:
+        raise RuntimeError("не осталось ни одного шифруемого диапазона .rodata")
     if len(ranges) > MAX_RANGES:
         # Сливаем соседние: между ними нет ни кода, ни релокейшенов.
         merged = []
@@ -334,13 +355,69 @@ def patch(path, key, keep_sections=False):
                            "Нужно -Wl,--rosegment, чтобы строки не делили "
                            "страницу с кодом")
 
-    # Метаданные: count + пары (vaddr, size).
-    struct.pack_into("<Q", d, meta + 16, len(ranges))
+    # Делаем строковые сегменты доступными на запись СРАЗУ в program headers.
+    # Это единственный механизм записи: рантайм больше НЕ зовёт mprotect.
+    # Строго проверяем, что весь диапазон лежит в ОДНОМ неисполняемом PT_LOAD,
+    # и что сегмент не делит страницу с исполняемым (иначе на 16K-ядре хвост
+    # R-сегмента окажется в R E-странице и запись туда упадёт).
+    # 16K — максимальный размер страницы, который реально встречается на
+    # Android. На таком ядре сегменты с p_align=0x1000 могут делить страницу;
+    # это не фатально (ядро просто перемапит её с правами позднего сегмента),
+    # но хвост строк в общей странице окажется R E. Печатаем предупреждение —
+    # лечится -Wl,-z,max-page-size=16384.
+    page_gran = 0x4000
+    exec_pages = []
+    for p in elf.phdrs:
+        if p["t"] == PT_LOAD and (p["fl"] & PF_X) and p["msz"]:
+            lo = (p["va"] // page_gran) * page_gran
+            hi = ((p["va"] + p["msz"] + page_gran - 1) // page_gran) * page_gran
+            exec_pages.append((lo, hi, p))
+
+    touched = set()
+    shared_pages = []
+    for va, _fo, sz in ranges:
+        holders = [p for p in elf.phdrs
+                   if p["t"] == PT_LOAD
+                   and p["va"] <= va and va + sz <= p["va"] + p["fsz"]]
+        if len(holders) != 1:
+            raise RuntimeError(
+                f"строковый диапазон {va:#x}..{va + sz:#x} не лежит целиком "
+                f"в одном PT_LOAD (найдено {len(holders)}) — dl-макет изменился")
+        p = holders[0]
+        if p["fl"] & PF_X:
+            raise RuntimeError(
+                f"строки {va:#x}..{va + sz:#x} в исполняемом PT_LOAD "
+                f"{p['va']:#x} — нужен -Wl,--rosegment; R|W|X не делаем")
+        for lo, hi, ep in exec_pages:
+            if va < hi and lo < va + sz:
+                shared_pages.append((va, va + sz, ep["va"]))
+        if not (p["fl"] & PF_W):
+            struct.pack_into("<I", d, p["fo"] + 4, p["fl"] | PF_W)
+            p["fl"] |= PF_W
+            touched.add(p["fo"])
+    if touched:
+        print(f"obf: PF_W добавлен в {len(touched)} PT_LOAD (R -> RW)")
+    if shared_pages:
+        print(f"obf: WARN 16K-страница с кодом пересекает {len(shared_pages)} "
+              f"диапазон(ов), напр. [{shared_pages[0][0]:#x},{shared_pages[0][1]:#x}) "
+              f"vs R E {shared_pages[0][2]:#x} — на 16K-ядре нужен "
+              "-Wl,-z,max-page-size=16384")
+
+    # Метаданные: count, vaddr маркера, флаги, пары (vaddr, size).
+    struct.pack_into("<Q", d, meta + META_COUNT, len(ranges))
+    struct.pack_into("<Q", d, meta + META_VADDR, meta_vaddr)
+    struct.pack_into("<Q", d, meta + META_FLAGS, FLAG_SEGMENTS_RW)
     for i, (va, _fo, sz) in enumerate(ranges):
         struct.pack_into("<QQ", d, meta + META_HDR + i * 16, va, sz)
 
+    rlo = min(va for va, _fo, _sz in ranges)
+    rhi = max(va + sz for va, _fo, sz in ranges)
+    seg_desc = ",".join(
+        f"[{p['va']:#x},{p['va'] + p['msz']:#x}) fl={p['fl']} align={p['al']:#x}"
+        for p in elf.phdrs if p["fo"] in touched) or "уже RW"
     print(f"obf: секций .rodata* = {len(candidates)}, диапазонов = {len(ranges)}, "
-          f"зашифровано = {total}/{candidate_total} байт, ключ = {key:#018x}")
+          f"зашифровано = {total}/{candidate_total} байт, ключ = {key:#018x}, "
+          f"vaddr=[{rlo:#x},{rhi:#x}), meta_vaddr={meta_vaddr:#x}, LOAD={seg_desc}")
     if total < candidate_total:
         print(f"obf: WARN пропущено {candidate_total - total} байт (страницы с кодом/"
               "relocations), проверка на открытые строки ниже")

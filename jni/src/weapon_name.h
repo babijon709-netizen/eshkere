@@ -81,6 +81,12 @@ inline const Name kNames[] = {
     {"eoka",                  "Eoka Pistol",     "Эока"},
     // ---- Bows ----
     {"crossbow",              "Crossbow",        "Арбалет"},
+    // Сигнальная ракетница (weapon.flare.signal) и когти зомби
+    // (zombie.claws) есть в списке предметов, но не совпадали ни с одним
+    // ключом: подпись уходила в интерфейс сырым именем префаба.
+    {"weaponflaresignal",     "Signal Flare Gun", "Сигнальная ракетница"},
+    {"signalflaregun",        "Signal Flare Gun", "Сигнальная ракетница"},
+    {"zombieclaws",           "Zombie Claws",    "Когти зомби"},
     {"compositebow",          "Composite Bow",   "Составной лук"},
     {"bowcomposite",          "Composite Bow",   "Составной лук"},
     {"huntingbow",            "Hunting Bow",     "Охотничий лук"},
@@ -142,6 +148,76 @@ inline const Name kNames[] = {
     {"flaslight",             "Flashlight",     "Фонарик"},
     {"flashlight",            "Flashlight",     "Фонарик"},
 };
+
+// Id предмета -> его short name. Собрано из ассетов этого билда
+// (data-items-dataso: ItemData.m_Id и ItemData.m_ShortName, 277 предметов).
+//
+// Зачем именно id: WeaponPiece.Number синхронизируется как short и равен
+// ItemData.m_Id — проверено по всей таблице: id разрежены (0..940 на 277
+// предметов), значит это не позиция в списке, и они не сдвигаются от того,
+// что игра добавила предмет. Поэтому подпись по id переживает патч, а
+// возвращаем мы short name, а не готовую строку: перевод делает find() ниже,
+// и язык остаётся один на весь интерфейс.
+struct ItemId { int id; const char* short_name; };
+
+inline const ItemId kItemIds[] = {
+    {  16, "building.plan"     },  // Building Plan
+    {  17, "stone.hatchet"     },  // Stone Hatchet
+    {  18, "building.hammer"   },  // Building Hammer
+    {  19, "axe"               },  // Axe
+    {  20, "pickaxe"           },  // Pickaxe
+    {  21, "torch"             },  // Torch
+    {  22, "pickaxehammer"     },  // Pickaxe Hammer
+    {  23, "saw.ripper"        },  // Saw Ripper
+    {  24, "chainsaw"          },  // Chainsaw
+    {  25, "jackhammer"        },  // Jackhammer
+    {  62, "water.bottle"      },  // Water Bottle
+    {  95, "wooden.spear"      },  // Wooden Spear
+    {  96, "iron.spear"        },  // Iron Spear
+    {  97, "bone.club"         },  // Bone Club
+    {  98, "machete"           },  // Machete
+    {  99, "mace"              },  // Mace
+    { 100, "wooden.spiked.club"},  // Wooden Spiked Club
+    { 101, "wooden.bow"        },  // Wooden Bow
+    { 102, "assault.rifle"     },  // AK-47
+    { 103, "revolver"          },  // Revolver
+    { 104, "desert.eagle"      },  // Desert Eagle
+    { 105, "shotgun"           },  // Shotgun
+    { 106, "hunting.rifle"     },  // Hunting Rifle
+    { 107, "submachine.gun"    },  // Submachine Gun
+    { 108, "flare.gun"         },  // Flare Gun
+    { 109, "crossbow"          },  // Crossbow
+    { 110, "rocket.launcher"   },  // Rocket Launcher
+    { 111, "explosive.charge"  },  // Explosive Charge
+    { 112, "ice.spear"         },  // Ice Spear
+    { 113, "thompson"          },  // Thompson
+    { 114, "dmr"               },  // DMR
+    { 115, "winchester"        },  // Winchester
+    { 116, "dvl"               },  // DVL
+    { 117, "hmlmg"             },  // HMLMG
+    { 118, "handmade.pistol"   },  // Handmade Pistol
+    { 119, "kriss.vector"      },  // Kriss Vector
+    { 120, "steel.ball.gun"    },  // Steel Ball Gun
+    { 127, "snowball"          },  // Snowball
+    { 128, "event.grenade.smoke"},  // Smoke Grenade
+    { 130, "event.grenade.makeshift"},  // Makeshift Grenade
+    { 131, "tactical.air.marker"},  // Air Marker
+    { 132, "grenade.military"  },  // Grenade
+    { 134, "grenade.cupcake"   },  // Cupcake Grenade
+    { 189, "fireworks"         },  // Fireworks
+    { 193, "bandage"           },  // Bandage
+    { 194, "medkit"            },  // Medkit
+    { 225, "fn.fal"            },  // FN FAL
+    { 915, "double.barrel"     },  // Double Barrel Shotgun
+    { 924, "weapon.flare.signal"},  // Signal Flare Gun
+    { 931, "zombie.claws"      },  // Zombie Claws
+};
+
+inline const char* short_name_for_item_id(int id) {
+    for (const ItemId& entry : kItemIds)
+        if (entry.id == id) return entry.short_name;
+    return nullptr;
+}
 
 inline void normalize(const char* in, char* out, size_t cap) {
     size_t n = 0;

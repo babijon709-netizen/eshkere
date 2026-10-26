@@ -88,6 +88,24 @@ int main() {
     assert(!is_held_utility(""));
     assert(!is_held_utility("Shotgun"));
 
+    // -- Номер предмета из PlayerWeapon.WeaponPiece.Number: каждый id из
+    //    ассетной таблицы обязан превращаться в человеческую подпись, а не
+    //    уходить на экран сырым short name. Это же ловит дырку в kNames: если
+    //    игра добавит ствол, а перевода к нему нет, тест упадёт здесь.
+    assert(!strcmp(short_name_for_item_id(102), "assault.rifle"));
+    assert(!strcmp(short_name_for_item_id(915), "double.barrel"));
+    assert(!strcmp(short_name_for_item_id(931), "zombie.claws"));
+    assert(!strcmp(short_name_for_item_id(924), "weapon.flare.signal"));
+    assert(short_name_for_item_id(0) == nullptr);        // ресурс, не оружие
+    assert(short_name_for_item_id(-1) == nullptr);
+    for (const ItemId& entry : kItemIds) {
+        assert(entry.short_name && entry.short_name[0]);
+        // Подпись обязана отличаться от сырого short name на обоих языках:
+        // совпала — значит строки в таблице нет и на экран уйдёт "rifle.ak".
+        assert(strcmp(label_of(entry.short_name, false), entry.short_name) != 0);
+        assert(strcmp(label_of(entry.short_name, true), entry.short_name) != 0);
+    }
+
     std::printf("test_weapon_name: ok\n");
     return 0;
 }

@@ -6859,60 +6859,15 @@ static bool read_player_armor_icons(uint64_t player, const PlayerAux& aux,
 }
 
 // Route A: PlayerWeapon -> weapon view -> spawned weapon GameObject.
-// Item number -> label, dumped from this build's Oxide.ItemDatabase (items.txt,
-// /storage/emulated/0/benzware). WeaponPiece.Number is an INDEX INTO THE
-// GAME'S ITEM LIST, not a stable id, so it drifts whenever the game adds or
-// removes an item: this lookup is the LAST fallback (see
-// remote_weapon_display_name) and has to be re-dumped after every update — a
-// stale table is worse than no table, because it names the wrong item.
+//
+// Последняя подстраховка, когда ни префаб в руках, ни модель не прочитались:
+// номер предмета. WeaponPiece.Number — это ItemData.m_Id (сверено по ассетам
+// этого билда: все номера совпали с m_Id, а сами id разрежены, 0..940 на 277
+// предметов, то есть это не позиция в списке и патч их не сдвигает).
+// Таблица id -> short name живёт в weapon_name.h рядом с переводами, поэтому
+// подпись получает тот же язык, что и остальной интерфейс.
 static const char* weapon_label_for_item_id(int id) {
-    switch (id) {
-        // -- melee / tools --------------------------------------------------
-        case 17:  return "Кам. топорик";     // stone.hatchet
-        case 18:  return "Молоток";          // building.hammer
-        case 19:  return "Топор";            // axe
-        case 20:  return "Кирка";            // pickaxe
-        case 21:  return "Факел";            // torch
-        case 22:  return "Кирка";            // pickaxehammer
-        case 23:  return "Пила";             // saw.ripper
-        case 24:  return "Бензопила";        // chainsaw
-        case 25:  return "Отбойник";         // jackhammer
-        case 95:  return "Дер. копьё";       // wooden.spear
-        case 96:  return "Жел. копьё";       // iron.spear
-        case 97:  return "Дубина";           // bone.club
-        case 98:  return "Мачете";           // machete
-        case 99:  return "Булава";           // mace
-        case 100: return "Шип. дубина";      // wooden.spiked.club
-        case 112: return "Лед. копьё";       // ice.spear
-        // -- firearms ---------------------------------------------------------
-        case 102: return "АК-47";            // assault.rifle
-        case 103: return "Револьвер";        // revolver
-        case 104: return "Дигл";             // desert.eagle
-        case 105: return "Дробовик";         // shotgun
-        case 106: return "Охот. винтовка";   // hunting.rifle
-        case 107: return "ПП";               // submachine.gun
-        case 108: return "Ракетница";        // flare.gun
-        case 113: return "Томпсон";          // thompson
-        case 114: return "DMR";              // dmr
-        case 115: return "Винчестер";        // winchester
-        case 116: return "DVL";              // dvl
-        case 117: return "Пулемёт";          // hmlmg
-        case 118: return "Самопал";          // handmade.pistol
-        case 119: return "Вектор";           // kriss.vector
-        case 120: return "Шаромёт";          // steel.ball.gun
-        case 225: return "FN FAL";           // fn.fal
-        // -- bows / launchers ------------------------------------------------
-        case 101: return "Лук";              // wooden.bow
-        case 109: return "Арбалет";          // crossbow
-        case 110: return "РПГ";              // rocket.launcher
-        case 111: return "С4";               // explosive.charge
-        // -- throwables -------------------------------------------------------
-        case 128: case 130: return "Дымовуха"; // event.grenade.*
-        case 132: return "Граната";          // grenade.military
-        case 131: return "Возд. маркер";     // tactical.air.marker
-        case 127: return "Снежок";           // snowball
-        default: return nullptr;
-    }
+    return weaponname::short_name_for_item_id(id);
 }
 
 static bool weapon_name_from_view(uint64_t weapon_component, char* out, size_t cap) {

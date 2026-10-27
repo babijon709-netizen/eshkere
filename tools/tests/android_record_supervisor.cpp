@@ -22,7 +22,11 @@ int main(int argc, char** argv) {
             return 2;
         return record_capture::Run(static_cast<int>(fd), static_cast<int>(rate));
     }
-    if (argc != 3 || (std::strcmp(argv[2], "stop") && std::strcmp(argv[2], "death"))) return 2;
+    if (argc != 3 || (std::strcmp(argv[2], "stop") && std::strcmp(argv[2], "death"))) {
+        std::fprintf(stderr, "supervisor args: argc=%d arg1=%s arg2=%s\n", argc,
+                     argc > 1 ? argv[1] : "<missing>", argc > 2 ? argv[2] : "<missing>");
+        return 2;
+    }
     std::signal(SIGCHLD, SIG_IGN);
     const std::string directory = argv[1];
     screen_capture::Job job;

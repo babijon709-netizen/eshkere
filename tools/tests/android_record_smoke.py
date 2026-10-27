@@ -14,9 +14,9 @@ def run(*args, check=True, timeout=30):
     return subprocess.run(args, check=check, text=True, capture_output=True, timeout=timeout)
 
 
-def test_supervisor(remote, mode):
-    directory = f"{remote}/supervised-{mode}"
-    command = ["adb", "shell", f"{remote}/record-supervisor", directory, mode]
+def test_supervisor(remote, mode, binary="record-supervisor"):
+    directory = f"{remote}/supervised-{binary}-{mode}"
+    command = ["adb", "shell", f"{remote}/{binary}", directory, mode]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         for _ in range(5):
@@ -45,6 +45,7 @@ def main():
     helper = Path(os.environ["ANDROID_RECORD_HELPER"]).resolve()
     inspect = Path(os.environ["ANDROID_RECORD_INSPECT"]).resolve()
     supervisor = Path(os.environ["ANDROID_RECORD_SUPERVISOR"]).resolve()
+    plain = Path(os.environ["ANDROID_RECORD_SUPERVISOR_PLAIN"]).resolve()
     remote = "/data/local/tmp/benzware-record-smoke"
     run("adb", "root", check=False)
     run("adb", "wait-for-device")
@@ -53,7 +54,9 @@ def main():
     run("adb", "push", str(helper), f"{remote}/record-helper")
     run("adb", "push", str(inspect), f"{remote}/record-inspect")
     run("adb", "push", str(supervisor), f"{remote}/record-supervisor")
-    run("adb", "shell", "chmod", "0755", f"{remote}/record-helper", f"{remote}/record-inspect", f"{remote}/record-supervisor")
+    run("adb", "push", str(plain), f"{remote}/record-supervisor-plain")
+    run("adb", "shell", "chmod", "0755", f"{remote}/record-helper", f"{remote}/record-inspect",
+        f"{remote}/record-supervisor", f"{remote}/record-supervisor-plain")
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", check=False)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False)
     command = ["adb", "shell", f"{remote}/record-helper", f"{remote}/capture.mp4"]
@@ -103,6 +106,7 @@ def main():
                 raise RuntimeError(f"nonmonotonic frame timestamps: {timestamps[:30]}")
             print(f"::notice title=Android continuous capture::PASS: {len(frames)} decoded frames, "
                   f"{stream.width}x{stream.height}, {timestamps[-1]:.2f}s, {clip.stat().st_size} bytes")
+        test_supervisor(remote, "stop", "record-supervisor-plain")
         test_supervisor(remote, "stop")
         test_supervisor(remote, "death")
     finally:

@@ -106,11 +106,13 @@ jobs:
             jni/src/bw_obf.cpp jni/src/screen_capture.cpp jni/src/record_capture.cpp \
             jni/src/record_display.cpp jni/src/record_mp4.cpp tools/tests/android_record_supervisor.cpp \
             -lmediandk -landroid -ldl -llog -o "$RUNNER_TEMP/record-supervisor"
+          cp "$RUNNER_TEMP/record-supervisor" "$RUNNER_TEMP/record-supervisor-plain"
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --key 0x6A09E667F3BCC909
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --check
           echo "ANDROID_RECORD_HELPER=$RUNNER_TEMP/record-helper" >> "$GITHUB_ENV"
           echo "ANDROID_RECORD_INSPECT=$RUNNER_TEMP/record-inspect" >> "$GITHUB_ENV"
           echo "ANDROID_RECORD_SUPERVISOR=$RUNNER_TEMP/record-supervisor" >> "$GITHUB_ENV"
+          echo "ANDROID_RECORD_SUPERVISOR_PLAIN=$RUNNER_TEMP/record-supervisor-plain" >> "$GITHUB_ENV"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

@@ -97,7 +97,17 @@ def main():
             raise RuntimeError(f"recorder failed ({process.returncode}): {output}")
         platform = run("adb", "shell", f"{remote}/record-inspect", f"{remote}/capture.mp4", check=False)
         if platform.returncode:
-            raise RuntimeError(f"Android extractor rejected MP4 ({platform.returncode}): {platform.stdout} {platform.stderr}; {output}")
+            details = ""
+            with tempfile.TemporaryDirectory() as debug_tmp:
+                debug_clip = Path(debug_tmp) / "debug.mp4"
+                pulled = run("adb", "pull", f"{remote}/capture.mp4", str(debug_clip), check=False)
+                if pulled.returncode == 0:
+                    with av.open(str(debug_clip)) as movie:
+                        keys = [round(float(packet.pts * packet.time_base), 2)
+                                for packet in movie.demux(video=0) if packet.size and packet.is_keyframe and packet.pts is not None]
+                        details = f"; keyframes={keys[:40]}"
+            raise RuntimeError(f"Android extractor rejected MP4 ({platform.returncode}): "
+                               f"{platform.stdout} {platform.stderr}; {output}{details}")
         with tempfile.TemporaryDirectory() as tmp:
             clip = Path(tmp) / "capture.mp4"
             run("adb", "pull", f"{remote}/capture.mp4", str(clip))

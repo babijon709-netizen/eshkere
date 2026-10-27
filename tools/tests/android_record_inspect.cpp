@@ -43,7 +43,13 @@ int main(int argc, char** argv) {
         const int64_t seek = duration * 3 / 4;
         if (AMediaExtractor_seekTo(extractor, seek, AMEDIAEXTRACTOR_SEEK_PREVIOUS_SYNC) != AMEDIA_OK ||
             AMediaExtractor_readSampleData(extractor, buffer.data(), buffer.size()) < 0) return 7;
-        if (duration >= 20000000 && AMediaExtractor_getSampleTime(extractor) <= 0) return 8;
+        const int64_t sample_time = AMediaExtractor_getSampleTime(extractor);
+        if (duration >= 20000000 && sample_time <= 0) {
+            std::fprintf(stderr, "seek returned %lld us for target %lld us (duration %lld us)\n",
+                         static_cast<long long>(sample_time), static_cast<long long>(seek),
+                         static_cast<long long>(duration));
+            return 8;
+        }
     }
     std::printf("platform extractor: %zu H.264 samples, duration=%lld us\n", frames, static_cast<long long>(duration));
     AMediaExtractor_delete(extractor);

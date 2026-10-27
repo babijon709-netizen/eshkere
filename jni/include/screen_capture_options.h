@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace screen_capture {
-// A zero bitrate lets Android's screenrecord use its default.
+// A zero bitrate selects the recorder's default (20 Mbit/s).
 struct VideoOptions {
     int bitrate_mbps = 0;
 };
@@ -20,7 +20,7 @@ constexpr VideoOptions sanitize(VideoOptions options) {
 
 // Bits 18–19 were the old overall time limit and stay reserved/ignored: every
 // profile now records until stopped. Bits 20–21 retain the bitrate setting,
-// with zero preserving the device default in profiles from before this UI.
+// with zero preserving the default setting in profiles from before this UI.
 constexpr uint32_t kLegacyDurationMask = 3u << 18;
 constexpr uint32_t kBitrateShift = 20;
 constexpr uint32_t kVideoOptionsMask = 3u << kBitrateShift;

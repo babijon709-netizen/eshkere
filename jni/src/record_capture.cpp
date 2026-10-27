@@ -113,6 +113,8 @@ int Run(int fd, int bitrate) {
         media ? dlsym(media, "AMediaCodec_createInputSurface") : nullptr);
     auto signal_eos = reinterpret_cast<media_status_t (*)(AMediaCodec*)>(
         media ? dlsym(media, "AMediaCodec_signalEndOfInputStream") : nullptr);
+    auto set_parameters = reinterpret_cast<media_status_t (*)(AMediaCodec*, const AMediaFormat*)>(
+        media ? dlsym(media, "AMediaCodec_setParameters") : nullptr);
     if (!create_surface || !signal_eos) { report("surface encoder requires Android 8 or newer"); return 3; }
 
     record_display::Display display;
@@ -144,6 +146,8 @@ int Run(int fd, int bitrate) {
     bool failed = false, eos_requested = false, saw_eos = false, saw_frame = false;
     const int64_t first_frame_deadline = monotonic_ms() + 2000;
     int64_t eos_deadline = 0, next_display_check = monotonic_ms() + 1000;
+    int64_t next_sync_request = monotonic_ms() + 8000;
+    bool sync_request_warned = false;
     for (;;) {
         const int64_t now = monotonic_ms();
         // An immediate stop may arrive while MediaCodec is still starting.
@@ -157,6 +161,20 @@ int Run(int fd, int bitrate) {
             std::fprintf(stderr, "capture: draining encoder\n");
         }
         if (eos_requested && now >= eos_deadline) { error = "encoder did not finish in time"; failed = true; break; }
+        if (!eos_requested && set_parameters && now >= next_sync_request) {
+            // Some encoders count I-frame interval in frames, so a mostly
+            // static display may otherwise have minutes between seek points.
+            AMediaFormat* request = AMediaFormat_new();
+            if (request) {
+                AMediaFormat_setInt32(request, "request-sync", 0);
+                if (set_parameters(codec->codec, request) != AMEDIA_OK && !sync_request_warned) {
+                    report("encoder did not accept periodic key-frame request");
+                    sync_request_warned = true;
+                }
+                AMediaFormat_delete(request);
+            }
+            next_sync_request = now + 8000;
+        }
         if (!eos_requested && now >= next_display_check) {
             record_display::State current{};
             if (!display.state(current)) { error = display.error(); failed = true; break; }

@@ -19,6 +19,7 @@ from PIL import Image
 PKG = "bin.mt.plus"
 REMOTE = "/data/local/tmp/benzware-mt-test.sh"
 LAST = {}
+TRACE = []
 
 
 def run(*args, check=True, timeout=40, input=None):
@@ -65,7 +66,9 @@ def snapshot(label):
     except Exception as exc:
         ocr = f"OCR error: {exc}"
     LAST.update(label=label, nodes=nodes, ocr=ocr)
-    print(f"SCREEN {label}: nodes={nodes!r}; OCR={ocr!r}", flush=True)
+    line = f"SCREEN {label}: nodes={nodes!r}; OCR={ocr!r}"
+    TRACE.append(line)
+    print(line, flush=True)
     return nodes, ocr
 
 
@@ -94,7 +97,8 @@ def prepare():
     adb("shell", "appops", "set", PKG, "MANAGE_EXTERNAL_STORAGE", "allow", check=False)
     adb("shell", "settings", "put", "system", "accelerometer_rotation", "0", check=False)
     launch = adb("shell", "monkey", "-p", PKG, "1", check=False)
-    print("MT launch:", text(launch.stdout), text(launch.stderr), flush=True)
+    TRACE.append(f"MT launch: {text(launch.stdout)} {text(launch.stderr)}")
+    print(TRACE[-1], flush=True)
     time.sleep(4)
     for i in range(4):
         nodes, _ = snapshot(f"first-start-{i}")
@@ -110,7 +114,8 @@ def start_file(binary):
     result = adb("shell", "am", "start", "-W", "-a", "android.intent.action.VIEW",
                  "-d", "file://" + REMOTE, "-t", "application/x-sh",
                  "-n", PKG + "/.OpenFileActivity", check=False)
-    print("OpenFileActivity:", text(result.stdout), text(result.stderr), flush=True)
+    TRACE.append(f"OpenFileActivity: {text(result.stdout)} {text(result.stderr)}")
+    print(TRACE[-1], flush=True)
     time.sleep(3)
     for i in range(6):
         nodes, ocr = snapshot(f"open-{i}")
@@ -148,6 +153,12 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         detail = f"{exc}; last screen={LAST}"
+        debug = "\n".join(TRACE[:6])
+        notice("MT diagnostic", debug[:10000])
+        activity = adb("shell", "dumpsys", "activity", "activities", check=False)
+        lines = [line for line in text(activity.stdout).splitlines()
+                 if any(token in line for token in ("mResumed", "mFocused", "topResumed", "bin.mt.plus"))]
+        notice("MT activity state", "\n".join(lines[-12:]))
         print("::error title=MT Manager startup::" + detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[-3500:], flush=True)
         raise
     finally:

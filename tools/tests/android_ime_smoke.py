@@ -29,7 +29,11 @@ def ime_visible(proc):
             raise AssertionError(f"bridge exited before IME: {out!r} {err!r}")
         dump = shell("dumpsys", "input_method", check=False)
         window = shell("dumpsys", "window", "windows", check=False)
-        if "mInputShown=true" in dump and PACKAGE in window:
+        focused = any("mCurrentFocus" in line and PACKAGE in line for line in window.splitlines())
+        if "mInputShown=true" in dump and focused:
+            # InputShown can precede the keyboard's actual input connection on
+            # cold boots; let the focused editor/IME finish binding.
+            time.sleep(1.0)
             print(f"system IME visible in real focused Activity: {PACKAGE}", flush=True)
             return
         time.sleep(0.5)
@@ -165,7 +169,12 @@ if __name__ == "__main__":
         main()
     except Exception:
         details = traceback.format_exc()
+        try:
+            log = shell("logcat", "-d", "-s", "BWInput:I", "PackageManager:I", "AndroidRuntime:E", check=False)[-2400:]
+            details += "\nAndroid log tail:\n" + log
+        except Exception as error:
+            details += f"\nCould not read Android log: {error}"
         print(details, file=sys.stderr)
         print("::error title=Android system keyboard::" +
-              details.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"), flush=True)
+              details[-3800:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"), flush=True)
         sys.exit(1)

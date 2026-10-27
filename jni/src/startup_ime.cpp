@@ -38,6 +38,7 @@ struct ChildSignals {
 struct CommandResult {
     bool ok = false;
     std::string output;
+    std::string detail;
 };
 
 // No shell interpolation: user number, session and package go directly to execv.
@@ -80,7 +81,10 @@ CommandResult Run(const std::vector<std::string>& args, int timeout_seconds) {
         }
         const pid_t r = waitpid(pid, &status, WNOHANG);
         if (r == pid) { exited = true; break; }
-        if (r < 0 && errno != EINTR) break;
+        if (r < 0 && errno != EINTR) {
+            result.detail = "waitpid errno=" + std::to_string(errno);
+            break;
+        }
         if (Clock::now() >= deadline) {
             (void)kill(pid, SIGKILL);
             while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
@@ -100,6 +104,8 @@ CommandResult Run(const std::vector<std::string>& args, int timeout_seconds) {
     }
     close(pipefd[0]);
     result.ok = exited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (exited && WIFEXITED(status)) result.detail = "exit=" + std::to_string(WEXITSTATUS(status));
+    else if (exited && WIFSIGNALED(status)) result.detail = "signal=" + std::to_string(WTERMSIG(status));
     return result;
 }
 
@@ -262,7 +268,8 @@ Result Request(startup_key::FdReader& input) {
     const CommandResult installed = Run({"/system/bin/pm", "install", "-r", "--user", session.user, apk}, 45);
     unlink(apk.c_str());
     if (!installed.ok || installed.output.find("Success") == std::string::npos) {
-        std::fprintf(stderr, "Unable to install temporary keyboard helper: %s\n", installed.output.c_str());
+        std::fprintf(stderr, "Unable to install temporary keyboard helper (%s): %s\n",
+                     installed.detail.c_str(), installed.output.c_str());
         return Result::Unavailable;
     }
     session.installed = true;

@@ -17,6 +17,7 @@
 #include "str.h"
 #include "overlay_geometry.h"
 #include "startup_key.h"
+#include "startup_ime.h"
 #include "startup_key_ui.h"
 #include "screen_capture.h"
 #include "capture_merge.h"
@@ -417,8 +418,8 @@ int main(int argc, char* argv[]) {
 
     // Some MT launchers buffer even a flushed line or keep stdin open without
     // presenting an input widget. Print for terminals/pipes, but never block on
-    // a launcher: the overlay provides the same key prompt while we continue
-    // polling stdin, including when it is a PTY.
+    // a launcher: a real Android Activity supplies the system keyboard while we
+    // continue polling stdin, including when it is a PTY.
     signal(SIGPIPE, SIG_IGN);
     startup_key::FdReader startup_input;
     startup_key::PrintPrompt();
@@ -427,7 +428,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Invalid key. Launch cancelled.\n";
         return 1;
     }
-    const bool need_key_ui = (initial_key != startup_key::InputResult::Accepted);
+    bool need_key_ui = false;
 
     // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +
     // oom_score_adj = -1000) до создания любых потоков и стража-трейсера.
@@ -441,6 +442,23 @@ int main(int argc, char* argv[]) {
     // ОБЯЗАТЕЛЬНО супервизит родителя — переправляет каждый сигнал дальше
     // (без супервизии первое же сигнал замораживает GUI, см. stealth.h).
     stealth::ApplyTracerGuard();
+
+    // The standalone SurfaceFlinger layer is not an IME-capable window. Launch
+    // a short-lived real Activity before creating that layer or grabbing touch;
+    // otherwise the overlay would sit over the keyboard and eat its events.
+    signal(SIGHUP,  SIG_IGN);
+    signal(SIGINT,  SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+    if (initial_key != startup_key::InputResult::Accepted) {
+        const startup_ime::Result ime = startup_ime::Request(startup_input);
+        if (ime == startup_ime::Result::Cancelled) _exit(1);
+        if (ime == startup_ime::Result::Invalid) {
+            std::cerr << "Invalid key. Launch cancelled.\n";
+            _exit(1);
+        }
+        need_key_ui = (ime == startup_ime::Result::Unavailable);
+    }
+
     // Маскировка имени процесса: затираем cmdline/environ и ставим comm
     // «vold». Строго после разбора аргументов (строки argv уничтожаем) и
     // до создания потоков (наследуют comm). --check-driver запускается без
@@ -482,8 +500,8 @@ int main(int argc, char* argv[]) {
     AudioInit();
     if (!Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, false))
         Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
-    // Retry touch before the key UI as well: a temporary uinput/grab race at
-    // launch must not leave that screen permanently unusable.
+    // Retry touch for the mode selector and the keyboard-unavailable screen:
+    // a temporary uinput/grab race must not make either permanently unusable.
     static std::atomic<bool> s_touchRetryRun{true};
     std::thread([]() {
         while (s_touchRetryRun.load() && main_thread_flag.load()) {
@@ -499,7 +517,6 @@ int main(int argc, char* argv[]) {
     }).detach();
 
     if (need_key_ui) {
-        startup_key::Entry entry;
         bool accepted = false;
         while (main_thread_flag.load() && !accepted) {
             const startup_key::InputResult input = startup_input.Poll(STDIN_FILENO);
@@ -512,9 +529,8 @@ int main(int argc, char* argv[]) {
             float vw = 0.f, vh = 0.f;
             VisibleScreen(vw, vh);
             Touch_BlockRect(true, 0.f, 0.f, vw, vh);
-            const startup_key_ui::Result result = startup_key_ui::Draw(entry, vw, vh);
+            const startup_key_ui::Result result = startup_key_ui::Draw(vw, vh);
             drawEnd();
-            if (result == startup_key_ui::Result::Accepted) accepted = true;
             if (result == startup_key_ui::Result::Cancelled) break;
         }
         Touch_BlockRect(false, 0.f, 0.f, 0.f, 0.f);

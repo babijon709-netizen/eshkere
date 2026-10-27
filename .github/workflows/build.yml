@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "ndk;${NDK_VERSION}"
+          sdkmanager "ndk;${NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
 
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "${GITHUB_ENV}"
           echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "${GITHUB_ENV}"
@@ -74,6 +74,7 @@ jobs:
           tools/tests/run_menu_ui.sh
           tools/tests/run_farm_tests.sh
           tools/tests/run_startup_ui.sh
+          tools/tests/run_startup_ime_host.sh
           tools/tests/run_capture_surface.sh
           tools/tests/run_screen_capture.sh
           tools/tests/run_startup_cli.sh

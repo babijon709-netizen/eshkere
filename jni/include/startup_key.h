@@ -41,7 +41,7 @@ inline bool Verify(std::istream& input = std::cin,
 
 // Non-terminal launchers may leave stdin open without ever providing a UI or
 // may display output only after exit. Do not block waiting for them: accept a
-// piped key if it arrives, while the Android overlay offers its own entry UI.
+// piped key if it arrives, while an Android Activity offers the system keyboard.
 class FdReader {
 public:
     InputResult Poll(int fd, int timeout_ms = 0) {

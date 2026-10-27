@@ -1,5 +1,5 @@
 // Host/Android CLI harness for the real nonblocking startup reader. The full
-// Android application draws the overlay on the Waiting/Closed path; this
+// Android application opens the IME on the Waiting/Closed path; this
 // harness reports that path and models the fork/setsid before further input.
 #include "bw_obf.h"
 #include "startup_key.h"

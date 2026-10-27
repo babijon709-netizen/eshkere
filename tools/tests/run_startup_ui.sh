@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real ImGui startup keyboard with synthetic touches, on a headless host.
+# ImGui keyboard-unavailable fallback with synthetic touches, on a headless host.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 tmp="$(mktemp -d)"

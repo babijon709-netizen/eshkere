@@ -1,4 +1,4 @@
-// Exercise the production key keyboard on Android/Bionic + real EGL/GLES.
+// Exercise the keyboard-unavailable fallback on Android/Bionic + real EGL/GLES.
 // This is a pbuffer render/tap test, not an MT Manager or compositor test.
 #include "startup_key_ui.h"
 #include "imgui_internal.h"
@@ -21,7 +21,6 @@ void ImGuiTestEngineHook_Log(ImGuiContext*, const char*, ...) {}
 const char* ImGuiTestEngine_FindItemDebugLabel(ImGuiContext*, ImGuiID) { return nullptr; }
 
 static constexpr int kWidth = 640, kHeight = 360;
-static startup_key::Entry entry;
 static ImGuiID id(const char* label) { return ImHashStr(label, 0, ImHashStr("##startup_key")); }
 static startup_key_ui::Result frame(ImVec2 tap = {-100.f, -100.f}, bool released = false) {
     items.clear();
@@ -31,7 +30,7 @@ static startup_key_ui::Result frame(ImVec2 tap = {-100.f, -100.f}, bool released
     ImGui::NewFrame();
     io.MouseReleased[0] = released;
     io.MousePos = io.MouseClickedPos[0] = tap;
-    const auto result = startup_key_ui::Draw(entry, kWidth, kHeight);
+    const auto result = startup_key_ui::Draw(kWidth, kHeight);
     ImGui::Render();
     glViewport(0, 0, kWidth, kHeight);
     glClearColor(0, 0, 0, 1);
@@ -72,11 +71,8 @@ int main() {
     for (size_t i = 0; i < pixels.size(); i += 4)
         if (pixels[i] || pixels[i + 1] || pixels[i + 2]) ++colored;
     assert(colored > 1000); // the UI was actually drawn, not only laid out
-    for (char c : std::string("t.me/benzware")) {
-        char label[] = "##key_x"; label[6] = c;
-        assert(tap(label) == startup_key_ui::Result::Waiting);
-    }
-    assert(tap("##submit") == startup_key_ui::Result::Accepted);
+    assert(!items.count(id("##key_q")));
+    assert(tap("##cancel") == startup_key_ui::Result::Cancelled);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);

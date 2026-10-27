@@ -19,6 +19,8 @@ with open("jni/src/main.cpp", encoding="utf-8") as source:
     main = source.read().split("int main(int argc, char* argv[])", 1)[1]
     assert main.index("--check-driver") < main.index("startup_key::PrintPrompt()")
     assert main.index("startup_key::PrintPrompt()") < main.index("stealth::DaemonizeEarly()")
+    assert main.index("startup_ime::Request") < main.index("initGUI_draw")
+    assert main.index("startup_ime::Request") < main.index("Touch_Init")
     assert main.index("startup_key_ui::Draw") < main.index("stealth::ApplyRuntime()")
     assert main.index("stealth::ApplyRuntime()") < main.index("start_attach_thread()")
     assert "startup_input.Poll(STDIN_FILENO)" in main

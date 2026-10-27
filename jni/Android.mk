@@ -66,7 +66,7 @@ endif
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include $(LOCAL_PATH)/include/ImGui $(LOCAL_PATH)/include/ImGui/backends $(LOCAL_PATH)/src
 
 LOCAL_SRC_FILES := \
-    src/main.cpp src/bw_obf.cpp \
+    src/main.cpp src/bw_obf.cpp src/startup_ime.cpp \
     src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
     src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
     src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp src/screen_capture.cpp src/capture_merge.cpp \

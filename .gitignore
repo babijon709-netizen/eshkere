@@ -21,3 +21,6 @@ dumps/
 # python bytecode
 __pycache__/
 *.pyc
+
+# Embedded Android input helper, regenerated (including a fresh signing key) on every build.
+jni/include/startup_ime_apk.inc

@@ -120,8 +120,8 @@ jobs:
           cp "$RUNNER_TEMP/record-supervisor" "$RUNNER_TEMP/record-supervisor-plain"
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --key 0x6A09E667F3BCC909
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --check
-          # The gate's real nonblocking reader and ImGui keyboard are also
-          # exercised on Bionic/GLES. This does not install MT Manager.
+          # The gate's real nonblocking reader and error-only fallback are also
+          # exercised on Bionic/GLES. The actual system IME has a separate workflow.
           "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables \
             -ffunction-sections -fdata-sections -fPIE -pie -static-libstdc++ -Ijni/include \
             jni/src/bw_obf.cpp tools/tests/startup_cli.cpp \

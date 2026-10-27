@@ -18,6 +18,18 @@
 namespace screen_capture {
 namespace {
 
+// Android's screenrecord enforces a maximum of 180 seconds per invocation.
+// A video session rolls over to a fresh file instead of having a session limit.
+#ifdef SCREEN_CAPTURE_TEST_SEGMENT_SECONDS
+constexpr int kSegmentSeconds = SCREEN_CAPTURE_TEST_SEGMENT_SECONDS;
+#else
+constexpr int kSegmentSeconds = 180;
+#endif
+static_assert(kSegmentSeconds >= 1 && kSegmentSeconds <= 180, "invalid screenrecord segment size");
+constexpr int kPartDigits = 10;
+constexpr char kFirstPartSuffix[] = "-part0000000001.mp4";
+static_assert(sizeof(kFirstPartSuffix) == kPartDigits + sizeof("-part.mp4"), "part suffix size");
+
 bool ensure_directory(const std::string& path) {
     if (path.empty() || path[0] != '/') return false;
     for (size_t pos = 1; ; ++pos) {
@@ -38,11 +50,11 @@ bool reserve_path(const std::string& directory, Kind kind, std::string& path) {
     if (!localtime_r(&now, &tm)) return false;
     char timestamp[32];
     if (!strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", &tm)) return false;
-    const char* extension = kind == Kind::Screenshot ? "png" : "mp4";
+    const char* suffix = kind == Kind::Screenshot ? ".png" : kFirstPartSuffix;
     for (unsigned i = 0; i < 1000; ++i) {
-        char name[96];
-        const int length = snprintf(name, sizeof(name), "/benzware-%s-%d-%03u.%s",
-                                    timestamp, static_cast<int>(getpid()), i, extension);
+        char name[112];
+        const int length = snprintf(name, sizeof(name), "/benzware-%s-%d-%03u%s",
+                                    timestamp, static_cast<int>(getpid()), i, suffix);
         if (length <= 0 || static_cast<size_t>(length) >= sizeof(name)) return false;
         path = directory + name;
         // Do not overwrite an earlier capture, even when two taps share a second.
@@ -86,75 +98,115 @@ long long monotonic_ms() {
     return static_cast<long long>(ts.tv_sec) * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
+// Read stop requests without blocking the render thread. Once stopped, still
+// sleep between waitpid checks instead of spinning on a permanently closed fd.
+void check_control(int fd, bool& stop_requested, int timeout_ms) {
+    if (stop_requested) {
+        if (timeout_ms > 0) (void)poll(nullptr, 0, timeout_ms);
+        return;
+    }
+    struct pollfd pfd{fd, POLLIN | POLLHUP, 0};
+    const int ready = poll(&pfd, 1, timeout_ms);
+    if (ready < 0) {
+        if (errno != EINTR) stop_requested = true;
+        return;
+    }
+    if (ready == 0) return;
+    if (pfd.revents & POLLNVAL) { stop_requested = true; return; }
+    if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) {
+        char buf[16];
+        const ssize_t n = read(fd, buf, sizeof(buf));
+        if (n >= 0 || (errno != EAGAIN && errno != EINTR)) stop_requested = true;
+    }
+}
+
+bool file_nonempty(const char* path) {
+    struct stat st{};
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
+// Called after fork with no allocator or stdio. The initial path is already
+// unique, and its fixed-width decimal suffix groups the session's parts.
+bool reserve_next_part(char* path, char* digits) {
+    bool carried = true;
+    for (int i = kPartDigits - 1; i >= 0; --i) {
+        if (digits[i] != '9') { ++digits[i]; carried = false; break; }
+        digits[i] = '0';
+    }
+    if (carried) return false;
+    const int fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
+    if (fd < 0) return false;
+    (void)fchmod(fd, 0644);
+    close(fd);
+    return true;
+}
+
 // The app deliberately ignores SIGCHLD, so it cannot waitpid() the recorder.
-// This short-lived supervisor resets SIGCHLD, waits for its own child, and
-// reports the real exit status. A socket EOF also stops a recording if the app
-// crashes or is killed; PID reuse cannot target an unrelated process because
-// the supervisor holds the child unreaped until waitpid returns.
+// This supervisor owns the current child and rolls video into 180-second MP4
+// parts until stopped. EOF on the control socket also ends the session if the
+// app exits or crashes. All post-fork work uses fixed buffers and syscalls.
 [[noreturn]] void supervise(Kind kind, int result_fd, int control_fd, int log_fd,
-                            long max_fd, const char* executable, char* const argv[]) {
+                            long max_fd, const char* executable, char* const argv[],
+                            char* part_path, char* part_digits) {
     close_inherited(max_fd, result_fd, control_fd, log_fd);
     set_signal(SIGCHLD, SIG_DFL);
     set_signal(SIGPIPE, SIG_IGN);
 
-    const pid_t child = fork();
-    if (child == 0) {
-        close(result_fd);
-        close(control_fd);
-        if (log_fd >= 0) {
-            (void)dup2(log_fd, STDOUT_FILENO);
-            (void)dup2(log_fd, STDERR_FILENO);
-            if (log_fd > STDERR_FILENO) close(log_fd);
-        }
-        set_signal(SIGINT, SIG_DFL);
-        set_signal(SIGTERM, SIG_DFL);
-        set_signal(SIGHUP, SIG_DFL);
-        set_signal(SIGPIPE, SIG_DFL);
-        // ApplyEarly deliberately wipes the parent's environment. System
-        // commands (and screenrecord's media-scanner helper) need a minimal
-        // Android environment instead of those empty entries.
-        char* const env[] = {
-            const_cast<char*>("PATH=/system/bin:/system/xbin"),
-            const_cast<char*>("ANDROID_ROOT=/system"),
-            const_cast<char*>("ANDROID_ASSETS=/system/app"),
-            const_cast<char*>("ANDROID_DATA=/data"),
-            const_cast<char*>("ANDROID_STORAGE=/storage"),
-            const_cast<char*>("ANDROID_ART_ROOT=/apex/com.android.art"),
-            const_cast<char*>("ANDROID_I18N_ROOT=/apex/com.android.i18n"),
-            const_cast<char*>("ANDROID_TZDATA_ROOT=/apex/com.android.tzdata"),
-            const_cast<char*>("EXTERNAL_STORAGE=/sdcard"),
-            const_cast<char*>("TMPDIR=/data/local/tmp"),
-            nullptr
-        };
-        execve(executable, argv, env);
-        static constexpr char failed[] = "capture: execve failed\n";
-        (void)write(STDERR_FILENO, failed, sizeof(failed) - 1);
-        _exit(127);
-    }
-    if (log_fd >= 0) close(log_fd);
-
+    bool stop_requested = false;
     int status = -1;
-    if (child > 0) {
+    for (;;) {
+        const pid_t child = fork();
+        if (child == 0) {
+            close(result_fd);
+            close(control_fd);
+            if (log_fd >= 0) {
+                (void)dup2(log_fd, STDOUT_FILENO);
+                (void)dup2(log_fd, STDERR_FILENO);
+                if (log_fd > STDERR_FILENO) close(log_fd);
+            }
+            set_signal(SIGINT, SIG_DFL);
+            set_signal(SIGTERM, SIG_DFL);
+            set_signal(SIGHUP, SIG_DFL);
+            set_signal(SIGPIPE, SIG_DFL);
+            // The parent wipes its environment; Android media helpers need a
+            // minimal replacement, prepared here without allocation.
+            char* const env[] = {
+                const_cast<char*>("PATH=/system/bin:/system/xbin"),
+                const_cast<char*>("ANDROID_ROOT=/system"),
+                const_cast<char*>("ANDROID_ASSETS=/system/app"),
+                const_cast<char*>("ANDROID_DATA=/data"),
+                const_cast<char*>("ANDROID_STORAGE=/storage"),
+                const_cast<char*>("ANDROID_ART_ROOT=/apex/com.android.art"),
+                const_cast<char*>("ANDROID_I18N_ROOT=/apex/com.android.i18n"),
+                const_cast<char*>("ANDROID_TZDATA_ROOT=/apex/com.android.tzdata"),
+                const_cast<char*>("EXTERNAL_STORAGE=/sdcard"),
+                const_cast<char*>("TMPDIR=/data/local/tmp"),
+                nullptr
+            };
+            execve(executable, argv, env);
+            static constexpr char failed[] = "capture: execve failed\n";
+            (void)write(STDERR_FILENO, failed, sizeof(failed) - 1);
+            _exit(127);
+        }
+        if (child < 0) {
+            if (kind == Kind::Video && !file_nonempty(part_path)) (void)unlink(part_path);
+            status = -1;
+            break;
+        }
+
+        status = -1;
         const long long started = monotonic_ms();
         long long signalled = 0;
-        bool stop_requested = false;
         bool force_killed = false;
         for (;;) {
             const pid_t waited = waitpid(child, &status, WNOHANG);
             if (waited == child) break;
             if (waited < 0 && errno != EINTR) { status = -1; break; }
 
-            struct pollfd pfd{control_fd, POLLIN | POLLHUP, 0};
-            const int ready = poll(&pfd, 1, 100);
-            if (ready > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
-                char buf[16];
-                const ssize_t n = read(control_fd, buf, sizeof(buf));
-                if (n >= 0 || (errno != EAGAIN && errno != EINTR)) stop_requested = true;
-            }
+            check_control(control_fd, stop_requested, 100);
             const long long now = monotonic_ms();
             // screenrecord installs its SIGINT handler only after exec. Give it
-            // time to start so a very quick stop can finalize the MP4 instead
-            // of terminating on the default signal action.
+            // time to start so a quick stop can finalize the current MP4.
             if (stop_requested && !signalled &&
                 (kind == Kind::Screenshot || now - started >= 1000)) {
                 (void)kill(child, kind == Kind::Video ? SIGINT : SIGTERM);
@@ -165,7 +217,43 @@ long long monotonic_ms() {
                 force_killed = true;
             }
         }
+        if (kind == Kind::Screenshot) break;
+
+        // If stop arrived as the child exited, do not start another segment.
+        check_control(control_fd, stop_requested, 0);
+        const bool nonempty = file_nonempty(part_path);
+        if (!nonempty) (void)unlink(part_path);
+        if (stop_requested || status != 0 || !nonempty) {
+            if (status == 0 && !nonempty) status = -1;
+            break;
+        }
+
+        // A zero exit long before the requested time may be an encoder EOS or
+        // OEM failure, not the time limit. Do not silently retry forever.
+        const long long elapsed = monotonic_ms() - started;
+        if (started <= 0 || elapsed < static_cast<long long>(kSegmentSeconds) * 900LL) {
+            static constexpr char early[] = "capture: recorder ended before segment limit\n";
+            if (log_fd >= 0) (void)write(log_fd, early, sizeof(early) - 1);
+            status = -1;
+            break;
+        }
+        if (!reserve_next_part(part_path, part_digits)) {
+            static constexpr char failed[] = "capture: cannot reserve next segment\n";
+            if (log_fd >= 0) (void)write(log_fd, failed, sizeof(failed) - 1);
+            status = -1;
+            break;
+        }
+        // A stop/parent death between parts must not leave an empty placeholder.
+        check_control(control_fd, stop_requested, 0);
+        if (stop_requested) { (void)unlink(part_path); break; }
+        if (log_fd >= 0) {
+            static constexpr char next[] = "[capture] next segment: ";
+            (void)write(log_fd, next, sizeof(next) - 1);
+            (void)write(log_fd, part_path, strlen(part_path));
+            (void)write(log_fd, "\n", 1);
+        }
     }
+    if (log_fd >= 0) close(log_fd);
     // One small write is atomic for a pipe; the parent reads it non-blocking.
     (void)write(result_fd, &status, sizeof(status));
     close(result_fd);
@@ -218,7 +306,7 @@ StartResult Job::start(Kind kind, const std::string& executable,
     options = sanitize(options);
     char duration[16];
     char bitrate[16];
-    std::snprintf(duration, sizeof(duration), "%d", options.duration_seconds);
+    std::snprintf(duration, sizeof(duration), "%d", kSegmentSeconds);
     std::snprintf(bitrate, sizeof(bitrate), "%d", options.bitrate_mbps * 1000000);
     char* args[7] = {};
     int arg = 0;
@@ -233,13 +321,16 @@ StartResult Job::start(Kind kind, const std::string& executable,
             args[arg++] = bitrate;
         }
     }
-    args[arg] = const_cast<char*>(path_.c_str());
+    char* const part_path = path_.data();
+    char* const part_digits = kind == Kind::Video ? part_path + path_.size() - kPartDigits - 4 : nullptr;
+    args[arg] = part_path;
     const long max_fd = max_open_files();
     const pid_t supervisor = fork();
     if (supervisor == 0) {
         close(results[0]);
         close(control[0]);
-        supervise(kind, results[1], control[1], log_fd, max_fd, executable.c_str(), args);
+        supervise(kind, results[1], control[1], log_fd, max_fd, executable.c_str(), args,
+                  part_path, part_digits);
     }
     close(results[1]);
     close(control[1]);

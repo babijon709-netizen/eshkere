@@ -245,7 +245,7 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
 struct CfgExt2Trailer {
     uint32_t magic;          // "CFX2"
     uint32_t version;        // 1
-    uint32_t flags;          // bits 18–21: recording duration and bitrate
+    uint32_t flags;          // bits 18–19: old duration (ignored); 20–21: bitrate
     float    esp_arrow_ring;
     float    esp_radar_size;
     float    esp_radar_range;
@@ -778,8 +778,8 @@ static void LoadCfgByName(const char* name, bool announce) {
         b01(g_state.esp_team); b01(g_state.ui_dark_mode);
         g_state.viewmodel.no_ballistics = false;
         g_state.a_no_ballistics = 0.f;
-        // Old profiles have no new bits (or no trailer): restore the legacy
-        // capture-visible and video defaults even after loading a newer profile.
+        // Old profiles have no new bits (or no trailer): restore capture
+        // visibility and automatic bitrate even after loading a newer profile.
         ApplyCaptureConfig(hasExt2 ? ext2.flags : 0u);
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;

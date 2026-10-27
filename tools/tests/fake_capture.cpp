@@ -1,6 +1,7 @@
 // Fake /system/bin/{screencap,screenrecord} for the real process supervisor.
 #include <csignal>
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <cstdio>
 #include <cstdlib>
@@ -23,9 +24,10 @@ int main(int argc, char** argv) {
         std::fputs("fake screenshot complete\n", stderr);
         return 0;
     }
-    if ((argc == 4 || argc == 6) && std::strcmp(argv[1], "--time-limit") == 0 &&
-        (std::strcmp(argv[2], "60") == 0 || std::strcmp(argv[2], "120") == 0 ||
-         std::strcmp(argv[2], "180") == 0)) {
+    if ((argc == 4 || argc == 6) && std::strcmp(argv[1], "--time-limit") == 0) {
+        char* end = nullptr;
+        const long seconds = std::strtol(argv[2], &end, 10);
+        if (!end || *end || seconds < 1 || seconds > 180) return 4;
         const char* bitrate = "auto";
         const char* output = argv[3];
         if (argc == 6) {
@@ -41,9 +43,19 @@ int main(int argc, char** argv) {
         sigaction(SIGINT, &sa, nullptr);
         FILE* f = std::fopen(output, "wb");
         if (!f) return 3;
+        if (std::strstr(output, "fake-fail-second") && std::strstr(output, "-part0000000002.mp4")) {
+            std::fclose(f);
+            return 9;
+        }
         std::fprintf(f, "video started duration=%s bitrate=%s\n", argv[2], bitrate);
         std::fflush(f);
-        while (!stopped) usleep(10000);
+        if (std::strstr(output, "fake-early")) {
+            usleep(100000);
+            std::fclose(f);
+            return 0; // nonempty, but much earlier than the configured limit
+        }
+        const auto end_time = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (!stopped && std::chrono::steady_clock::now() < end_time) usleep(10000);
         std::fputs("video finalized\n", f);
         std::fclose(f);
         return 0;

@@ -520,12 +520,6 @@ float TabContent(int tab, float dt, float cW) {
             ToggleRow("##capture_overlay", XS("Оверлей в захвате"), &g_state.streamer_mode,
                       g_state.a_streamer_mode, true, true);
 
-            SHdr(XS("Лимит записи"), 4.f);
-            const char* const durations[] = {XS("1 мин"), XS("2 мин"), XS("3 мин")};
-            int duration = screen_capture::duration_index(g_state.capture_video.duration_seconds);
-            if (ChoiceRow("##capture_duration", &duration, durations, 3))
-                g_state.capture_video.duration_seconds = screen_capture::duration_at(duration);
-
             SHdr(XS("Битрейт, Мбит/с"), 4.f);
             const char* const bitrates[] = {XS("Авто"), "4", "8", "16"};
             int bitrate = screen_capture::bitrate_index(g_state.capture_video.bitrate_mbps);

@@ -243,7 +243,7 @@ static void configAndOptionsTests() {
     tap(tab(4), id("##cfgcreate")); assert(saves == 1);
     fresh("options"); assert(frame(tab(5)) < 750.f);
     assert(g_state.streamer_mode); // preserve legacy full-screen capture behavior
-    assert(g_state.capture_video.duration_seconds == 180 && g_state.capture_video.bitrate_mbps == 0);
+    assert(g_state.capture_video.bitrate_mbps == 0);
     assert(!items.count(groupId("##options_capture", "enable"))); // switch has an explicit label inside
     for (auto group : {"##options_capture", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
     for (auto label : {"##capture_overlay", "##lang0", "##lang1", "##ud2", "##acc8", "##hud_cnt", "##pstyle0", "##pstyle1", "##exit"}) assert(items.count(id(label)));
@@ -251,30 +251,26 @@ static void configAndOptionsTests() {
     screenshots = videoStarts = videoStops = 0; videoRunning = videoStopping = false;
     tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 1);
     tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 2); // actions aren't sticky choices
-    tap(tab(5), choiceId("##capture_duration", 0)); assert(g_state.capture_video.duration_seconds == 60);
+    assert(!items.count(choiceId("##capture_duration", 0))); // no overall recording limit
     tap(tab(5), choiceId("##capture_bitrate", 2)); assert(g_state.capture_video.bitrate_mbps == 8);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStarts == 1 && videoRunning);
-    assert(lastVideoOptions.duration_seconds == 60 && lastVideoOptions.bitrate_mbps == 8);
-    // Changing settings while running must only change the next start.
-    tap(tab(5), choiceId("##capture_duration", 1)); assert(g_state.capture_video.duration_seconds == 120);
+    assert(lastVideoOptions.bitrate_mbps == 8);
+    // Changing bitrate while running must only change the next start.
     tap(tab(5), choiceId("##capture_bitrate", 3)); assert(g_state.capture_video.bitrate_mbps == 16);
-    assert(lastVideoOptions.duration_seconds == 60 && lastVideoOptions.bitrate_mbps == 8);
+    assert(lastVideoOptions.bitrate_mbps == 8);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1 && videoStopping);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1); // no repeated stop
     videoRunning = videoStopping = false;
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStarts == 2);
-    assert(lastVideoOptions.duration_seconds == 120 && lastVideoOptions.bitrate_mbps == 16);
-    tap(tab(5), choiceId("##capture_duration", 2)); assert(g_state.capture_video.duration_seconds == 180);
+    assert(lastVideoOptions.bitrate_mbps == 16);
     tap(tab(5), choiceId("##capture_bitrate", 1)); assert(g_state.capture_video.bitrate_mbps == 4);
     tap(tab(5), choiceId("##capture_bitrate", 0)); assert(g_state.capture_video.bitrate_mbps == 0);
     tap(tab(5), id("##lang1")); assert(lang::english());
     frame(tab(5)); assert(items.count(id("##ud2"))); // expansion survives localization
     for (const auto& entry : {std::pair{"Запись экрана", "Screen recording"},
                               std::pair{"Оверлей в захвате", "Overlay in capture"},
-                              std::pair{"Лимит записи", "Recording limit"},
                               std::pair{"Битрейт, Мбит/с", "Bitrate, Mbps"},
-                              std::pair{"Авто", "Auto"}, std::pair{"1 мин", "1 min"},
-                              std::pair{"2 мин", "2 min"}, std::pair{"3 мин", "3 min"},
+                              std::pair{"Авто", "Auto"},
                               std::pair{"Скриншот", "Screenshot"},
                               std::pair{"Начать запись", "Start recording"},
                               std::pair{"Остановить запись", "Stop recording"},

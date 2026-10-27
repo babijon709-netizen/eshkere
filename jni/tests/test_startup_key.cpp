@@ -16,7 +16,7 @@ static void valid(const char* text) {
     std::ostream out(&buffer);
     std::ostringstream err;
     assert(startup_key::Verify(in, out, err));
-    assert(buffer.str() == "Enter key: ");
+    assert(buffer.str() == "Enter key:\n");
     assert(buffer.syncs > 0);
     assert(err.str().empty());
 }
@@ -29,13 +29,13 @@ int main() {
     std::istringstream wrong("wrong\n");
     std::ostringstream out, err;
     assert(!startup_key::Verify(wrong, out, err));
-    assert(out.str() == "Enter key: ");
+    assert(out.str() == "Enter key:\n");
     assert(err.str().find("Invalid key") != std::string::npos);
     assert(err.str().find("wrong") == std::string::npos);
 
     std::istringstream empty("");
     std::ostringstream out2, err2;
     assert(!startup_key::Verify(empty, out2, err2));
-    assert(out2.str() == "Enter key: ");
+    assert(out2.str() == "Enter key:\n");
     assert(err2.str().find("interactive terminal") != std::string::npos);
 }

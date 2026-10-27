@@ -24,7 +24,7 @@ Checks cover:
 - independent feature switches and expandable settings, stable IDs;
 - release taps, modal/scroll/consumed-input blocking and clipped rows;
 - all previous controls across all five tabs, profile actions and confirmation;
-- capture buttons, overlay toggle, recording presets, next-start semantics and translations;
+- capture buttons, overlay toggle, bitrate presets, next-start semantics and translations;
 - calibration entry points, farm/aim point reset and immediate weapon/FPS callbacks;
 - expanded layouts at narrow/wide content widths, both languages and themes;
 - collapsed content height and scroll bounds after content shrinks;
@@ -34,17 +34,18 @@ Checks cover:
 `run_capture_surface.sh` tests the real SurfaceFlinger ABI wrapper against fake
 libgui symbols for Android 8–16, including unavailable symbols and failure; it
 also exercises the real EGL switching/rollback logic with a mocked platform
-and round-trips the actual config trailer, including video presets, old defaults
-and unchanged flag bits. These tests cannot establish what an OEM compositor or
-recording app does on a real device.
+and round-trips the actual config trailer, including bitrate, ignored legacy
+duration bits and unchanged flag layout. These tests cannot establish what an
+OEM compositor or recording app does on a real device.
 
 `run_screen_capture.sh` runs the real asynchronous capture-job implementation
-with fake executable commands, temporary paths and the app's ignored SIGCHLD:
-command arguments, completion/failure, unique files, SIGINT stop, shutdown/parent
-death, concurrent jobs and a clean child environment. It does not capture Android
-pixels.
-`run_startup_cli.sh` tests the real key gate via pipes and a PTY, before and
-after the ELF patcher, including flush-before-input, CRLF, wrong key and EOF.
+with fake executable commands, temporary paths and the app's ignored SIGCHLD.
+It also uses a two-second test segment to exercise autonomous repeated rollovers,
+stop at a boundary, collisions, early exits, failures and parent death. It does
+not capture Android pixels; the production segment remains 180 seconds.
+`run_startup_cli.sh` tests the real key gate through pipes, a line-buffered
+launcher and a PTY, before and after the ELF patcher, including a complete
+prompt line before input, CRLF, wrong key and EOF.
 These are host tests, not evidence that the arm64 binary starts on a device.
 
 `run_predict.sh` feeds the pose-delay estimator (`aim_predict.h`) a synthetic

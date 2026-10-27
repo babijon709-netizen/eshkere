@@ -17,8 +17,8 @@ struct Event {
     std::string path;
 };
 
-// One asynchronous system-command job. Exposed so the host rig can exercise
-// the actual process/pipe lifecycle with fake executables and temporary paths.
+// One asynchronous capture job. A video job spans successive screenrecord
+// segments until stopped; a screenshot runs once. Exposed for the host rig.
 class Job {
 public:
     Job() = default;

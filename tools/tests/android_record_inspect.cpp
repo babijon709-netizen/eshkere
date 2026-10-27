@@ -40,9 +40,10 @@ int main(int argc, char** argv) {
     } while (AMediaExtractor_advance(extractor));
     if (frames < 2) { std::fprintf(stderr, "platform extractor read %zu samples\n", frames); return 6; }
     if (duration > 0) {
-        const int64_t seek = duration / 2;
+        const int64_t seek = duration * 3 / 4;
         if (AMediaExtractor_seekTo(extractor, seek, AMEDIAEXTRACTOR_SEEK_PREVIOUS_SYNC) != AMEDIA_OK ||
             AMediaExtractor_readSampleData(extractor, buffer.data(), buffer.size()) < 0) return 7;
+        if (duration >= 20000000 && AMediaExtractor_getSampleTime(extractor) <= 0) return 8;
     }
     std::printf("platform extractor: %zu H.264 samples, duration=%lld us\n", frames, static_cast<long long>(duration));
     AMediaExtractor_delete(extractor);

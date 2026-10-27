@@ -62,19 +62,26 @@ def main():
     command = ["adb", "shell", f"{remote}/record-helper", f"{remote}/capture.mp4"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     try:
-        # Change the display while recording, rather than merely validating an
-        # encoder-generated black frame. No game or production overlay is run.
-        for _ in range(6):
+        # Keep the display changing. On Android 8 this also runs past the old
+        # 180-second screenrecord limit without replacing the recorder process.
+        seconds = int(os.environ.get("ANDROID_RECORD_SECONDS", "7"))
+        deadline = time.monotonic() + seconds
+        original_pid = None
+        while time.monotonic() < deadline:
             time.sleep(0.8)
             if process.poll() is not None:
                 break
+            if original_pid is None:
+                initial = run("adb", "shell", "pidof", "record-helper", check=False).stdout.strip().split()
+                if len(initial) == 1 and initial[0].isdigit():
+                    original_pid = initial[0]
             run("adb", "shell", "input", "swipe", "300", "700", "300", "250", "300", check=False)
         if process.poll() is not None:
             output = process.communicate(timeout=5)[0]
             raise RuntimeError(f"recorder exited early ({process.returncode}): {output}")
         pids = run("adb", "shell", "pidof", "record-helper").stdout.strip().split()
-        if len(pids) != 1 or not pids[0].isdigit():
-            raise RuntimeError(f"unexpected recorder pids: {pids}")
+        if len(pids) != 1 or not pids[0].isdigit() or pids[0] != original_pid:
+            raise RuntimeError(f"recorder PID changed: {original_pid} -> {pids}")
         run("adb", "shell", "kill", "-INT", pids[0])
         try:
             output = process.communicate(timeout=15)[0]
@@ -94,18 +101,25 @@ def main():
         with tempfile.TemporaryDirectory() as tmp:
             clip = Path(tmp) / "capture.mp4"
             run("adb", "pull", f"{remote}/capture.mp4", str(clip))
+            count, previous, brightness = 0, -1.0, 0
             with av.open(str(clip)) as movie:
                 stream = movie.streams.video[0]
-                frames = list(movie.decode(stream))
-            if len(frames) < 2:
-                raise RuntimeError(f"expected several captured frames, got {len(frames)}: {output}")
-            if max(bytes(frames[-1].planes[0])) < 24:
+                width, height = stream.width, stream.height
+                for frame in movie.decode(stream):
+                    timestamp = float(frame.pts * frame.time_base)
+                    if timestamp <= previous:
+                        raise RuntimeError(f"nonmonotonic frame timestamp {timestamp} after {previous}")
+                    previous = timestamp
+                    brightness = max(bytes(frame.planes[0]))
+                    count += 1
+            if count < 2:
+                raise RuntimeError(f"expected several captured frames, got {count}: {output}")
+            if brightness < 24:
                 raise RuntimeError(f"captured display appears black: {output}")
-            timestamps = [float(frame.pts * frame.time_base) for frame in frames]
-            if not all(a < b for a, b in zip(timestamps, timestamps[1:])):
-                raise RuntimeError(f"nonmonotonic frame timestamps: {timestamps[:30]}")
-            print(f"::notice title=Android continuous capture::PASS: {len(frames)} decoded frames, "
-                  f"{stream.width}x{stream.height}, {timestamps[-1]:.2f}s, {clip.stat().st_size} bytes")
+            if seconds >= 185 and previous < 180:
+                raise RuntimeError(f"long recording did not cross 180 seconds: {previous:.2f}")
+            print(f"::notice title=Android continuous capture::PASS: {count} decoded frames, "
+                  f"{width}x{height}, {previous:.2f}s, {clip.stat().st_size} bytes")
         test_supervisor(remote, "stop", "record-supervisor-plain")
         test_supervisor(remote, "stop")
         test_supervisor(remote, "death")

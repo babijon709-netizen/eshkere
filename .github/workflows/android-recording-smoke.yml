@@ -38,12 +38,14 @@ jobs:
   recording:
     name: Android ${{ matrix.api }} recording
     runs-on: ubuntu-latest
+    env:
+      ANDROID_RECORD_SECONDS: ${{ matrix.seconds || 7 }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {api: 26, target: default}
+          - {api: 26, target: default, seconds: 190}
           - {api: 28, target: default}
           - {api: 29, target: default}
           - {api: 30, target: default}
@@ -101,8 +103,11 @@ jobs:
           fi
           "$COMPILER" -std=c++17 -O2 -Wall -Wextra -Werror -fPIE -pie -static-libstdc++ \
             tools/tests/android_record_inspect.cpp -lmediandk -o "$RUNNER_TEMP/record-inspect"
-          "$COMPILER" -std=c++17 -O2 -fPIE -pie -fno-jump-tables -DBW_OBF_DIAGNOSTIC -static-libstdc++ -Ijni/include \
-            -Wl,--rosegment -Wl,-z,separate-code -Wl,-z,max-page-size=16384 \
+          "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fomit-frame-pointer -fno-jump-tables \
+            -fvisibility=hidden -fvisibility-inlines-hidden -ffunction-sections -fdata-sections \
+            -fPIE -pie -static-libstdc++ -Ijni/include \
+            -Wl,--gc-sections,--icf=all,--exclude-libs,ALL,-s,--rosegment \
+            -Wl,-z,separate-code -Wl,-z,max-page-size=16384 \
             jni/src/bw_obf.cpp jni/src/screen_capture.cpp jni/src/record_capture.cpp \
             jni/src/record_display.cpp jni/src/record_mp4.cpp tools/tests/android_record_supervisor.cpp \
             -lmediandk -landroid -ldl -llog -o "$RUNNER_TEMP/record-supervisor"

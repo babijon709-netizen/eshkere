@@ -8,8 +8,6 @@ tools/tests/run_menu_ui.sh --bench
 tools/tests/run_capture_surface.sh
 tools/tests/run_screen_capture.sh
 tools/tests/run_startup_cli.sh
-tools/tests/run_startup_ui.sh
-tools/tests/run_startup_ime_host.sh
 tools/tests/run_farm_tests.sh
 tools/tests/run_predict.sh
 ```
@@ -56,16 +54,11 @@ extractor and host H.264 playback. An encrypted test binary exercises the real
 supervisor's self-exec and normal/parent-death stops. The Android 8 run records
 for over three minutes and checks the recorder PID, playback and seeking. It
 does not run the full production arm64 binary, an OEM firmware, the overlay or a game.
-`run_startup_cli.sh` exercises the real nonblocking reader through pipes, a
-buffered launcher and a detached PTY before/after the ELF patcher.
-`run_startup_ui.sh` tests the keyboard-unavailable message and its cancel button;
-there is no replacement ImGui keyboard. `run_startup_ime_host.sh` tests the native
-bridge's session, bounded files, child-process and response handling.
-`.github/workflows/android-ime-smoke.yml` installs the actual embedded Activity
-on x86_64 emulators, confirms the system IME is visible, exercises wrong/correct
-entry, cancellation and late piped input, and checks normal helper cleanup. It
-also runs an encrypted bridge after the real early daemon/signal setup. These
-emulators do not install MT Manager or prove OEM/physical-device behavior.
+`run_startup_cli.sh` runs the same blocking key gate as the application,
+before and after ELF encryption. It checks prompt visibility before input,
+delayed/fragmented entry, pipes, EOF, interruption and a controlling PTY.
+The Android recording workflow runs the gate on Bionic as well. Those tests do
+not themselves prove how a particular MT Manager build or phone displays it.
 
 `run_farm_tests.sh` tests the real scanner with fake `memio` memory and the real
 controller with fake target/input calls, under ASan/UBSan: low positive HP,

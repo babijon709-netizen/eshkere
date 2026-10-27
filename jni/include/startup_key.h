@@ -23,29 +23,14 @@ inline bool Matches(std::string entered) {
     return entered == kLaunchKey;
 }
 
-inline bool Verify(std::istream& input = std::cin,
-                   std::ostream& output = std::cout,
-                   std::ostream& error = std::cerr) {
-    PrintPrompt(output);
-    std::string entered;
-    if (!std::getline(input, entered)) {
-        error << "Unable to read key. Run the binary in an interactive terminal.\n";
-        return false;
-    }
-    if (!Matches(entered)) {
-        error << "Invalid key. Launch cancelled.\n";
-        return false;
-    }
-    return true;
-}
-
-// Non-terminal launchers may leave stdin open without ever providing a UI or
-// may display output only after exit. Do not block waiting for them: accept a
-// piped key if it arrives, while an Android Activity offers the system keyboard.
+// Read from the launcher's actual stdin. Wait indefinitely rather than
+// detaching or switching UIs while MT Manager is still providing a PTY.
+// Poll is also usable for nonblocking descriptors and fragmented pipe input.
 class FdReader {
 public:
     InputResult Poll(int fd, int timeout_ms = 0) {
         if (finished_) return result_;
+        if (fd < 0) return Finish(InputResult::Closed);
         for (std::size_t i = 0; i <= kMaxEntry; ++i) {
             pollfd pfd{fd, static_cast<short>(POLLIN | POLLHUP), 0};
             const int ready = ::poll(&pfd, 1, i == 0 ? timeout_ms : 0);
@@ -80,23 +65,21 @@ private:
     bool finished_ = false;
 };
 
-struct Entry {
-    std::string text;
-    bool invalid = false;
-
-    void Add(char c) {
-        if (text.size() < kMaxEntry) text.push_back(c);
-        invalid = false;
-    }
-    void Backspace() {
-        if (!text.empty()) text.pop_back();
-        invalid = false;
-    }
-    bool Submit() {
-        if (Matches(text)) { text.clear(); invalid = false; return true; }
-        text.clear();
-        invalid = true;
-        return false;
-    }
-};
+// The launcher must be able to display stdout and supply stdin. In particular,
+// a terminal-less runner that buffers output until process exit cannot be made
+// interactive by the child process alone.
+inline InputResult Request(int fd = STDIN_FILENO,
+                           std::ostream& output = std::cout,
+                           std::ostream& error = std::cerr) {
+    PrintPrompt(output);
+    FdReader reader;
+    InputResult result;
+    do { result = reader.Poll(fd, -1); }
+    while (result == InputResult::Waiting);
+    if (result == InputResult::Invalid)
+        error << "Invalid key. Launch cancelled.\n";
+    else if (result == InputResult::Closed)
+        error << "Unable to read key. Run in an interactive terminal.\n";
+    return result;
+}
 } // namespace startup_key

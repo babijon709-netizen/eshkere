@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise the real startup prompt through pipes and a pseudo-terminal."""
-import os
+"""Exercise the production startup gate through pipes and a controlling PTY."""
 import fcntl
+import os
 import pty
 import queue
 import select
+import signal
 import subprocess
 import sys
 import termios
@@ -12,23 +13,23 @@ import threading
 import time
 
 PROMPT = b"Enter key:\n"
+ACCEPTED = b"KEY_ACCEPTED\n"
 
-# The diagnostic CLI deliberately bypasses the gate. The normal path must
-# present both console and overlay routes before redirecting stdio/attaching.
+# Diagnostics bypass the gate. No daemonization, touch, graphics, descriptor
+# redirection, or attachment may occur until Request() has returned success.
 with open("jni/src/main.cpp", encoding="utf-8") as source:
     main = source.read().split("int main(int argc, char* argv[])", 1)[1]
-    assert main.index("--check-driver") < main.index("startup_key::PrintPrompt()")
-    assert main.index("startup_key::PrintPrompt()") < main.index("stealth::DaemonizeEarly()")
-    assert main.index("startup_ime::Request") < main.index("initGUI_draw")
-    assert main.index("startup_ime::Request") < main.index("Touch_Init")
-    assert main.index("startup_key_ui::Draw") < main.index("stealth::ApplyRuntime()")
-    assert main.index("stealth::ApplyRuntime()") < main.index("start_attach_thread()")
-    assert "startup_input.Poll(STDIN_FILENO)" in main
+    gate = main.index("startup_key::Request()")
+    assert main.index("--check-driver") < gate
+    for action in ("stealth::DaemonizeEarly()", "stealth::ApplyEarly(",
+                   "initGUI_draw(", "Touch_Init(", "stealth::ApplyRuntime()",
+                   "start_attach_thread()"):
+        assert gate < main.index(action), action
+    assert "startup_ime::" not in main and "startup_key_ui::" not in main
 
 
 def read_prompt(fd, process):
-    # Model a launcher that doesn't display stdout until it has a full line.
-    # A PTY can translate LF to CRLF; a pipe must carry the exact LF form.
+    # The complete line must reach the launcher before any key is supplied.
     data = b""
     deadline = time.monotonic() + 4
     while not data.endswith(b"\n"):
@@ -44,18 +45,24 @@ def read_prompt(fd, process):
     assert data.replace(b"\r\n", b"\n") == PROMPT, data
 
 
-def piped(binary, supplied, expected_code, expected_error):
+def piped(binary, supplied, expected_code, expected_out, expected_error):
     p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    read_prompt(p.stdout.fileno(), p)
-    out, err = p.communicate(supplied, timeout=5)
-    assert out == b"", out
-    assert p.returncode == expected_code, (p.returncode, err)
-    assert expected_error in err, err
+    try:
+        read_prompt(p.stdout.fileno(), p)
+        out, err = p.communicate(supplied, timeout=5)
+        assert out == expected_out, out
+        assert p.returncode == expected_code, (p.returncode, err)
+        assert expected_error in err, err
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
 
 
 def line_buffered_launcher(binary):
-    # A common launcher calls readline() and doesn't forward partial lines to
-    # its UI. The child must still be waiting for input when this line arrives.
+    # A launcher consuming stdout via readline must see the prompt while the
+    # input stream is still open. Waiting longer than the old 100ms probe must
+    # not fork/detach or force a separate input window.
     p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     lines = queue.Queue()
     reader = threading.Thread(target=lambda: lines.put(p.stdout.readline()), daemon=True)
@@ -66,17 +73,25 @@ def line_buffered_launcher(binary):
         except queue.Empty:
             raise AssertionError("line-buffered launcher could not display prompt") from None
         assert line == PROMPT and p.poll() is None, (line, p.returncode)
-        p.stdin.write(b"t.me/benzware\n")
+        time.sleep(0.5)
+        assert p.poll() is None
+        os.kill(p.pid, signal.SIGUSR1)  # interrupt a pending poll/read
+        p.stdin.write(b"t.me/")
         p.stdin.flush()
-        assert p.wait(timeout=5) == 0
+        time.sleep(0.1)
+        assert p.poll() is None
+        p.stdin.write(b"benzware\n")
+        p.stdin.flush()
+        out, err = p.communicate(timeout=5)
+        assert p.returncode == 0 and out == ACCEPTED and not err, (p.returncode, out, err)
     finally:
         if p.poll() is None:
             p.kill()
             p.wait()
         reader.join(timeout=1)
-        p.stdin.close()
-        p.stdout.close()
-        p.stderr.close()
+        for stream in (p.stdin, p.stdout, p.stderr):
+            if not stream.closed:
+                stream.close()
 
 
 def terminal(binary):
@@ -84,19 +99,21 @@ def terminal(binary):
     attrs = termios.tcgetattr(slave)
     attrs[3] &= ~termios.ECHO
     termios.tcsetattr(slave, termios.TCSANOW, attrs)
+
     def controlling_terminal():
         os.setsid()
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
     p = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave,
                          close_fds=True, preexec_fn=controlling_terminal)
     os.close(slave)
     try:
         read_prompt(master, p)
-        # Wait beyond the initial nonblocking probe: the child has forked and
-        # detached its session, just as it does before the real overlay.
-        time.sleep(0.25)
+        time.sleep(0.5)
+        assert p.poll() is None
         os.write(master, b"t.me/benzware\n")
         assert p.wait(timeout=5) == 0
+        assert ACCEPTED.rstrip() in os.read(master, 128).replace(b"\r\n", b"\n")
     finally:
         if p.poll() is None:
             p.kill()
@@ -104,27 +121,29 @@ def terminal(binary):
         os.close(master)
 
 
-for binary in sys.argv[1:]:
-    piped(binary, b"t.me/benzware\n", 0, b"")
-    piped(binary, b"t.me/benzware\r\n", 0, b"")
-    piped(binary, b"wrong\n", 1, b"Invalid key")
-    piped(binary, b"", 2, b"GUI fallback required")
-    line_buffered_launcher(binary)
-    terminal(binary)
-    # Model a file-manager launcher that waits for process exit before showing
-    # any stdout, while keeping stdin open. The fallback must be activated
-    # without seeing or consuming a key, and later pipe input must still work.
+def cancel_while_waiting(binary):
     p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert p.stderr.readline() == b"GUI fallback ready\n"
-        assert p.poll() is None
-        p.stdin.write(b"t.me/benzware\n")
-        p.stdin.flush()
-        out, err = p.communicate(timeout=5)
-        assert p.returncode == 0, (p.returncode, err)
-        assert out == PROMPT
+        read_prompt(p.stdout.fileno(), p)
+        p.terminate()
+        assert p.wait(timeout=5) == -signal.SIGTERM
     finally:
         if p.poll() is None:
             p.kill()
             p.wait()
-    print(f"startup gate via pipe, buffered launcher and detached PTY: PASS ({os.path.basename(binary)})")
+        for stream in (p.stdin, p.stdout, p.stderr):
+            stream.close()
+
+
+for binary in sys.argv[1:]:
+    piped(binary, b"t.me/benzware\n", 0, ACCEPTED, b"")
+    piped(binary, b"t.me/benzware\r\n", 0, ACCEPTED, b"")
+    piped(binary, b"t.me/benzware", 0, ACCEPTED, b"")
+    piped(binary, b"wrong\n", 1, b"", b"Invalid key")
+    piped(binary, b"t.me/benzwarex\n", 1, b"", b"Invalid key")
+    piped(binary, b"x" * 65, 1, b"", b"Invalid key")
+    piped(binary, b"", 1, b"", b"interactive terminal")
+    line_buffered_launcher(binary)
+    terminal(binary)
+    cancel_while_waiting(binary)
+    print(f"startup gate via pipe, buffered launcher and PTY: PASS ({os.path.basename(binary)})")

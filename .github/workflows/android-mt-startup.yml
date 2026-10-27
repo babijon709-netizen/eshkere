@@ -1,0 +1,110 @@
+name: Android MT Manager startup
+
+on:
+  push:
+    paths:
+      - '.github/workflows/android-mt-startup.yml'
+      - 'jni/include/startup_key.h'
+      - 'jni/src/main.cpp'
+      - 'tools/tests/startup_cli.cpp'
+      - 'tools/tests/android_mt_startup.py'
+  pull_request:
+    paths:
+      - '.github/workflows/android-mt-startup.yml'
+      - 'jni/include/startup_key.h'
+      - 'jni/src/main.cpp'
+      - 'tools/tests/startup_cli.cpp'
+      - 'tools/tests/android_mt_startup.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mt-startup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mt:
+    name: MT Manager on Android ${{ matrix.api }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {api: 26, target: default}
+          - {api: 35, target: google_apis}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'cmdline-tools;latest'
+      - name: Build gate and verify MT Manager APK
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/mt-prepare.log"
+          exec 3>&1
+          exec >"$LOG" 2>&1
+          report() {
+            rc="$1"
+            if [ "$rc" -ne 0 ]; then
+              python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-2500:]; print("::error title=MT preparation::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))' "$LOG" >&3 || true
+            fi
+            cat "$LOG" >&3
+            exit "$rc"
+          }
+          trap 'report $?' EXIT
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager 'ndk;26.3.11579264' 'build-tools;35.0.0' >/dev/null
+          python3 -m pip install 'Pillow==11.3.0'
+          if ! command -v tesseract >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq tesseract-ocr
+          fi
+          MT_URL='https://media.githubusercontent.com/media/UdayKumarChunduru/android_vendor_prebuilt-package/ef9c600e3336bd8c384ed9b2a9ffb8deb4161299/MTManager/MT_Manager.apk'
+          curl --fail --location --retry 3 "$MT_URL" -o "$RUNNER_TEMP/mt-manager.apk"
+          echo 'f00afe55d9ca6dc1923378df6b60d9ec6a5eb834816b7cd91bb2bcb80361462e  '"$RUNNER_TEMP/mt-manager.apk" | sha256sum -c -
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --print-certs "$RUNNER_TEMP/mt-manager.apk" | tee "$RUNNER_TEMP/mt-certificate.txt"
+          grep -qi 'Signer #1 certificate SHA-1 digest: 9779572c0ec948c3502d7985f9590fbfbde1ab24' "$RUNNER_TEMP/mt-certificate.txt"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/mt-manager.apk" | sed -n '1,5p'
+          COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"
+          "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables \
+            -ffunction-sections -fdata-sections -fPIE -pie -static-libstdc++ -Ijni/include \
+            jni/src/bw_obf.cpp tools/tests/startup_cli.cpp \
+            -Wl,--gc-sections,--icf=all,--exclude-libs,ALL,-s,--rosegment \
+            -Wl,-z,separate-code -Wl,-z,max-page-size=16384 -o "$RUNNER_TEMP/startup-plain"
+          cp "$RUNNER_TEMP/startup-plain" "$RUNNER_TEMP/startup-encrypted"
+          python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --key 0x6A09E667F3BCC909
+          python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --check
+          echo "MT_APK=$RUNNER_TEMP/mt-manager.apk" >> "$GITHUB_ENV"
+          echo "ANDROID_STARTUP_PLAIN=$RUNNER_TEMP/startup-plain" >> "$GITHUB_ENV"
+          echo "ANDROID_STARTUP_ENCRYPTED=$RUNNER_TEMP/startup-encrypted" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test MT Manager's executor
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: python3 tools/tests/android_mt_startup.py
+      - name: Save last MT screen on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt-startup-failure-${{ matrix.api }}
+          path: ${{ runner.temp }}/mt-startup-last.png
+          if-no-files-found: ignore

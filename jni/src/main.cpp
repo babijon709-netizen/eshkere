@@ -17,8 +17,6 @@
 #include "str.h"
 #include "overlay_geometry.h"
 #include "startup_key.h"
-#include "startup_ime.h"
-#include "startup_key_ui.h"
 #include "screen_capture.h"
 #include "capture_merge.h"
 #include "record_capture.h"
@@ -416,19 +414,11 @@ int main(int argc, char* argv[]) {
             return skeldiag::Run(argc - i, argv + i);
     }
 
-    // Some MT launchers buffer even a flushed line or keep stdin open without
-    // presenting an input widget. Print for terminals/pipes, but never block on
-    // a launcher: a real Android Activity supplies the system keyboard while we
-    // continue polling stdin, including when it is a PTY.
+    // MT Manager's script executor supplies a terminal. Keep this process
+    // attached until the full key has been entered; daemonizing sooner can
+    // close the window or detach its input before the prompt is visible.
     signal(SIGPIPE, SIG_IGN);
-    startup_key::FdReader startup_input;
-    startup_key::PrintPrompt();
-    const startup_key::InputResult initial_key = startup_input.Poll(STDIN_FILENO, 100);
-    if (initial_key == startup_key::InputResult::Invalid) {
-        std::cerr << "Invalid key. Launch cancelled.\n";
-        return 1;
-    }
-    bool need_key_ui = false;
+    if (startup_key::Request() != startup_key::InputResult::Accepted) return 1;
 
     // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +
     // oom_score_adj = -1000) до создания любых потоков и стража-трейсера.
@@ -442,22 +432,6 @@ int main(int argc, char* argv[]) {
     // ОБЯЗАТЕЛЬНО супервизит родителя — переправляет каждый сигнал дальше
     // (без супервизии первое же сигнал замораживает GUI, см. stealth.h).
     stealth::ApplyTracerGuard();
-
-    // The standalone SurfaceFlinger layer is not an IME-capable window. Launch
-    // a short-lived real Activity before creating that layer or grabbing touch;
-    // otherwise the overlay would sit over the keyboard and eat its events.
-    signal(SIGHUP,  SIG_IGN);
-    signal(SIGINT,  SIG_IGN);
-    signal(SIGTERM, SIG_IGN);
-    if (initial_key != startup_key::InputResult::Accepted) {
-        const startup_ime::Result ime = startup_ime::Request(startup_input);
-        if (ime == startup_ime::Result::Cancelled) _exit(1);
-        if (ime == startup_ime::Result::Invalid) {
-            std::cerr << "Invalid key. Launch cancelled.\n";
-            _exit(1);
-        }
-        need_key_ui = (ime == startup_ime::Result::Unavailable);
-    }
 
     // Маскировка имени процесса: затираем cmdline/environ и ставим comm
     // «vold». Строго после разбора аргументов (строки argv уничтожаем) и
@@ -500,8 +474,7 @@ int main(int argc, char* argv[]) {
     AudioInit();
     if (!Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, false))
         Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
-    // Retry touch for the mode selector and the keyboard-unavailable screen:
-    // a temporary uinput/grab race must not make either permanently unusable.
+    // Retry touch for the mode selector after a temporary uinput/grab race.
     static std::atomic<bool> s_touchRetryRun{true};
     std::thread([]() {
         while (s_touchRetryRun.load() && main_thread_flag.load()) {
@@ -516,38 +489,8 @@ int main(int argc, char* argv[]) {
         }
     }).detach();
 
-    if (need_key_ui) {
-        bool accepted = false;
-        while (main_thread_flag.load() && !accepted) {
-            const startup_key::InputResult input = startup_input.Poll(STDIN_FILENO);
-            if (input == startup_key::InputResult::Accepted) { accepted = true; break; }
-            if (input == startup_key::InputResult::Invalid) {
-                std::cerr << "Invalid key. Launch cancelled.\n";
-                break;
-            }
-            drawBegin();
-            float vw = 0.f, vh = 0.f;
-            VisibleScreen(vw, vh);
-            Touch_BlockRect(true, 0.f, 0.f, vw, vh);
-            const startup_key_ui::Result result = startup_key_ui::Draw(vw, vh);
-            drawEnd();
-            if (result == startup_key_ui::Result::Cancelled) break;
-        }
-        Touch_BlockRect(false, 0.f, 0.f, 0.f, 0.f);
-        if (!accepted) {
-            s_touchRetryRun.store(false);
-            ArmShutdownDeadline();
-            Blur::Free();
-            shutdown();
-            Touch_Close();
-            CfgWatchFree();
-            AudioFree();
-            _exit(1);
-        }
-    }
-
-    // Only after a successful key check may the launcher be detached and the
-    // descriptors redirected to /dev/null. No game attachment has started yet.
+    // The key was accepted before daemonization; the overlay is now ready
+    // and the original launcher's descriptors can be released.
     stealth::ApplyRuntime();
     // Версия выбирается до транспорта и до первого bind: весь reader видит
     // один согласованный набор оффсетов на протяжении сессии.

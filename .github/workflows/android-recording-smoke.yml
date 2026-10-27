@@ -120,8 +120,7 @@ jobs:
           cp "$RUNNER_TEMP/record-supervisor" "$RUNNER_TEMP/record-supervisor-plain"
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --key 0x6A09E667F3BCC909
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/record-supervisor" --check
-          # The gate's real nonblocking reader and error-only fallback are also
-          # exercised on Bionic/GLES. The actual system IME has a separate workflow.
+          # The real blocking startup gate is also exercised on Bionic.
           "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables \
             -ffunction-sections -fdata-sections -fPIE -pie -static-libstdc++ -Ijni/include \
             jni/src/bw_obf.cpp tools/tests/startup_cli.cpp \
@@ -130,15 +129,8 @@ jobs:
           cp "$RUNNER_TEMP/startup-plain" "$RUNNER_TEMP/startup-encrypted"
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --key 0x6A09E667F3BCC909
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --check
-          "$COMPILER" -std=c++17 -O2 -DIMGUI_ENABLE_TEST_ENGINE -DIMGUI_IMPL_OPENGL_ES3 \
-            -fPIE -pie -static-libstdc++ -Ijni/include -Ijni/include/ImGui -Ijni/include/ImGui/backends \
-            tools/tests/android_startup_ui.cpp jni/src/ImGui/imgui.cpp \
-            jni/src/ImGui/imgui_draw.cpp jni/src/ImGui/imgui_widgets.cpp jni/src/ImGui/imgui_tables.cpp \
-            jni/src/ImGui/backends/imgui_impl_opengl3.cpp -lEGL -lGLESv3 -landroid -ldl \
-            -o "$RUNNER_TEMP/startup-ui"
           echo "ANDROID_STARTUP_PLAIN=$RUNNER_TEMP/startup-plain" >> "$GITHUB_ENV"
           echo "ANDROID_STARTUP_ENCRYPTED=$RUNNER_TEMP/startup-encrypted" >> "$GITHUB_ENV"
-          echo "ANDROID_STARTUP_UI=$RUNNER_TEMP/startup-ui" >> "$GITHUB_ENV"
           echo "ANDROID_RECORD_HELPER=$RUNNER_TEMP/record-helper" >> "$GITHUB_ENV"
           echo "ANDROID_RECORD_INSPECT=$RUNNER_TEMP/record-inspect" >> "$GITHUB_ENV"
           echo "ANDROID_RECORD_SUPERVISOR=$RUNNER_TEMP/record-supervisor" >> "$GITHUB_ENV"

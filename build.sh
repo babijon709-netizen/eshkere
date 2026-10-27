@@ -49,10 +49,6 @@ OBF_KEY="$(python3 -c 'import secrets; print("0x%016x" % secrets.randbits(64))')
 printf '#pragma once\n// Сгенерировано build.sh. Не коммитить: ключ уникален для сборки.\n#define BW_BUILD_KEY %sULL\n' \
     "$OBF_KEY" > jni/include/bw_build_key.h
 
-# The native binary embeds a real, permissionless Android input Activity.
-# Its package and signing key are regenerated for each build.
-tools/startup_ime/build.sh jni/include/startup_ime_apk.inc
-
 rm -rf obj libs
 
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"

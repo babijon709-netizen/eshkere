@@ -6,6 +6,8 @@ tools/tests/run_menu_ui.sh
 tools/tests/run_menu_ui.sh --measure
 tools/tests/run_menu_ui.sh --bench
 tools/tests/run_capture_surface.sh
+tools/tests/run_screen_capture.sh
+tools/tests/run_startup_cli.sh
 tools/tests/run_predict.sh
 ```
 
@@ -33,6 +35,14 @@ libgui symbols for Android 8–16, including unavailable symbols and failure; it
 also exercises the real EGL switching/rollback logic with a mocked platform
 and round-trips the actual config trailer. These tests cannot establish what an
 OEM compositor or recording app does on a real device.
+
+`run_screen_capture.sh` runs the real asynchronous capture-job implementation
+with fake executable commands, temporary paths and the app's ignored SIGCHLD:
+completion/failure, unique files, SIGINT stop, shutdown/parent death, concurrent
+jobs and a clean child environment. It does not capture Android pixels.
+`run_startup_cli.sh` tests the real key gate via pipes and a PTY, before and
+after the ELF patcher, including flush-before-input, CRLF, wrong key and EOF.
+These are host tests, not evidence that the arm64 binary starts on a device.
 
 `run_predict.sh` feeds the pose-delay estimator (`aim_predict.h`) a synthetic
 strafer with a known delay between the pose we read and the true position, at

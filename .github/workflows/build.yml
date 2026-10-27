@@ -61,6 +61,8 @@ jobs:
           tools/tests/run_all_host_tests.sh
           tools/tests/run_menu_ui.sh
           tools/tests/run_capture_surface.sh
+          tools/tests/run_screen_capture.sh
+          tools/tests/run_startup_cli.sh
           tools/tests/run_obf_selftest.sh
 
       - name: Build

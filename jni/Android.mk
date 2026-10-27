@@ -69,7 +69,7 @@ LOCAL_SRC_FILES := \
     src/main.cpp src/bw_obf.cpp \
     src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
     src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
-    src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp \
+    src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp src/screen_capture.cpp \
     src/game.cpp src/game_viewmodel.cpp src/game_markers.cpp src/game_farm.cpp \
     src/lang.cpp \
     src/Android_draw/draw.cpp src/Android_touch/TouchHelperA.cpp \

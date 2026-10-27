@@ -9,6 +9,7 @@
 #include "ui_util.h"
 #include "widgets.h"
 #include "config.h"
+#include "screen_capture.h"
 #include "hud.h"
 #include "audio.h"
 #include "str.h"
@@ -497,10 +498,34 @@ float TabContent(int tab, float dt, float cW) {
             ImGui::Indent(indent);
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImMax(1.f, ImGui::GetContentRegionAvail().x - indent));
             ImGui::PushStyleColor(ImGuiCol_Text, C::Dim());
-            ImGui::TextWrapped("%s", XS("Вкл: разрешить захват оверлея. Выкл: попросить исключить. Записывай весь экран."));
+            ImGui::TextWrapped("%s", XS("Вкл: разрешить захват оверлея. Выкл: попросить исключить."));
+            ImGui::TextWrapped("%s", XS("Встроенный захват: весь экран, видео до 3 минут без звука. Системная запись может не видеть оверлей."));
             ImGui::PopStyleColor();
             ImGui::PopTextWrapPos();
             ImGui::Unindent(indent);
+
+            const char* const actions[] = {
+                XS("Скриншот"),
+                screen_capture::VideoStopping() ? XS("Остановка...") :
+                screen_capture::VideoRunning() ? XS("Остановить запись") : XS("Начать запись")
+            };
+            int action = -1;
+            if (ChoiceRow("##capture_actions", &action, actions, 2)) {
+                if (action == 1 && screen_capture::VideoRunning()) {
+                    if (screen_capture::StopVideo()) ShowToast(XS("Останавливаю запись"));
+                } else {
+                    const auto result = action == 0 ? screen_capture::Screenshot() : screen_capture::StartVideo();
+                    switch (result) {
+                        case screen_capture::StartResult::Started:
+                            ShowToast(action == 0 ? XS("Создаю скриншот") : XS("Запускаю запись"));
+                            break;
+                        case screen_capture::StartResult::Busy: ShowToast(XS("Захват уже выполняется")); break;
+                        case screen_capture::StartResult::MissingCommand: ShowToast(XS("Команда захвата недоступна")); break;
+                        case screen_capture::StartResult::StorageError: ShowToast(XS("Нет доступа к папке захвата")); break;
+                        case screen_capture::StartResult::SpawnError: ShowToast(XS("Не удалось запустить захват")); break;
+                    }
+                }
+            }
         }
         if (SettingsHeader("##options_language", XS("Язык"), lang::english() ? "English" : "Русский"))
         {

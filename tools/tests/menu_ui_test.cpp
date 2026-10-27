@@ -4,6 +4,7 @@
 #include "app_state.h"
 #include "audio.h"
 #include "config.h"
+#include "screen_capture.h"
 #include "hud.h"
 #include "lang.h"
 #include "menu.h"
@@ -31,6 +32,15 @@ int g_configCount = 0, g_configToDelete = -1, g_cfgLoadedIdx = -1;
 char g_loadedConfigName[64] = {};
 float g_cfgLoadAnim[kMaxConfigs] = {};
 static int loads = 0, saves = 0, updates = 0, applies = 0;
+static int screenshots = 0, videoStarts = 0, videoStops = 0;
+static bool videoRunning = false, videoStopping = false;
+namespace screen_capture {
+StartResult Screenshot() { ++screenshots; return StartResult::Started; }
+StartResult StartVideo() { ++videoStarts; videoRunning = true; return StartResult::Started; }
+bool StopVideo() { if (videoStopping) return false; ++videoStops; videoStopping = true; return true; }
+bool VideoRunning() { return videoRunning; }
+bool VideoStopping() { return videoStopping; }
+}
 void ShowToast(const char*) {}
 void PlaySound(SoundId) {}
 void ConfigSave() { ++saves; }
@@ -235,9 +245,19 @@ static void configAndOptionsTests() {
     tap(tab(5), groupId("##options_streamer", "enable")); assert(!g_state.streamer_mode);
     for (auto group : {"##options_streamer", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
     for (auto label : {"##lang0", "##lang1", "##ud2", "##acc8", "##hud_cnt", "##pstyle0", "##pstyle1", "##exit"}) assert(items.count(id(label)));
+    screenshots = videoStarts = videoStops = 0; videoRunning = videoStopping = false;
+    tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 1);
+    tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 2); // actions aren't sticky choices
+    tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStarts == 1 && videoRunning);
+    tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1 && videoStopping);
+    tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1); // no repeated stop
     tap(tab(5), id("##lang1")); assert(lang::english());
     frame(tab(5)); assert(items.count(id("##ud2"))); // expansion survives localization
     assert(std::strcmp(lang::text("Стример-мод"), "Streamer mode") == 0);
+    assert(std::strcmp(lang::text("Скриншот"), "Screenshot") == 0);
+    assert(std::strcmp(lang::text("Начать запись"), "Start recording") == 0);
+    assert(std::strcmp(lang::text("Остановить запись"), "Stop recording") == 0);
+    assert(std::strcmp(lang::text("Ошибка захвата|см. capture.log"), "Capture failed|see capture.log") == 0);
     tap(tab(5), groupId("##options_streamer", "enable")); assert(g_state.streamer_mode);
     tap(tab(5), id("##hud_cnt")); assert(g_calibMode == 5);
     g_calibMode = 0;

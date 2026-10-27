@@ -16,6 +16,8 @@
 #include "app_state.h"
 #include "str.h"
 #include "overlay_geometry.h"
+#include "startup_key.h"
+#include "screen_capture.h"
 #include "mode_select.h"
 #include "metadata_dump.h"
 #include "skeleton_diag.h"
@@ -356,32 +358,24 @@ void InstallCrashSignalCleanup() {
 }
 } // namespace
 
-namespace startup_key {
-// Это только базовая заставка-пароль: строка публичная, поэтому не является
-// защитой от анализа или обхода бинаря.
-static constexpr char kLaunchKey[] = "t.me/benzware";
-
-static bool Verify() {
-    BW_GUARD();
-    std::cout << "Введите ключ для запуска: " << std::flush;
-    std::string entered;
-    if (!std::getline(std::cin, entered)) {
-        std::cerr << "Не удалось прочитать ключ из окна запуска MT Manager.\n";
-        return false;
-    }
-    if (entered != kLaunchKey) {
-        std::cerr << "Неверный ключ. Запуск отменён.\n";
-        return false;
-    }
-    return true;
-}
-}  // namespace startup_key
-
 static void SyncOverlayCaptureMode() {
     if (g_state.streamer_mode == overlay_capture_visible()) return;
     if (!overlay_set_capture_visible(g_state.streamer_mode)) {
         g_state.streamer_mode = overlay_capture_visible();
         ShowToast(XS("Не удалось переключить захват"));
+    }
+}
+
+static void PollScreenCaptures() {
+    screen_capture::Event event;
+    while (screen_capture::Poll(event)) {
+        if (!event.success) {
+            ShowToast(XS("Ошибка захвата|см. capture.log"));
+        } else if (event.kind == screen_capture::Kind::Screenshot) {
+            ShowToast(XS("Скриншот сохранён|Pictures/Benzware"));
+        } else {
+            ShowToast(XS("Запись сохранена|Movies/Benzware"));
+        }
     }
 }
 
@@ -521,6 +515,7 @@ int main(int argc, char* argv[]) {
     unsigned long frame = 0;
     while (main_thread_flag) {
         ++frame;
+        PollScreenCaptures();
         if ((frame % 300UL) == 1UL) {
             stealth::ProtectProcess(getpid());
         }
@@ -578,6 +573,7 @@ int main(int argc, char* argv[]) {
     // Start the deadline before EGL teardown as well: the compositor itself
     // may be the blocked component holding the last overlay frame on screen.
     ArmShutdownDeadline();
+    screen_capture::Shutdown();
     g_fakeLag.destroy();
     Blur::Free();
     shutdown();

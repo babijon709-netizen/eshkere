@@ -76,7 +76,7 @@
 
 ```sh
 tools/tests/run_obf_selftest.sh     # полный конвейер на хосте: ключ -> PIE -> патч -> запуск
-tools/tests/run_all_host_tests.sh   # 32 юнит-теста
+tools/tests/run_all_host_tests.sh   # 34 юнит-теста
 tools/tests/run_menu_ui.sh          # ImGui-риг меню
 ./build.sh                          # NDK-сборка + elf_crypt + проверка контрольных строк
 ```

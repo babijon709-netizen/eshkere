@@ -81,7 +81,7 @@ jobs:
           echo "::notice title=MT test package::$(head -1 "$RUNNER_TEMP/mt-badging.txt")" >&3
           echo "MT_PACKAGE=$MT_PACKAGE" >> "$GITHUB_ENV"
           COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"
-          "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables \
+          "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables -DSTARTUP_MT_TEST \
             -ffunction-sections -fdata-sections -fPIE -pie -static-libstdc++ -Ijni/include \
             jni/src/bw_obf.cpp tools/tests/startup_cli.cpp \
             -Wl,--gc-sections,--icf=all,--exclude-libs,ALL,-s,--rosegment \

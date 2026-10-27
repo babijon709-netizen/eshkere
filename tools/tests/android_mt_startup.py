@@ -18,6 +18,7 @@ from PIL import Image
 
 PKG = os.environ["MT_PACKAGE"]
 REMOTE = "/data/local/tmp/benzware-mt-test.sh"
+RESULT = "/data/local/tmp/benzware-mt-result"
 LAST = {}
 TRACE = []
 
@@ -119,6 +120,7 @@ def start_file(binary):
     adb("shell", "am", "force-stop", PKG, check=False)
     adb("push", binary, REMOTE)
     adb("shell", "chmod", "0755", REMOTE)
+    adb("shell", f"printf waiting > {RESULT} && chmod 0666 {RESULT}")
     result = adb("shell", "am", "start", "-W", "-a", "android.intent.action.VIEW",
                  "-d", "file://" + REMOTE, "-t", "application/x-sh",
                  PKG, check=False)
@@ -138,23 +140,30 @@ def start_file(binary):
     raise AssertionError("MT did not display the key prompt")
 
 
-def submit_key():
-    adb("shell", "input", "text", "t.me/benzware")
+def submit_key(key, expected):
+    # Prompt is already on the MT screen; the harness must still be waiting.
+    before = text(adb("shell", "cat", RESULT).stdout).strip()
+    assert before == "waiting", f"gate completed before input: {before!r}"
+    adb("shell", "input", "text", key)
     adb("shell", "input", "keyevent", "66")
     time.sleep(3)
     nodes, ocr = snapshot("after-input")
-    combined = "\n".join(x[0] for x in nodes) + "\n" + ocr
-    if "KEY_ACCEPTED" not in combined and "KEY ACCEPTED" not in combined:
-        raise AssertionError("MT did not display the success marker after input")
+    observed = text(adb("shell", "cat", RESULT).stdout).strip()
+    assert observed == expected, f"gate result {observed!r}, expected {expected!r}; OCR={ocr!r}"
+    if expected == "accepted" and "KEY_ACCEPTED" not in ocr and "KEY ACCEPTED" not in ocr:
+        # MT may close its PTY before drawing the final line, especially on
+        # Android 8. The test-only result file verifies the actual gate instead.
+        print("MT completed before the test marker was rendered", flush=True)
 
 
 def main():
     prepare()
     for env in ("ANDROID_STARTUP_PLAIN", "ANDROID_STARTUP_ENCRYPTED"):
-        start_file(os.environ[env])
-        submit_key()
+        for key, expected in (("wrong", "rejected"), ("t.me/benzware", "accepted")):
+            start_file(os.environ[env])
+            submit_key(key, expected)
         print(f"MT Manager script execution: PASS ({env})", flush=True)
-    notice("MT Manager startup", "Prompt visible before input and key accepted in MT's script executor (plain + encrypted).")
+    notice("MT Manager startup", "Prompt visible before input; correct and wrong keys tested in MT's script executor (plain + encrypted).")
 
 
 if __name__ == "__main__":
@@ -172,4 +181,4 @@ if __name__ == "__main__":
         raise
     finally:
         adb("shell", "am", "force-stop", PKG, check=False)
-        adb("shell", "rm", "-f", REMOTE, check=False)
+        adb("shell", "rm", "-f", REMOTE, RESULT, check=False)

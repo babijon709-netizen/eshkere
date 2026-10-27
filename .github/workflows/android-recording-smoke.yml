@@ -5,16 +5,26 @@ on:
     paths:
       - '.github/workflows/android-recording-smoke.yml'
       - 'jni/src/record_*.cpp'
+      - 'jni/src/screen_capture.cpp'
+      - 'jni/src/main.cpp'
+      - 'jni/Android.mk'
       - 'jni/include/record_*.h'
       - 'tools/tests/android_record_*.py'
       - 'tools/tests/android_record_*.cpp'
+      - 'tools/tests/record_mp4_*.py'
+      - 'tools/tests/record_mp4_*.cpp'
   pull_request:
     paths:
       - '.github/workflows/android-recording-smoke.yml'
       - 'jni/src/record_*.cpp'
+      - 'jni/src/screen_capture.cpp'
+      - 'jni/src/main.cpp'
+      - 'jni/Android.mk'
       - 'jni/include/record_*.h'
       - 'tools/tests/android_record_*.py'
       - 'tools/tests/android_record_*.cpp'
+      - 'tools/tests/record_mp4_*.py'
+      - 'tools/tests/record_mp4_*.cpp'
   workflow_dispatch:
 
 permissions:
@@ -37,8 +47,11 @@ jobs:
           - {api: 28, target: default}
           - {api: 29, target: default}
           - {api: 30, target: default}
+          - {api: 31, target: default}
+          - {api: 33, target: default}
           - {api: 34, target: default}
           - {api: 35, target: google_apis}
+          - {api: 36, target: google_apis}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

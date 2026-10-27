@@ -213,7 +213,9 @@ struct Display::Impl {
         return storage;
     }
     bool apply(void* tx) {
-        const int result = apply_two ? apply_two(tx, true, false) : apply_one(tx, true);
+        // screenrecord uses an asynchronous transaction. Synchronous apply
+        // can block indefinitely on Android 8/9 while the display is starting.
+        const int result = apply_two ? apply_two(tx, false, false) : apply_one(tx, false);
         if (delete_transaction) delete_transaction(tx);
         return result == 0 || fail("SurfaceFlinger rejected display transaction");
     }
@@ -229,7 +231,7 @@ struct Display::Impl {
             open_global();
             if (first) { old_surface(display, producer); old_stack(display, stack); }
             old_projection(display, 0, source, target);
-            close_global(true);
+            close_global(false);
             return true;
         }
         void* tx = transaction();

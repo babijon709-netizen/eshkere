@@ -170,6 +170,11 @@ def main():
         assert crash.returncode == 42
         partial, _ = frames(interrupted)
         assert len(partial) >= 50, len(partial)
+        limited = root / "write-failure.mp4"
+        failed = subprocess.run([driver, str(limited), "--limit"], input=packets, capture_output=True)
+        assert failed.returncode == 4, (failed.returncode, failed.stderr.decode())
+        recovered, _ = frames(limited)
+        assert len(recovered) >= 50, len(recovered)
 
         huge = root / "over-4gb-sparse.mp4"
         sparse_over_4gb(result, huge)

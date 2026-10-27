@@ -54,6 +54,7 @@ inline std::uint64_t FPROCKETLAUNCHER_PROJECTILE_PREFAB = game_offsets::FPROCKET
 inline std::uint64_t FPEXPLOSIVECHARGE_PROJECTILE_PREFAB = game_offsets::FPEXPLOSIVECHARGE_PROJECTILE_PREFAB;
 inline std::uint64_t FPSNOWBALL_PROJECTILE_PREFAB = game_offsets::FPSNOWBALL_PROJECTILE_PREFAB;
 inline std::uint64_t FPSPEAR_PROJECTILE_PREFAB = game_offsets::FPSPEAR_PROJECTILE_PREFAB;
+inline std::uint64_t FPWEAPON_TYPE = game_offsets::FPWEAPON_TYPE;
 inline std::uint64_t FPWEAPON_EFFECTIVE_RELOAD_PERIOD = game_offsets::FPWEAPON_EFFECTIVE_RELOAD_PERIOD;
 inline std::uint64_t FPWEAPON_SHOT_PERIOD = game_offsets::FPWEAPON_SHOT_PERIOD;
 inline std::uint64_t FPHITSCAN_FIRE_MODE = game_offsets::FPHITSCAN_FIRE_MODE;
@@ -470,7 +471,7 @@ inline std::uint64_t FPMOTION_CLOSE_OFFSET = game_offsets::FPMOTION_CLOSE_OFFSET
 inline std::uint64_t FPMOTION_ACTIVE_OFFSET = game_offsets::FPMOTION_ACTIVE_OFFSET;
 inline std::uint64_t TRANSFORMOFFSET_LERP_SPEED = game_offsets::TRANSFORMOFFSET_LERP_SPEED;
 
-// ---- Выбор профиля (релиз 11978 / бета 11977) -------------------------------
+// ---- Выбор профиля (релиз 11978 / бета 11982) -------------------------------
 
 inline void Select(GameVersion version) {
     selected_version = version;
@@ -520,6 +521,7 @@ inline void Select(GameVersion version) {
         FPEXPLOSIVECHARGE_PROJECTILE_PREFAB = game_offsets_beta::FPEXPLOSIVECHARGE_PROJECTILE_PREFAB;
         FPSNOWBALL_PROJECTILE_PREFAB = game_offsets_beta::FPSNOWBALL_PROJECTILE_PREFAB;
         FPSPEAR_PROJECTILE_PREFAB = game_offsets_beta::FPSPEAR_PROJECTILE_PREFAB;
+        FPWEAPON_TYPE = game_offsets_beta::FPWEAPON_TYPE;
         FPWEAPON_EFFECTIVE_RELOAD_PERIOD = game_offsets_beta::FPWEAPON_EFFECTIVE_RELOAD_PERIOD;
         FPWEAPON_SHOT_PERIOD = game_offsets_beta::FPWEAPON_SHOT_PERIOD;
         FPHITSCAN_FIRE_MODE = game_offsets_beta::FPHITSCAN_FIRE_MODE;
@@ -981,6 +983,7 @@ inline void Select(GameVersion version) {
         FPEXPLOSIVECHARGE_PROJECTILE_PREFAB = game_offsets::FPEXPLOSIVECHARGE_PROJECTILE_PREFAB;
         FPSNOWBALL_PROJECTILE_PREFAB = game_offsets::FPSNOWBALL_PROJECTILE_PREFAB;
         FPSPEAR_PROJECTILE_PREFAB = game_offsets::FPSPEAR_PROJECTILE_PREFAB;
+        FPWEAPON_TYPE = game_offsets::FPWEAPON_TYPE;
         FPWEAPON_EFFECTIVE_RELOAD_PERIOD = game_offsets::FPWEAPON_EFFECTIVE_RELOAD_PERIOD;
         FPWEAPON_SHOT_PERIOD = game_offsets::FPWEAPON_SHOT_PERIOD;
         FPHITSCAN_FIRE_MODE = game_offsets::FPHITSCAN_FIRE_MODE;

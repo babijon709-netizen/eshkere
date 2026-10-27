@@ -75,17 +75,17 @@ void test_offsets_consistency() {
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
     assert(game_offsets::HMJ_TYPEINFO_RVA == 0xE674BE8);
 
-    assert(game_offsets_beta::PLAYER_MOUSE_LOOK == game_offsets::PLAYER_MOUSE_LOOK);
+    assert(game_offsets_beta::PLAYER_MOUSE_LOOK == 0xB0);
     assert(game_offsets_beta::MOUSELOOK_PITCH_YAW == game_offsets::MOUSELOOK_PITCH_YAW);
-    assert(game_offsets_beta::PLAYER_RAYCAST_MANAGER == game_offsets::PLAYER_RAYCAST_MANAGER);
-    assert(game_offsets_beta::PLAYER_MODEL_INFO_REF == game_offsets::PLAYER_MODEL_INFO_REF);
+    assert(game_offsets_beta::PLAYER_RAYCAST_MANAGER == 0xC8);
+    assert(game_offsets_beta::PLAYER_MODEL_INFO_REF == 0x2A0);
     assert(game_offsets_beta::GUM_AIM_RAYCAST == game_offsets::GUM_AIM_RAYCAST);
     assert(game_offsets_beta::AIMASSIST_CUR_TARGET == game_offsets::AIMASSIST_CUR_TARGET);
     assert(game_offsets_beta::AIMASSIST_DELTA_ROT == game_offsets::AIMASSIST_DELTA_ROT);
     assert(game_offsets_beta::MARKER_DATA_IS_HIT == game_offsets::MARKER_DATA_IS_HIT);
-    // Релиз 11978 получил ту же вставку двух полей перед playerFlags, что и
-    // бета 11977 — хвосты (и трекер попаданий) совпали.
-    assert(game_offsets_beta::PLAYER_HIT_TRACKER == game_offsets::PLAYER_HIT_TRACKER);
+    // В бете 11982 вставка parachute-полей сдвинула трекер на +0x40;
+    // внутренняя раскладка словарей осталась прежней.
+    assert(game_offsets_beta::PLAYER_HIT_TRACKER == 0x398);
     assert(game_offsets_beta::HIT_TRACKER_HIT_DICT == game_offsets::HIT_TRACKER_HIT_DICT);
     assert(game_offsets_beta::NEARBY_VIEW_MODULE_CTX == game_offsets::NEARBY_VIEW_MODULE_CTX);
     assert(game_offsets_beta::NEARBY_VIEW_CACHED_HIT == game_offsets::NEARBY_VIEW_CACHED_HIT);

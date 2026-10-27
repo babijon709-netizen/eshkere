@@ -3139,9 +3139,8 @@ static void recheck_direct_player_position(const std::vector<uint64_t>& players)
 // влияет. Значит град/px строго пропорционален m_Sensitivity, и аиму нужен
 // именно он, а не зашитое число.
 //
-// Поле публичное и проверено по release dump 205619:
-// PlayerManager.mouseLook находится по +0x70.
-static constexpr uint64_t PLAYER_MOUSE_LOOK_OFFSET      = 0x70;
+// PlayerManager.mouseLook is selected from the active release/beta profile;
+// Oxide.MouseLook.m_Sensitivity itself remains at 0x34 in both dumps.
 static constexpr uint64_t MOUSE_LOOK_SENSITIVITY_OFFSET = 0x34;
 
 bool esp_read_look_sensitivity(float& out) {
@@ -3162,7 +3161,7 @@ bool esp_read_look_sensitivity(float& out) {
     if (!player) return false;
     if (g_player_manager_class && rd_ptr(player) != g_player_manager_class) return false;
 
-    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK_OFFSET);
+    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK);
     if (!mouse_look) return false;
     float value = rd<float>(mouse_look + MOUSE_LOOK_SENSITIVITY_OFFSET);
     // Мусор в поле (объект переиспользован, память переехала) отдаём как отказ:
@@ -3517,7 +3516,7 @@ static bool resolve_local_mouse_look(uint64_t& out, LookFail* why = nullptr) {
         if (mouse_look_from_cache(player, out)) { return true; }
         return false;
     }
-    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK_OFFSET);
+    uint64_t mouse_look = rd_ptr(player + PLAYER_MOUSE_LOOK);
     if (mouse_look < 0x10000) {  // ноль или мусор вместо указателя
         if (why) *why = LookFail::noObject;
         if (mouse_look_from_cache(player, out)) { return true; }
@@ -9944,7 +9943,7 @@ static uint64_t resolve_view_occlusion_module(uint64_t view) {
 // Release: Nt.RWf ([PlayerManager + 0x348] + 0x18); Nt::lsM (0x5CFE33C)
 // пишет Time.time + 2.0f, Nt::lsh (0x5CFE3C8) проверяет этот срок, а NearbyPlayer
 // переносит результат в MarkerData+0x73 и дальше в OcclusionModule.
-// Beta 11977: PlayerManager.cFm — Yf (+0x358); Yf has dictionaries at +0x10
+// Beta 11982: PlayerManager.GvC — Ol (+0x398); Ol has dictionaries at +0x10
 // and +0x18. The +0x18 hit-map selection remains a beta-profile assumption.
 static void expire_local_player_hit_timers(uint64_t local_player) {
     if (!valid_obj(local_player)) return;
@@ -9983,8 +9982,8 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 }
 
 // Поиск статического класса 25 LayerMask-масок: Release 11966 — hMj
-// (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11977 —
-// IWt (6610); Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
+// (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11982 —
+// tzc; Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
 // сигнатура 25 int32 сверена с dump.cs). Во всех сборках поля проверяются
 // одной сигнатурой.
 // Извлечение маски твёрдых стен/рельефа
@@ -10298,7 +10297,7 @@ static bool weapon_is_melee_class(uint64_t weapon) {
         if (instance_size >= 0x80 && instance_size < 0x128) return true; // non-weapon FPObject
         if (instance_size >= 0x128) {
             int32_t wtype = 0;
-            if (rd_exact(weapon + 0xDC, wtype) &&
+            if (rd_exact(weapon + FPWEAPON_TYPE, wtype) &&
                 (wtype == 11 || wtype == 12 || wtype == 13 || wtype == 14 || wtype == 15))
                 return true;
         }
@@ -11067,8 +11066,8 @@ static void revalidate_dead_direct_position(const std::vector<uint64_t>& players
 
 static void note_direct_position_health(const std::vector<uint64_t>& players,
                                         const std::vector<char>& sources) {
-    // Beta 11977 dump.cs places lastSavedPosition at 0x1F4 and lastDeathPosition
-    // at 0x200; neither is marked SyncVar. Keep lastDeathPosition out of direct
+    // Beta 11982 dump.cs places lastSavedPosition at 0x234 and lastDeathPosition
+    // at 0x240; neither is marked SyncVar. Keep lastDeathPosition out of direct
     // position scans and do not switch g_player_position_offset to that field.
     (void)players;
     (void)sources;

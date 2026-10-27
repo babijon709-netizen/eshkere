@@ -261,7 +261,7 @@ struct HeapMemory {
         if (std::strcmp(name, "WaitForSeconds") == 0) return sz == 0x18;
         if (sz < 0x128 || sz > 0x380) return false;
         int32_t wt = 0;
-        if (!memory.read(object + 0xDC, wt)) return false;
+        if (!memory.read(object + go_active::FPWEAPON_TYPE, wt)) return false;
         if (std::strcmp(name, "FPHitscan") == 0) return sz >= 0x280 && wt >= 1 && wt <= 7;
         if (std::strcmp(name, "FPSpear") == 0) return sz >= 0x1B8 && sz <= 0x1E0 && wt == 14;
         if (std::strcmp(name, "FPBow") == 0) return sz >= 0x190 && sz <= 0x1B4 && wt == 9;

@@ -10,9 +10,8 @@
 // Каждое значение сверено трёхсторонне: dump11966 (прежний релиз) ->
 // dumpbeta11977 (бета) -> dump11978: релиз 11978 сошёлся с бетой 11977 по
 // всем спорным местам (вставка AssetReference в FPManager @0x80, EmptyHands
-// в WeaponPiece @0x10, хвост PlayerManager +0x10, KCC/ragdoll/вьюхи), поэтому
-// beta-профиль теперь отличается от релиза только TypeInfo-слотами, FPMotion,
-// FASTLOOT ALT-слотами и парой мелочей (см. game_offsets_beta.h).
+// в WeaponPiece @0x10, хвост PlayerManager +0x10, KCC/ragdoll/вьюхи).
+// Сверка с актуальной бетой 11982 и её отличия — в game_offsets_beta.h.
 //
 // Ключевой RE сборки 11978 (дроу-путь, file_off = RVA − 0x4000 для .text):
 //   FPManager.LTI(WeaponPiece&, int slot) RVA 0x6D59828 — аналог Kxi 11966:
@@ -169,6 +168,7 @@ inline constexpr std::uint64_t FPSNOWBALL_PROJECTILE_PREFAB = 0x130;
 inline constexpr std::uint64_t FPSPEAR_PROJECTILE_PREFAB = 0x178;
 // FPHitscan copies config values into these live fields during lMf/sPo. The
 // config alone is therefore not enough for a weapon which is already drawn.
+inline constexpr std::uint64_t FPWEAPON_TYPE = 0xDC; // FPWeaponBase.weaponType, release 11978
 inline constexpr std::uint64_t FPWEAPON_EFFECTIVE_RELOAD_PERIOD = 0xE8;
 inline constexpr std::uint64_t FPWEAPON_SHOT_PERIOD = 0x124;
 // Per-instance source fields copied into the attack cache; checked in both supplied dumps.

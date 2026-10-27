@@ -107,19 +107,48 @@ int main() {
         assert(reader.bound());
     }
 
-    // 5. Same check for Beta 11977 PlayerLoopHelper_TypeInfo (0xE647100).
-    {
+    // 5. Each current Beta 11982 hot slot can independently verify a live
+    //    Il2CppClass and image while the ELF header page is unavailable.
+    const uint64_t beta_singles[] = {
+        game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA,
+        game_offsets_beta::UNITY_CAMERA_TYPEINFO_RVA,
+        game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA,
+        game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA,
+        game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA,
+    };
+    for (uint64_t slot : beta_singles) {
         constexpr uint64_t kFakeBase  = 0x7200000000ULL;
         constexpr uint64_t kFakeKlass = 0x7300123400ULL;
         constexpr uint64_t kFakeImage = 0x7300567800ULL;
-
         EvictedElfHeaderTransport tp;
         tp.set_base(kFakeBase);
-        tp.set_u64(kFakeBase + 0xE647100ULL, kFakeKlass);
-        tp.set_u64(kFakeKlass, kFakeImage);
-
+        tp.set_u64(kFakeBase + slot, kFakeKlass);
         memio::Reader reader;
         reader.set_transport(&tp);
+        // A slot on its own isn't enough; Il2CppClass::image must be valid.
+        assert(!reader.bind(4242, kFakeBase));
+        tp.set_u64(kFakeKlass, kFakeImage);
+        assert(reader.bind(4242, kFakeBase));
+        assert(reader.bound());
+    }
+
+    // 6. The two-slot fast path also works without readable class objects.
+    //    Test both pairs independently; an incomplete pair must be rejected.
+    const uint64_t beta_pairs[][2] = {
+        {game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA},
+        {game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA},
+    };
+    for (const auto& pair : beta_pairs) {
+        constexpr uint64_t kFakeBase = 0x7400000000ULL;
+        constexpr uint64_t kClassA = 0x7500123400ULL;
+        constexpr uint64_t kClassB = 0x7500567800ULL;
+        EvictedElfHeaderTransport tp;
+        tp.set_base(kFakeBase);
+        tp.set_u64(kFakeBase + pair[0], kClassA);
+        memio::Reader reader;
+        reader.set_transport(&tp);
+        assert(!reader.bind(4242, kFakeBase));
+        tp.set_u64(kFakeBase + pair[1], kClassB);
         assert(reader.bind(4242, kFakeBase));
         assert(reader.bound());
     }

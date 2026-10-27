@@ -96,8 +96,8 @@ inline bool is_single_layer_bit(std::int32_t m) {
     return u != 0u && (u & (u - 1u)) == 0u;
 }
 
-// Release signature for hMj (TypeDefIndex: 6280). Beta 11977 points to the
-// candidate IWt (TypeDefIndex: 6610; 25 static LayerMask fields); its semantic
+// Release signature for hMj (TypeDefIndex: 6280). Beta 11982 points to the
+// candidate tzc (25 static LayerMask fields); its semantic
 // mask ordering is unverified, so accept it only if it matches this signature:
 //   +0x00 Default (1<<0), +0x04 Hitbox, +0x08 IgnoreCollision, +0x0C Construction,
 //   +0x10 Deployed, +0x14 Terrain, +0x18 Water (1<<4), +0x1C ProxyEntity, +0x20 Entity,

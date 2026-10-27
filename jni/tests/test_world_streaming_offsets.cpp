@@ -11,7 +11,7 @@ int main() {
     assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
 
     go_active::Select(GameVersion::Beta);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE64BC38);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE8FC318);
     assert(go_active::WORLD_STREAMING_GRASS_ENABLED_FIELD == 0x18);
     assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
 

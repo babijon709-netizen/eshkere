@@ -41,6 +41,8 @@
 
 #include <atomic>
 
+#include "game_offsets_beta.h" // current release/beta TypeInfo probes
+
 // arm64 asm-generic; на NDK уже определены в <sys/syscall.h>, guard — для
 // хост-проверки синтаксиса и экзотических тулчейнов.
 #ifndef SYS_process_vm_readv
@@ -537,10 +539,10 @@ private:
             return p >= 0x10000ULL && p < kMaxUserAddress && (p & 0x7ULL) == 0;
         };
         static constexpr uint64_t kHotTypeInfoPairs[][2] = {
-            {0xE66DEE8ULL, 0xE669190ULL}, // Release 11978: PlayerManager, GameControllerBase
-            {0xE66DEB0ULL, 0xE66D238ULL}, // Release 11978: PlayerLoopHelper, NetworkClient
-            {0xE647138ULL, 0xE640C70ULL}, // Beta 11977: PlayerManager, GameControllerBase
-            {0xE647100ULL, 0xE646398ULL}, // Beta 11977: PlayerLoopHelper, NetworkClient
+            {game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets::GAME_CONTROLLER_TYPEINFO_RVA},
+            {game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets::NETWORK_CLIENT_TYPEINFO_RVA},
+            {game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA},
+            {game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA},
         };
         for (const auto& pair : kHotTypeInfoPairs) {
             uint64_t p0 = 0, p1 = 0;
@@ -554,16 +556,16 @@ private:
         // driver and NetworkClient/PlayerManager are still null, verify any single
         // live TypeInfo slot by dereferencing Il2CppClass::image at +0x0.
         static constexpr uint64_t kHotTypeInfoSingles[] = {
-            0xE66DEB0ULL, // Release 11978: PlayerLoopHelper
-            0xE66A8B8ULL, // Release 11978: MainCamera
-            0xE66D238ULL, // Release 11978: NetworkClient
-            0xE66DEE8ULL, // Release 11978: PlayerManager
-            0xE669190ULL, // Release 11978: GameControllerBase
-            0xE647100ULL, // Beta 11977: PlayerLoopHelper
-            0xE6425F8ULL, // Beta 11977: MainCamera
-            0xE646398ULL, // Beta 11977: NetworkClient
-            0xE647138ULL, // Beta 11977: PlayerManager
-            0xE640C70ULL, // Beta 11977: GameControllerBase
+            game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Release 11978: PlayerLoopHelper
+            0xE66A8B8ULL, // Release 11978: legacy single-slot fallback
+            game_offsets::NETWORK_CLIENT_TYPEINFO_RVA, // Release 11978: NetworkClient
+            game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, // Release 11978: PlayerManager
+            game_offsets::GAME_CONTROLLER_TYPEINFO_RVA, // Release 11978: GameControllerBase
+            game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Beta 11982: PlayerLoopHelper
+            game_offsets_beta::UNITY_CAMERA_TYPEINFO_RVA, // Beta 11982: UnityEngine.Camera
+            game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA, // Beta 11982: NetworkClient
+            game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA, // Beta 11982: PlayerManager
+            game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA, // Beta 11982: GameControllerBase
         };
         for (uint64_t rva : kHotTypeInfoSingles) {
             uint64_t klass = 0, image = 0;

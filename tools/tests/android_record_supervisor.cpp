@@ -14,6 +14,11 @@ const char* CfgDir() { return "/data/local/tmp/"; }
 
 #ifdef BW_OBF_DIAGNOSTIC
 extern "C" volatile uint64_t bw_obf_diagnostic[8];
+#if defined(__clang__)
+__attribute__((noinline, optnone))
+#elif defined(__GNUC__)
+__attribute__((noinline, optimize("O0")))
+#endif
 static void print_hex(uint64_t value) {
     char line[17];
     for (int i = 15; i >= 0; --i) {

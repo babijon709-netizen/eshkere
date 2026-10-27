@@ -78,7 +78,18 @@ uint64_t runtime_seed() noexcept {
     return bw::mix64(s);
 }
 
-__attribute__((constructor(101))) void bw_decrypt_all() noexcept {
+// This runs while .rodata is still encrypted. Clang's loop vectorizer can
+// otherwise place shuffle/constants for the decryption loop in that same
+// .rodata, so the decoder reads ciphertext while decoding it. Keep this early
+// function scalar and independent of compiler-generated constant tables.
+#if defined(__clang__)
+__attribute__((constructor(101), noinline, optnone))
+#elif defined(__GNUC__)
+__attribute__((constructor(101), noinline, optimize("O0")))
+#else
+__attribute__((constructor(101)))
+#endif
+void bw_decrypt_all() noexcept {
 #ifdef BW_OBF_DIAGNOSTIC
     bw_obf_diagnostic[0] = 1;
 #endif

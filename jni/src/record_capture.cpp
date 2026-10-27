@@ -87,6 +87,7 @@ bool try_start_writer(std::unique_ptr<record_mp4::Writer>& writer, int fd, int w
     std::unique_ptr<record_mp4::Writer> candidate(new record_mp4::Writer(fd));
     if (candidate->start(width, height, csd0.data(), csd0.size(), csd1.data(), csd1.size())) {
         writer = std::move(candidate);
+        error.clear();
         return true;
     }
     error = candidate->error();
@@ -140,11 +141,14 @@ int Run(int fd, int bitrate) {
     std::unique_ptr<record_mp4::Writer> writer;
     std::vector<uint8_t> csd0, csd1;
     std::string error;
-    bool failed = false, eos_requested = false, saw_eos = false;
+    bool failed = false, eos_requested = false, saw_eos = false, saw_frame = false;
+    const int64_t first_frame_deadline = monotonic_ms() + 2000;
     int64_t eos_deadline = 0, next_display_check = monotonic_ms() + 1000;
     for (;;) {
         const int64_t now = monotonic_ms();
-        if (g_stop && !eos_requested) {
+        // An immediate stop may arrive while MediaCodec is still starting.
+        // Allow a short opportunity for one frame before requesting EOS.
+        if (g_stop && !eos_requested && (saw_frame || now >= first_frame_deadline)) {
             display.detach();
             eos_requested = true;
             eos_deadline = now + 3500;
@@ -187,6 +191,8 @@ int Run(int fd, int bitrate) {
             else if (!writer->sample(data, static_cast<size_t>(info.size), info.presentationTimeUs,
                                      (info.flags & kKeyFrame) != 0)) {
                 error = writer->error(); failed = true;
+            } else {
+                saw_frame = true;
             }
         }
         if (AMediaCodec_releaseOutputBuffer(codec->codec, static_cast<size_t>(index), false) != AMEDIA_OK) {

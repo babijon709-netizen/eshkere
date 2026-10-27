@@ -321,7 +321,7 @@ struct Writer::Impl {
         if (!write_all(fd, b.data.data(), b.data.size()) || !write_all(fd, mdat, sizeof(mdat)) ||
             !write_all(fd, payload.data(), payload.size())) {
             // An incomplete trailing fragment must not make prior fragments unusable.
-            (void)ftruncate(fd, offset);
+            if (ftruncate(fd, offset) != 0) return fail("cannot truncate incomplete MP4 fragment");
             (void)lseek(fd, offset, SEEK_SET);
             return fail("cannot write MP4 fragment");
         }

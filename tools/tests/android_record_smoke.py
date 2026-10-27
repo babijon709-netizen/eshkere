@@ -16,13 +16,15 @@ def run(*args, check=True, timeout=30):
 
 def main():
     helper = Path(os.environ["ANDROID_RECORD_HELPER"]).resolve()
+    inspect = Path(os.environ["ANDROID_RECORD_INSPECT"]).resolve()
     remote = "/data/local/tmp/benzware-record-smoke"
     run("adb", "root", check=False)
     run("adb", "wait-for-device")
     run("adb", "shell", "rm", "-rf", remote)
     run("adb", "shell", "mkdir", "-p", remote)
     run("adb", "push", str(helper), f"{remote}/record-helper")
-    run("adb", "shell", "chmod", "0755", f"{remote}/record-helper")
+    run("adb", "push", str(inspect), f"{remote}/record-inspect")
+    run("adb", "shell", "chmod", "0755", f"{remote}/record-helper", f"{remote}/record-inspect")
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", check=False)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False)
     command = ["adb", "shell", f"{remote}/record-helper", f"{remote}/capture.mp4"]
@@ -45,6 +47,9 @@ def main():
         output = process.communicate(timeout=15)[0]
         if process.returncode:
             raise RuntimeError(f"recorder failed ({process.returncode}): {output}")
+        platform = run("adb", "shell", f"{remote}/record-inspect", f"{remote}/capture.mp4", check=False)
+        if platform.returncode:
+            raise RuntimeError(f"Android extractor rejected MP4 ({platform.returncode}): {platform.stdout} {platform.stderr}; {output}")
         with tempfile.TemporaryDirectory() as tmp:
             clip = Path(tmp) / "capture.mp4"
             run("adb", "pull", f"{remote}/capture.mp4", str(clip))

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <new>
 #include <string>
 #include <sys/system_properties.h>
 #include <unordered_map>
@@ -15,7 +16,13 @@ namespace {
 // android::sp<T> has a non-trivial destructor and is returned indirectly by
 // the C++ ABI. The helper retains these references until process exit. They
 // are not constructed or destroyed by the overlay's different libc++ build.
-struct Sp { void* pointer = nullptr; ~Sp() {} };
+struct Sp {
+    void* pointer = nullptr;
+    Sp() = default;
+    Sp(const Sp&) = default;
+    Sp& operator=(const Sp&) = default;
+    ~Sp() {}
+};
 struct IdVector { uint64_t* begin = nullptr; uint64_t* end = nullptr; uint64_t* capacity = nullptr; ~IdVector() {} };
 struct Rect { int32_t left, top, right, bottom; };
 struct DisplayStateAbi { uint32_t stack; int32_t rotation, width, height; uint8_t reserved[128]; };

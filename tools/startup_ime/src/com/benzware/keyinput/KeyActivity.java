@@ -121,7 +121,6 @@ public final class KeyActivity extends Activity {
     private void submit() {
         if (finished) return;
         String value = entry.getText().toString();
-        android.util.Log.i("BWInput", "submit matches=" + expected.equals(value) + " length=" + value.length());
         if (!expected.equals(value)) {
             entry.setError("Invalid key");
             entry.selectAll();
@@ -137,7 +136,6 @@ public final class KeyActivity extends Activity {
 
     private void cancel() {
         if (finished) return;
-        android.util.Log.i("BWInput", "cancel");
         if (!writeAtomically("result-" + session, "C")) {
             if (entry != null) entry.setError("Unable to cancel");
             return;
@@ -150,7 +148,6 @@ public final class KeyActivity extends Activity {
 
     @Override public void onStop() {
         super.onStop();
-        android.util.Log.i("BWInput", "stop finished=" + finished + " changing=" + isChangingConfigurations());
         // Leaving the task should not leave the native launcher waiting. A
         // configuration change recreates the editor and must not cancel it.
         if (!finished && !isChangingConfigurations()) cancel();

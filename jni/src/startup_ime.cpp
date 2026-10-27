@@ -57,6 +57,12 @@ CommandResult Run(const std::vector<std::string>& args, int timeout_seconds) {
         close(pipefd[1]);
         const int nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
         if (nullfd >= 0) { (void)dup2(nullfd, STDIN_FILENO); close(nullfd); }
+#if defined(__ANDROID__)
+        // Android 8's pm script invokes app_process through PATH. A file
+        // manager may supply no PATH (or an app-controlled one) to the root
+        // executable, so use only system-owned command directories here.
+        if (setenv("PATH", "/system/bin:/system/xbin", 1) != 0) _exit(127);
+#endif
         std::vector<char*> argv;
         argv.reserve(args.size() + 1);
         for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));

@@ -173,7 +173,7 @@ if __name__ == "__main__":
     except Exception:
         details = traceback.format_exc()
         try:
-            log = shell("logcat", "-d", "-s", "BWInput:I", "AndroidRuntime:E", check=False)[-2400:]
+            log = shell("logcat", "-d", "-s", "AndroidRuntime:E", check=False)[-2400:]
             details += "\nAndroid log tail:\n" + log
         except Exception as error:
             details += f"\nCould not read Android log: {error}"

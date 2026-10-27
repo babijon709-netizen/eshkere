@@ -57,8 +57,14 @@ does not run the full production arm64 binary, an OEM firmware, the overlay or a
 `run_startup_cli.sh` runs the same blocking key gate as the application,
 before and after ELF encryption. It checks prompt visibility before input,
 delayed/fragmented entry, pipes, EOF, interruption and a controlling PTY.
-The Android recording workflow runs the gate on Bionic as well. Those tests do
-not themselves prove how a particular MT Manager build or phone displays it.
+The Android recording workflow runs the gate on Bionic as well.
+
+`.github/workflows/android-mt-startup.yml` additionally opens the gate through
+MT Manager 2.18.4-clone's actual script executor on x86_64 Android 8 and 15
+emulators. It checks the visible prompt before supplying correct and incorrect
+keys, with both plain and encrypted binaries. The emulator is offline and uses
+an unprivileged test executable with SELinux relaxed; it does not run the full
+arm64 build, Magisk/root launch, an OEM firmware or a physical device.
 
 `run_farm_tests.sh` tests the real scanner with fake `memio` memory and the real
 controller with fake target/input calls, under ASan/UBSan: low positive HP,

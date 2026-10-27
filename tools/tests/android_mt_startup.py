@@ -50,7 +50,9 @@ def snapshot(label):
             attrs = node.attrib
             value = attrs.get("text", "") or attrs.get("content-desc", "")
             if value:
-                nodes.append((value, attrs.get("bounds", ""), attrs.get("clickable", "")))
+                # Keep dialog buttons in diagnostic output even when an
+                # agreement contains thousands of characters.
+                nodes.append((value[:160], attrs.get("bounds", ""), attrs.get("clickable", "")))
     except ET.ParseError:
         pass
     screenshot = adb("exec-out", "screencap", "-p", timeout=30).stdout
@@ -72,10 +74,11 @@ def snapshot(label):
     return nodes, ocr
 
 
-def tap_node(nodes, terms):
+def tap_node(nodes, terms, exact=False):
     for term in terms:
         for value, bounds, _ in nodes:
-            if term.lower() not in value.lower():
+            label = value.lower().strip()
+            if (label != term.lower()) if exact else (term.lower() not in label):
                 continue
             match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
             if match:
@@ -102,7 +105,8 @@ def prepare():
     time.sleep(4)
     for i in range(4):
         nodes, _ = snapshot(f"first-start-{i}")
-        if not tap_node(nodes, ("allow", "agree", "accept", "continue", "ok")):
+        if not tap_node(nodes, ("allow", "agree", "i agree", "accept", "continue", "ok",
+                                "while using the app", "allow access"), exact=True):
             break
         time.sleep(2)
 

@@ -11,13 +11,13 @@ import av
 
 
 def run(*args, check=True, timeout=30):
-    return subprocess.run(args, check=check, text=True, capture_output=True, timeout=timeout)
+    return subprocess.run(args, check=check, text=True, errors="replace", capture_output=True, timeout=timeout)
 
 
 def test_supervisor(remote, mode, binary="record-supervisor"):
     directory = f"{remote}/supervised-{binary}-{mode}"
     command = ["adb", "shell", f"{remote}/{binary}", directory, mode]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     try:
         for _ in range(5):
             time.sleep(0.8)
@@ -60,7 +60,7 @@ def main():
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", check=False)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False)
     command = ["adb", "shell", f"{remote}/record-helper", f"{remote}/capture.mp4"]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
     try:
         # Change the display while recording, rather than merely validating an
         # encoder-generated black frame. No game or production overlay is run.

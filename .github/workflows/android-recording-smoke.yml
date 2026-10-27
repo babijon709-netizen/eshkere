@@ -101,7 +101,7 @@ jobs:
           fi
           "$COMPILER" -std=c++17 -O2 -Wall -Wextra -Werror -fPIE -pie -static-libstdc++ \
             tools/tests/android_record_inspect.cpp -lmediandk -o "$RUNNER_TEMP/record-inspect"
-          "$COMPILER" -std=c++17 -O2 -fPIE -pie -fno-jump-tables -static-libstdc++ -Ijni/include \
+          "$COMPILER" -std=c++17 -O2 -fPIE -pie -fno-jump-tables -DBW_OBF_DIAGNOSTIC -static-libstdc++ -Ijni/include \
             -Wl,--rosegment -Wl,-z,separate-code -Wl,-z,max-page-size=16384 \
             jni/src/bw_obf.cpp jni/src/screen_capture.cpp jni/src/record_capture.cpp \
             jni/src/record_display.cpp jni/src/record_mp4.cpp tools/tests/android_record_supervisor.cpp \

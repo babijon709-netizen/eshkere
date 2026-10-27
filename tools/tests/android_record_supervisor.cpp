@@ -12,7 +12,26 @@
 
 const char* CfgDir() { return "/data/local/tmp/"; }
 
+#ifdef BW_OBF_DIAGNOSTIC
+extern "C" volatile uint64_t bw_obf_diagnostic[8];
+static void print_hex(uint64_t value) {
+    char line[17];
+    for (int i = 15; i >= 0; --i) {
+        const unsigned digit = value & 15;
+        line[i] = static_cast<char>(digit < 10 ? '0' + digit : 'a' + digit - 10);
+        value >>= 4;
+    }
+    line[16] = '\n';
+    const ssize_t ignored = write(STDERR_FILENO, line, sizeof(line));
+    (void)ignored;
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef BW_OBF_DIAGNOSTIC
+    for (int i = 0; i < 8; ++i) print_hex(bw_obf_diagnostic[i]);
+    print_hex(bw::kKey);
+#endif
     BW_GUARD();
     if (argc == 4 && std::strcmp(argv[1], "--capture-record") == 0) {
         char *fd_end = nullptr, *rate_end = nullptr;

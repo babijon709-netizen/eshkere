@@ -53,6 +53,12 @@ volatile uint8_t g_bw_meta[kMetaSize] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 };
 
+#ifdef BW_OBF_DIAGNOSTIC
+extern "C" {
+volatile uint64_t bw_obf_diagnostic[8] = {};
+}
+#endif
+
 namespace {
 
 uint64_t rd64(const volatile uint8_t* p) noexcept {
@@ -73,16 +79,26 @@ uint64_t runtime_seed() noexcept {
 }
 
 __attribute__((constructor(101))) void bw_decrypt_all() noexcept {
+#ifdef BW_OBF_DIAGNOSTIC
+    bw_obf_diagnostic[0] = 1;
+#endif
     const uint64_t seed = runtime_seed();
     bw::g_q  = seed;
     bw::g_ok = bw::mix64(seed);
 
     const volatile uint8_t* meta = g_bw_meta;
     const uint64_t count = rd64(meta + kMetaCount);
+#ifdef BW_OBF_DIAGNOSTIC
+    bw_obf_diagnostic[1] = count;
+#endif
     if (count == 0 || count > kMaxRanges) return; // не пропатчено — выходим
 
     const uint64_t meta_vaddr = rd64(meta + kMetaVaddr);
     const uint64_t flags = rd64(meta + kMetaFlags);
+#ifdef BW_OBF_DIAGNOSTIC
+    bw_obf_diagnostic[2] = meta_vaddr;
+    bw_obf_diagnostic[3] = flags;
+#endif
     // Строки в read-only сегменте, который билдер не смог сделать RW: писать
     // туда нельзя. Молча выходим лучше, чем падать (билдер в этом случае
     // вообще не даёт собрать артефакт — см. elf_crypt.py).
@@ -91,11 +107,17 @@ __attribute__((constructor(101))) void bw_decrypt_all() noexcept {
 
     const uintptr_t base =
         reinterpret_cast<uintptr_t>(&g_bw_meta[0]) - static_cast<uintptr_t>(meta_vaddr);
+#ifdef BW_OBF_DIAGNOSTIC
+    bw_obf_diagnostic[4] = base;
+#endif
 
     for (uint64_t i = 0; i < count; ++i) {
         const volatile uint8_t* rec = meta + kMetaHdr + static_cast<size_t>(i) * 16;
         const uint64_t va = rd64(rec);
         const uint64_t sz = rd64(rec + 8);
+#ifdef BW_OBF_DIAGNOSTIC
+        if (i == 0) { bw_obf_diagnostic[5] = va; bw_obf_diagnostic[6] = sz; }
+#endif
         if (!va || va > kImageLimit || !sz || sz > kImageLimit) continue;
         const uintptr_t addr = base + static_cast<uintptr_t>(va);
         if (addr < 0x10000u || addr + sz < addr) continue;
@@ -104,6 +126,9 @@ __attribute__((constructor(101))) void bw_decrypt_all() noexcept {
         for (uint64_t j = 0; j < sz; ++j)
             p[j] ^= bw::stream_byte(va + j);
     }
+#ifdef BW_OBF_DIAGNOSTIC
+    bw_obf_diagnostic[7] = 1;
+#endif
 }
 
 } // namespace

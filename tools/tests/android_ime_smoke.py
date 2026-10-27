@@ -107,6 +107,35 @@ def late_pipe(binary):
         close(proc)
 
 
+def competing_launch(binary):
+    first = launch(binary)
+    second = None
+    try:
+        ime_visible(first)
+        second = launch(binary)
+        out, err = second.communicate(timeout=20)
+        assert b"IME_RESULT=unavailable" in out and b"busy" in err, (out, err)
+        assert PACKAGE in shell("pm", "list", "packages"), "second launcher removed the first helper"
+        shell("input", "keyevent", "KEYCODE_BACK")
+        time.sleep(0.5)
+        shell("input", "keyevent", "KEYCODE_BACK")
+        finish(first, "cancelled")
+    finally:
+        close(first)
+        if second:
+            close(second)
+
+
+def leaving_activity(binary):
+    proc = launch(binary)
+    try:
+        ime_visible(proc)
+        shell("input", "keyevent", "KEYCODE_HOME")
+        finish(proc, "cancelled")
+    finally:
+        close(proc)
+
+
 def main():
     run("adb", "root", check=False)
     run("adb", "wait-for-device")
@@ -122,7 +151,9 @@ def main():
         good_after_wrong("ime-plain")
         cancellation("ime-encrypted")
         late_pipe("ime-encrypted")
-        print("::notice title=Android system keyboard::real IME visible; wrong/correct, cancel, late pipe and encrypted bridge passed")
+        competing_launch("ime-plain")
+        leaving_activity("ime-encrypted")
+        print("::notice title=Android system keyboard::real IME visible; wrong/correct, cancel, late pipe, lock, leaving task and encrypted bridge passed")
     finally:
         shell("am", "force-stop", PACKAGE, check=False)
         shell("pm", "uninstall", PACKAGE, check=False)

@@ -33,6 +33,7 @@ public final class KeyActivity extends Activity {
         expected = getIntent().getStringExtra("expected");
         if (session == null || !session.matches("[0-9a-f]{32}") ||
                 expected == null || expected.length() > 64) {
+            finished = true;
             finish();
             return;
         }
@@ -54,14 +55,16 @@ public final class KeyActivity extends Activity {
         entry.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI |
                 EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         entry.setFilters(new InputFilter[] { new InputFilter.LengthFilter(64) });
-        entry.setOnEditorActionListener((view, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE ||
-                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER &&
-                            event.getAction() == KeyEvent.ACTION_UP)) {
-                submit();
-                return true;
+        entry.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+            @Override public boolean onEditorAction(TextView view, int actionId, KeyEvent event) {
+                if (actionId == EditorInfo.IME_ACTION_DONE ||
+                        (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER &&
+                                event.getAction() == KeyEvent.ACTION_UP)) {
+                    submit();
+                    return true;
+                }
+                return false;
             }
-            return false;
         });
         box.addView(entry, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -69,10 +72,14 @@ public final class KeyActivity extends Activity {
         actions.setOrientation(LinearLayout.HORIZONTAL);
         Button cancel = new Button(this);
         cancel.setText("Cancel");
-        cancel.setOnClickListener(v -> cancel());
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { KeyActivity.this.cancel(); }
+        });
         Button enter = new Button(this);
         enter.setText("Enter");
-        enter.setOnClickListener(v -> submit());
+        enter.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { submit(); }
+        });
         actions.addView(cancel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         actions.addView(enter, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         box.addView(actions);
@@ -80,17 +87,22 @@ public final class KeyActivity extends Activity {
         entry.requestFocus();
         // The native process waits for this handshake; no result from an old
         // invocation can match the fresh 128-bit session name.
-        if (!writeAtomically("ready-" + session, "ready")) finish();
+        if (!writeAtomically("ready-" + session, "ready")) {
+            finished = true;
+            finish();
+        }
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && entry != null && !finished) {
             entry.requestFocus();
-            entry.post(() -> {
-                if (!hasWindowFocus() || finished) return;
-                InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (imm != null) imm.showSoftInput(entry, InputMethodManager.SHOW_IMPLICIT);
+            entry.post(new Runnable() {
+                @Override public void run() {
+                    if (!hasWindowFocus() || finished) return;
+                    InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) imm.showSoftInput(entry, InputMethodManager.SHOW_IMPLICIT);
+                }
             });
         }
     }
@@ -122,6 +134,13 @@ public final class KeyActivity extends Activity {
     }
 
     @Override public void onBackPressed() { cancel(); }
+
+    @Override public void onStop() {
+        super.onStop();
+        // Leaving the task should not leave the native launcher waiting. A
+        // configuration change recreates the editor and must not cancel it.
+        if (!finished && !isChangingConfigurations()) cancel();
+    }
 
     private boolean writeAtomically(String name, String value) {
         File dir = getFilesDir();

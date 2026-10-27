@@ -74,7 +74,12 @@ jobs:
           echo 'f00afe55d9ca6dc1923378df6b60d9ec6a5eb834816b7cd91bb2bcb80361462e  '"$RUNNER_TEMP/mt-manager.apk" | sha256sum -c -
           "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --print-certs "$RUNNER_TEMP/mt-manager.apk" | tee "$RUNNER_TEMP/mt-certificate.txt"
           grep -qi 'Signer #1 certificate SHA-1 digest: 9779572c0ec948c3502d7985f9590fbfbde1ab24' "$RUNNER_TEMP/mt-certificate.txt"
-          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/mt-manager.apk" | sed -n '1,5p'
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/mt-manager.apk" > "$RUNNER_TEMP/mt-badging.txt"
+          sed -n '1,5p' "$RUNNER_TEMP/mt-badging.txt"
+          MT_PACKAGE="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/mt-badging.txt")"
+          case "$MT_PACKAGE" in bin.mt.plus|bin.mt.plus.canary) ;; *) echo "Unexpected MT package: $MT_PACKAGE"; exit 1;; esac
+          echo "::notice title=MT test package::$(head -1 "$RUNNER_TEMP/mt-badging.txt")" >&3
+          echo "MT_PACKAGE=$MT_PACKAGE" >> "$GITHUB_ENV"
           COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"
           "$COMPILER" -std=c++17 -O3 -ffast-math -flto -fno-jump-tables \
             -ffunction-sections -fdata-sections -fPIE -pie -static-libstdc++ -Ijni/include \

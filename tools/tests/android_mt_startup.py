@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image
 
-PKG = "bin.mt.plus"
+PKG = os.environ["MT_PACKAGE"]
 REMOTE = "/data/local/tmp/benzware-mt-test.sh"
 LAST = {}
 TRACE = []
@@ -113,7 +113,7 @@ def start_file(binary):
     adb("shell", "chmod", "0755", REMOTE)
     result = adb("shell", "am", "start", "-W", "-a", "android.intent.action.VIEW",
                  "-d", "file://" + REMOTE, "-t", "application/x-sh",
-                 "-n", PKG + "/.OpenFileActivity", check=False)
+                 PKG, check=False)
     TRACE.append(f"OpenFileActivity: {text(result.stdout)} {text(result.stderr)}")
     print(TRACE[-1], flush=True)
     time.sleep(3)

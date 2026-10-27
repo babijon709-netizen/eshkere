@@ -84,7 +84,10 @@ jobs:
         shell: bash
         run: |
           chmod +x build.sh
-          ./build.sh 2>&1 | tee /tmp/build.log
+          if ! ./build.sh 2>&1 | tee /tmp/build.log; then
+            python3 -c 'import pathlib; s=pathlib.Path("/tmp/build.log").read_text(errors="replace")[-2200:]; print("::error title=Android build::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            exit 1
+          fi
           # Отчёт обфускации выносим в annotations рана: видно без скачивания
           # логов. GitHub режет >10 notice на чек-ран, поэтому ключевые строки
           # пакуем в один notice, а не по строке на каждый.

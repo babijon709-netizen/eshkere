@@ -148,7 +148,11 @@ bool WriteApk(const std::string& path) {
         if (n <= 0) { close(fd); unlink(path.c_str()); return false; }
         pos += static_cast<size_t>(n);
     }
-    const bool ok = close(fd) == 0;
+    // PackageManager's system_server, not the root caller, opens path-based
+    // installs on modern Android. The APK contains no secret; make it readable
+    // only after the full write and keep it non-writable to other UIDs.
+    bool ok = fchmod(fd, 0644) == 0;
+    if (close(fd) != 0) ok = false;
     if (!ok) unlink(path.c_str());
     return ok;
 }

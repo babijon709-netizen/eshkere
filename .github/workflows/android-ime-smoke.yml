@@ -59,14 +59,14 @@ jobs:
           report() {
             rc="$1"
             if [ "$rc" -ne 0 ]; then
-              python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]; print("::error title=IME build::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))' "$LOG" >&3 || true
+              python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-2200:]; print("::error title=IME build::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))' "$LOG" >&3 || true
             fi
             cat "$LOG" >&3
             exit "$rc"
           }
           trap 'report $?' EXIT
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager 'ndk;26.3.11579264' 'platforms;android-35' 'build-tools;35.0.0'
+          sdkmanager 'ndk;26.3.11579264' 'platforms;android-35' 'build-tools;35.0.0' >/dev/null
           mkdir -p "$RUNNER_TEMP/ime"
           tools/startup_ime/build.sh "$RUNNER_TEMP/ime/startup_ime_apk.inc"
           COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"

@@ -21,6 +21,8 @@ int main(int argc, char** argv) {
     std::string base = argv[1];
     const std::string apk = base + "/helper.apk", link = base + "/link";
     assert(startup_ime::WriteApk(apk));
+    struct stat apk_stat{};
+    assert(stat(apk.c_str(), &apk_stat) == 0 && (apk_stat.st_mode & 0777) == 0644);
     assert(!startup_ime::WriteApk(apk)); // exclusive creation
     assert(symlink(apk.c_str(), link.c_str()) == 0);
     std::string read;

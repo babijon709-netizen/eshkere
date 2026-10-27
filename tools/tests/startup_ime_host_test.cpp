@@ -44,6 +44,11 @@ int main(int argc, char** argv) {
     signal(SIGCHLD, SIG_DFL);
     auto command = startup_ime::Run({"/bin/echo", "hello"}, 2);
     assert(command.ok && command.output == "hello\n");
+    const std::string bare_script = base + "/no-shebang";
+    { std::ofstream file(bare_script); file << "printf 'bare script: %s\\n' \"$1\"\n"; }
+    assert(chmod(bare_script.c_str(), 0755) == 0);
+    command = startup_ime::Run({bare_script, "hello"}, 2);
+    assert(command.ok && command.output == "bare script: hello\n");
     command = startup_ime::Run({"/bin/sh", "-c", "exit 9"}, 2);
     assert(!command.ok);
     command = startup_ime::Run({"/bin/sleep", "2"}, 1);

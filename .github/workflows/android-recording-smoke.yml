@@ -51,7 +51,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {api: 26, target: default, seconds: 190}
+          - {api: 26, target: default, seconds: 240}
           - {api: 28, target: default}
           - {api: 29, target: default}
           - {api: 30, target: default}

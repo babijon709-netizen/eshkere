@@ -62,6 +62,21 @@ CommandResult Run(const std::vector<std::string>& args, int timeout_seconds) {
         for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
         argv.push_back(nullptr);
         execv(argv[0], argv.data());
+        if (errno == ENOEXEC) {
+            // Android 8's /system/bin/pm is a shell script without a shebang.
+            // execv does not provide the shell's normal ENOEXEC fallback.
+#if defined(__ANDROID__)
+            const char* shell = "/system/bin/sh";
+#else
+            const char* shell = "/bin/sh";
+#endif
+            std::vector<char*> shell_args;
+            shell_args.reserve(argv.size() + 1);
+            shell_args.push_back(const_cast<char*>(shell));
+            for (char* arg : argv) shell_args.push_back(arg);
+            execv(shell, shell_args.data());
+        }
+        dprintf(STDERR_FILENO, "exec %s failed: %s\n", argv[0], strerror(errno));
         _exit(127);
     }
     close(pipefd[1]);

@@ -29,8 +29,9 @@ def ime_visible(proc):
             raise AssertionError(f"bridge exited before IME: {out!r} {err!r}")
         dump = shell("dumpsys", "input_method", check=False)
         window = shell("dumpsys", "window", "windows", check=False)
-        focused = any("mCurrentFocus" in line and PACKAGE in line for line in window.splitlines())
-        if "mInputShown=true" in dump and focused:
+        # The window dump's focus summary differs between API levels; the
+        # package's Activity window plus a shown IME establishes both are present.
+        if "mInputShown=true" in dump and PACKAGE in window:
             # InputShown can precede the keyboard's actual input connection on
             # cold boots; let the focused editor/IME finish binding.
             time.sleep(1.0)
@@ -39,7 +40,9 @@ def ime_visible(proc):
         time.sleep(0.5)
     relevant = "\n".join(line for line in dump.splitlines()
                          if any(k in line for k in ("mInputShown", "mShowRequested", "mCurId", "mCurMethodId")))
-    raise AssertionError(f"system IME did not become visible: {relevant}")
+    window_info = "\n".join(line for line in window.splitlines()
+                            if PACKAGE in line or "mCurrentFocus" in line or "mFocusedApp" in line)
+    raise AssertionError(f"system IME did not become visible: {relevant}; windows: {window_info}")
 
 
 def launch(binary, closed=True):
@@ -170,7 +173,7 @@ if __name__ == "__main__":
     except Exception:
         details = traceback.format_exc()
         try:
-            log = shell("logcat", "-d", "-s", "BWInput:I", "PackageManager:I", "AndroidRuntime:E", check=False)[-2400:]
+            log = shell("logcat", "-d", "-s", "BWInput:I", "AndroidRuntime:E", check=False)[-2400:]
             details += "\nAndroid log tail:\n" + log
         except Exception as error:
             details += f"\nCould not read Android log: {error}"

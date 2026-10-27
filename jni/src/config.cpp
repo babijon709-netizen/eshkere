@@ -3,6 +3,7 @@
 #include <cmath>
 #include "str.h"
 #include "app_state.h"
+#include "overlay_capture.h"
 #include "cfg.h"
 #include "theme.h"
 #include "hud.h"
@@ -289,7 +290,8 @@ static void WriteExt2Trailer(std::ostream& f) {
               (cfg::esp::fill        ? (1u << 13) : 0u) |
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
-              (g_state.esp_armor     ? (1u << 16) : 0u);
+              (g_state.esp_armor     ? (1u << 16) : 0u) |
+              overlay_capture::config_flag(g_state.streamer_mode);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
     t.esp_radar_size   = g_state.esp_radar_size;
     t.esp_radar_range  = g_state.esp_radar_range;
@@ -770,6 +772,9 @@ static void LoadCfgByName(const char* name, bool announce) {
         b01(g_state.esp_team); b01(g_state.ui_dark_mode);
         g_state.viewmodel.no_ballistics = false;
         g_state.a_no_ballistics = 0.f;
+        // Old profiles have no bit (or no trailer): retain the legacy
+        // capture-visible default even after loading one over a newer profile.
+        g_state.streamer_mode = overlay_capture::visible_from_config(hasExt2 ? ext2.flags : 0u);
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
             g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;

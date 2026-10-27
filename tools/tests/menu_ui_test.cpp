@@ -230,11 +230,15 @@ static void configAndOptionsTests() {
     tap(tab(4), choiceId("##config_actions", 2, alpha)); assert(g_configToDelete == 0 && g_pop.sectionId == 3);
     g_pop = {};
     tap(tab(4), id("##cfgcreate")); assert(saves == 1);
-    fresh("options"); assert(frame(tab(5)) < 650.f);
-    for (auto group : {"##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
+    fresh("options"); assert(frame(tab(5)) < 750.f);
+    assert(g_state.streamer_mode); // preserve legacy full-screen capture behavior
+    tap(tab(5), groupId("##options_streamer", "enable")); assert(!g_state.streamer_mode);
+    for (auto group : {"##options_streamer", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
     for (auto label : {"##lang0", "##lang1", "##ud2", "##acc8", "##hud_cnt", "##pstyle0", "##pstyle1", "##exit"}) assert(items.count(id(label)));
     tap(tab(5), id("##lang1")); assert(lang::english());
     frame(tab(5)); assert(items.count(id("##ud2"))); // expansion survives localization
+    assert(std::strcmp(lang::text("Стример-мод"), "Streamer mode") == 0);
+    tap(tab(5), groupId("##options_streamer", "enable")); assert(g_state.streamer_mode);
     tap(tab(5), id("##hud_cnt")); assert(g_calibMode == 5);
     g_calibMode = 0;
     tap(tab(5), id("##pstyle1")); assert(!g_state.ui_panel_left);
@@ -338,7 +342,7 @@ int main(int argc, char** argv) {
         "##aim_target", "##aim_filters", "##aim_tuning", "##aim_touch_settings",
         "##esp_players", "##esp_arrows", "##esp_radar", "##esp_ore", "##esp_entities", "##esp_loot", "##esp_distance",
         "##misc_fov", "##misc_hands", "##misc_freecam", "##misc_xray", "##misc_weapon", "##misc_farm", "##misc_world", "##misc_fakelag", "##misc_fps",
-        "##options_language", "##options_appearance", "##options_hud", "##options_tabs"};
+        "##options_streamer", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"};
     auto* window = ImGui::FindWindowByName(windowName.c_str());
     for (const char* group : expandedGroups)
         window->StateStorage.SetBool(ImHashStr("expanded", 0, id(group)), true);

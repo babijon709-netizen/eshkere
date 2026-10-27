@@ -5,6 +5,7 @@ tools/tests/run_touch_device_filter.sh
 tools/tests/run_menu_ui.sh
 tools/tests/run_menu_ui.sh --measure
 tools/tests/run_menu_ui.sh --bench
+tools/tests/run_capture_surface.sh
 tools/tests/run_predict.sh
 ```
 
@@ -26,6 +27,12 @@ Checks cover:
 - collapsed content height and scroll bounds after content shrinks;
 - offscreen culling without changing layout/slider state, and font-size probes
   that do not allocate a baked font for every trial size.
+
+`run_capture_surface.sh` tests the real SurfaceFlinger ABI wrapper against fake
+libgui symbols for Android 8–16, including unavailable symbols and failure; it
+also exercises the real EGL switching/rollback logic with a mocked platform
+and round-trips the actual config trailer. These tests cannot establish what an
+OEM compositor or recording app does on a real device.
 
 `run_predict.sh` feeds the pose-delay estimator (`aim_predict.h`) a synthetic
 strafer with a known delay between the pose we read and the true position, at

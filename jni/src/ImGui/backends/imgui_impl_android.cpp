@@ -236,6 +236,11 @@ bool ImGui_ImplAndroid_Init(ANativeWindow* window)
     return true;
 }
 
+void ImGui_ImplAndroid_SetWindow(ANativeWindow* window)
+{
+    g_Window = window;
+}
+
 void ImGui_ImplAndroid_Shutdown()
 {
     ImGuiIO& io = ImGui::GetIO();

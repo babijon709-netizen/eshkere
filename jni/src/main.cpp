@@ -14,6 +14,7 @@
 #include "config.h"
 #include "theme.h"
 #include "app_state.h"
+#include "str.h"
 #include "overlay_geometry.h"
 #include "mode_select.h"
 #include "metadata_dump.h"
@@ -376,6 +377,14 @@ static bool Verify() {
 }
 }  // namespace startup_key
 
+static void SyncOverlayCaptureMode() {
+    if (g_state.streamer_mode == overlay_capture_visible()) return;
+    if (!overlay_set_capture_visible(g_state.streamer_mode)) {
+        g_state.streamer_mode = overlay_capture_visible();
+        ShowToast(XS("Не удалось переключить захват"));
+    }
+}
+
 int main(int argc, char* argv[]) {
     BW_GUARD();
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
@@ -504,6 +513,7 @@ int main(int argc, char* argv[]) {
     RestoreLayout();        // кнопки и тач-зоны из прошлого запуска (точку аима конфиг ниже может переписать)
     CfgScanDir();
     ConfigLoadLast();
+    SyncOverlayCaptureMode();
     ApplyTheme();
     CenterMenuOnDisplay();
     g_menuFadeIn = 0.f;
@@ -555,6 +565,7 @@ int main(int argc, char* argv[]) {
             g_frame_done.store(true, std::memory_order_release);
             break;
         }
+        SyncOverlayCaptureMode(); // also handles a profile loaded from the menu
         UpdateFreecam(ImGui::GetIO().DeltaTime);   // фрикам: полёт камеры
         AimEndFrame(); // закрыть lease, если меню/фрикам выключили сайлент позднее
         if (!main_thread_flag.load(std::memory_order_acquire)) {

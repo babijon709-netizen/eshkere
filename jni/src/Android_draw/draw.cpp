@@ -16,6 +16,10 @@ EGLContext context = EGL_NO_CONTEXT;
 
 ANativeWindow *native_window;
 
+static constexpr char kOverlayName[] = {0x53,0x75,0x72,0x66,0x61,0x63,0x65,0x00};
+static uint32_t g_surface_width = 0, g_surface_height = 0;
+static overlay_capture::Mode g_capture_mode;
+
 int native_window_screen_x = 0;
 int native_window_screen_y = 0;
 anwc::ANativeWindowCreator::DisplayInfo displayInfo{0};
@@ -151,6 +155,12 @@ static void ApplyOverlayRefresh(ANativeWindow* w, float hz) {
     static SetBC  setbc  = (SetBC)dlsym(RTLD_DEFAULT, "ANativeWindow_setBufferCount");
     static bool buffers_set = false;
     static float applied_hz = 0.f;
+    static ANativeWindow* configured_window = nullptr;
+    if (configured_window != w) {
+        configured_window = w;
+        buffers_set = false;
+        applied_hz = 0.f;
+    }
     if (setbc && !buffers_set) { setbc(w, 4); buffers_set = true; }
     // hz <= 61 — сознательно: оверлей больше не переводит панель в 120 Гц ради
     // своих кадров (игра всё равно рисует 60, а композитор и батарея платят за
@@ -212,10 +222,16 @@ bool initGUI_draw(uint32_t _screen_x, uint32_t _screen_y, bool log) {
 }
 
 bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
-    static const char wn[] = {0x53,0x75,0x72,0x66,0x61,0x63,0x65,0x00};
-    ::native_window = anwc::ANativeWindowCreator::Create(wn, _screen_x, _screen_y, false);
+    // Preserve the original, capture-visible behavior for startup and old configs.
+    g_capture_mode.reset();
+    g_surface_width = _screen_x;
+    g_surface_height = _screen_y;
+    ::native_window = anwc::ANativeWindowCreator::Create(kOverlayName, _screen_x, _screen_y, false);
     if (::native_window == nullptr) return false;
     ANativeWindow_acquire(native_window);
+    // Explicitly clear both exclusion flags where the transaction API exists.
+    // Older versions already created the layer without the legacy hide marker.
+    (void)anwc::ANativeWindowCreator::SetCaptureVisible(native_window, true);
 
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (display == EGL_NO_DISPLAY) return false;
@@ -291,6 +307,62 @@ bool ImGui_init() {
 
     g_Initialized = true;
     return true;
+}
+
+// Android 8–11 store the screenshot-exclusion marker only at layer creation.
+// If a newer device lacks the private transaction symbols, use the same path.
+// Prepare the new window/surface before dropping the old one, and keep the EGL
+// context (and all ImGui/GL resources) across the switch.
+static bool RecreateOverlayForCapture(bool visible) {
+    if (!visible && !anwc::ANativeWindowCreator::CanCreateCaptureExcluded()) return false;
+    EGLint format = 0;
+    if (eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format) != EGL_TRUE) return false;
+    ANativeWindow* next = anwc::ANativeWindowCreator::Create(
+        kOverlayName, g_surface_width, g_surface_height, !visible);
+    if (!next) return false;
+    ANativeWindow_acquire(next);
+    auto discardWindow = [](ANativeWindow* window) {
+        ANativeWindow_release(window);
+        anwc::ANativeWindowCreator::Destroy(window);
+    };
+    if (ANativeWindow_setBuffersGeometry(next, 0, 0, format) != 0) {
+        discardWindow(next);
+        return false;
+    }
+    EGLSurface nextSurface = eglCreateWindowSurface(display, config, next, nullptr);
+    if (nextSurface == EGL_NO_SURFACE) {
+        discardWindow(next);
+        return false;
+    }
+    if (eglMakeCurrent(display, nextSurface, nextSurface, context) != EGL_TRUE) {
+        eglDestroySurface(display, nextSurface);
+        discardWindow(next);
+        return false;
+    }
+
+    ANativeWindow* oldWindow = native_window;
+    EGLSurface oldSurface = surface;
+    native_window = next;
+    surface = nextSurface;
+    ImGui_ImplAndroid_SetWindow(next);
+    eglSwapInterval(display, 0);
+    ApplyOverlayRefresh(next, OverlayPaceHz());
+    eglDestroySurface(display, oldSurface);
+    discardWindow(oldWindow);
+    return true;
+}
+
+bool overlay_capture_visible() { return g_capture_mode.visible(); }
+
+bool overlay_set_capture_visible(bool visible) {
+    if (!g_Initialized || !native_window || display == EGL_NO_DISPLAY ||
+        context == EGL_NO_CONTEXT || surface == EGL_NO_SURFACE) return false;
+    return g_capture_mode.set(visible,
+        [](bool target) {
+            return anwc::ANativeWindowCreator::SetCaptureVisible(native_window, target) ==
+                   anwc::ANativeWindowCreator::CaptureChange::Applied;
+        },
+        [](bool target) { return RecreateOverlayForCapture(target); });
 }
 
 void drawBegin() {
@@ -468,5 +540,7 @@ void shutdown() {
 
     ANativeWindow_release(native_window);
     anwc::ANativeWindowCreator::Destroy(native_window);
+    native_window = nullptr;
+    g_capture_mode.reset();
     g_Initialized = false;
 }

@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "overlay_capture.h"
+
 #define ResolveMethod(ClassName, MethodName, Handle, MethodSignature) \
     ClassName##__##MethodName = reinterpret_cast<decltype(ClassName##__##MethodName)>(symbolMethod.Find(Handle, MethodSignature));
 
@@ -156,18 +158,25 @@ namespace anwc {
 
             Functionals(const SymbolMethod &symbolMethod) {
                 char verBuf[PROP_VALUE_MAX]{};
+                bool releaseKnown = false;
                 if (__system_property_get("ro.build.version.release", verBuf) > 0) {
                     int parsed = std::atoi(verBuf);
-                    if (parsed > 0)
+                    if (parsed > 0) {
                         systemVersion = static_cast<size_t>(parsed);
+                        releaseKnown = true;
+                    }
                 }
+                // Pre-release / OEM release strings can be nonnumeric. SDK is
+                // also needed for the Android 8–12 creation/transaction ABI.
                 char sdkBuf[PROP_VALUE_MAX]{};
                 if (__system_property_get("ro.build.version.sdk", sdkBuf) > 0) {
                     int sdk = std::atoi(sdkBuf);
-                    if (sdk >= 36 && systemVersion < 16) systemVersion = 16;
-                    else if (sdk == 35 && systemVersion < 15) systemVersion = 15;
-                    else if (sdk == 34 && systemVersion < 14) systemVersion = 14;
-                    else if (sdk == 33 && systemVersion < 13) systemVersion = 13;
+                    size_t sdkVersion = sdk >= 36 ? 16 : sdk == 35 ? 15 : sdk == 34 ? 14 :
+                                        sdk == 33 ? 13 : sdk >= 31 ? 12 : sdk == 30 ? 11 :
+                                        sdk == 29 ? 10 : sdk == 28 ? 9 : sdk >= 26 ? 8 :
+                                        sdk >= 24 ? 7 : 0;
+                    if (sdkVersion && (!releaseKnown || systemVersion < sdkVersion))
+                        systemVersion = sdkVersion;
                 }
                 if (systemVersion > 16)
                     systemVersion = 16;
@@ -345,7 +354,7 @@ namespace anwc {
         };
 
         struct SurfaceComposerClientTransaction {
-            char data[1024]{};
+            alignas(std::max_align_t) char data[1024]{};
 
             SurfaceComposerClientTransaction() {
                 if (Functionals::GetInstance().SurfaceComposerClient__Transaction__Constructor)
@@ -423,7 +432,7 @@ namespace anwc {
                         if (Functionals::GetInstance().systemVersion < 12)
                             layerMetadata.setInt32(2, 441731);
                         else
-                            flags = 0x40;
+                            flags = overlay_capture::kSkipScreenshot;
                     }
                     result = Functionals::GetInstance().SurfaceComposerClient__CreateSurface(data, windowName, width, height, 1, flags, parentHandle, layerMetadata, nullptr);
                 }
@@ -535,6 +544,47 @@ namespace anwc {
             if (nullptr != nativeWindow)
                 m_cachedSurfaceControl.emplace(nativeWindow, surfaceControl);
             return nativeWindow;
+        }
+
+        enum class CaptureChange { Applied, Unavailable, Failed };
+
+        // Android 12+ exposes SKIP_SCREENSHOT as a transaction flag. Clear
+        // SECURE too when changing our own layer; never modify other windows.
+        // On Android 8–11 primary-display-only is fixed at layer creation, so
+        // the caller must recreate the layer instead.
+        static CaptureChange SetCaptureVisible(ANativeWindow *nativeWindow, bool visible) {
+            auto it = m_cachedSurfaceControl.find(nativeWindow);
+            if (it == m_cachedSurfaceControl.end() || it->second.data == nullptr)
+                return CaptureChange::Failed;
+            const auto &f = detail::Functionals::GetInstance();
+            if (f.systemVersion < 12 || !f.SurfaceComposerClient__Transaction__Constructor ||
+                !f.SurfaceComposerClient__Transaction__SetFlags || !f.SurfaceComposerClient__Transaction__Apply)
+                return CaptureChange::Unavailable;
+
+            // The wrapper intentionally keeps the libgui transaction alive, as
+            // elsewhere in this creator. After an error it may retain mStatus;
+            // never reuse a poisoned transaction, fall back to a fresh layer.
+            static bool usable = true;
+            if (!usable) return CaptureChange::Unavailable;
+            static detail::SurfaceComposerClientTransaction transaction;
+            detail::StrongPointer<void> control{};
+            control.pointer = it->second.data;
+            if (!transaction.SetFlags(control, overlay_capture::flags_for_visible(visible),
+                                      overlay_capture::kCaptureMask) ||
+                transaction.Apply(true, false) != 0) {
+                usable = false;
+                return CaptureChange::Failed;
+            }
+            return CaptureChange::Applied;
+        }
+
+        // On Android 10/11 the legacy exclusion is encoded in metadata at
+        // creation. Do not silently report a hidden layer if those symbols are
+        // unavailable on an OEM build.
+        static bool CanCreateCaptureExcluded() {
+            const auto &f = detail::Functionals::GetInstance();
+            return f.systemVersion < 10 || f.systemVersion >= 12 ||
+                   (f.LayerMetadata__Constructor && f.LayerMetadata__setInt32);
         }
 
         static void Destroy(ANativeWindow *nativeWindow) {

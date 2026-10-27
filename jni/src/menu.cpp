@@ -491,6 +491,17 @@ float TabContent(int tab, float dt, float cW) {
         // применяется сразу, на текущем кадре. Названия самих языков пишем на
         // них самих — так строка понятна при любом выбранном языке.
         SHdr(XS("Интерфейс"));
+        if (SettingsHeader("##options_streamer", XS("Стример-мод"), XS("Скриншоты и запись"),
+                           false, &g_state.streamer_mode, g_state.a_streamer_mode)) {
+            const float indent = Layout::Inset + Layout::PadX;
+            ImGui::Indent(indent);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImMax(1.f, ImGui::GetContentRegionAvail().x - indent));
+            ImGui::PushStyleColor(ImGuiCol_Text, C::Dim());
+            ImGui::TextWrapped("%s", XS("Вкл: разрешить захват оверлея. Выкл: попросить исключить. Записывай весь экран."));
+            ImGui::PopStyleColor();
+            ImGui::PopTextWrapPos();
+            ImGui::Unindent(indent);
+        }
         if (SettingsHeader("##options_language", XS("Язык"), lang::english() ? "English" : "Русский"))
         {
             auto* dl  = ImGui::GetWindowDrawList();
@@ -1463,6 +1474,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_tracer, g_state.esp_tracer,         dt);
     Tick(g_state.a_esp_skeleton, g_state.esp_skeleton,     dt);
     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
+    Tick(g_state.a_streamer_mode, g_state.streamer_mode,   dt);
     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);

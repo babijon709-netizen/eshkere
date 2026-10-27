@@ -128,6 +128,10 @@ struct AppState {
     // задан (дефолт — верх по центру). Задаётся тапом в Опциях → Худ, живёт
     // только до перезапуска — как и остальные калибровки.
     float hud_cnt_x = -1.f, hud_cnt_y = -1.f;
+    // Захват экрана: вкл = оверлей допускается в скриншоты/запись полного
+    // экрана. По умолчанию вкл, как в старых версиях (Create(..., false)).
+    // Это не обходит ограничения записи отдельного приложения или OEM.
+    bool  streamer_mode = true;
     // ui_fps выключен навсегда (счётчик убран), рамки карточек — всегда вкл.
     bool  ui_fps = false, ui_dark_mode = true, ui_show_sep = true;
     // Акцент интерфейса (палитра в «Опциях»): 0 = фиолет по умолчанию,
@@ -163,7 +167,7 @@ struct AppState {
     float a_esp_radar = 0;
     float a_esp_turrets = 0, a_esp_backpacks = 0, a_esp_sleepers = 0, a_esp_cupboards = 0, a_esp_pumpkins = 0;
     float a_always_day = 0, a_no_grass = 0;
-    float a_ui_dark = 1;
+    float a_ui_dark = 1, a_streamer_mode = 1;
     float a_farm_on = 0, a_farm_wood = 1, a_farm_stone = 0, a_farm_metal = 0, a_farm_sulfur = 0;
     float a_xray_on = 0;
     float a_xray_btn_show = 0;

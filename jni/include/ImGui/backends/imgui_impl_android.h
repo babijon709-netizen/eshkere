@@ -7,6 +7,8 @@ struct ANativeWindow;
 struct AInputEvent;
 
 IMGUI_IMPL_API bool     ImGui_ImplAndroid_Init(ANativeWindow* window);
+// Switch the backing native window without resetting the active ImGui frame.
+IMGUI_IMPL_API void     ImGui_ImplAndroid_SetWindow(ANativeWindow* window);
 IMGUI_IMPL_API int32_t  ImGui_ImplAndroid_HandleInputEvent(const AInputEvent* input_event);
 IMGUI_IMPL_API void     ImGui_ImplAndroid_Shutdown();
 IMGUI_IMPL_API void     ImGui_ImplAndroid_NewFrame();

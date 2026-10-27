@@ -40,6 +40,10 @@ bool ImGui_init();
 void screen_config();
 void drawBegin();
 void drawEnd();
+// Requested SurfaceFlinger capture policy for this overlay, not for the game.
+// Returns false without changing the tracked state if switching failed.
+bool overlay_capture_visible();
+bool overlay_set_capture_visible(bool visible);
 void shutdown();
 float overlay_fps();
 // Темп оверлея и диагностика (см. kOverlayFallbackPaceHz в draw.cpp): из

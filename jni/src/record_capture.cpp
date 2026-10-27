@@ -66,6 +66,9 @@ struct Codec {
         AMediaFormat_setInt32(format, "frame-rate", 30);
         AMediaFormat_setInt32(format, "i-frame-interval", 2);
         AMediaFormat_setInt32(format, "max-bframes", 0);
+        // Ask the surface encoder to repeat a static display once per second,
+        // so complete fragments can also be recovered during long idle scenes.
+        AMediaFormat_setInt64(format, "repeat-previous-frame-after", 1000000);
         const media_status_t configured = AMediaCodec_configure(codec, format, nullptr, nullptr,
                                                                  AMEDIACODEC_CONFIGURE_FLAG_ENCODE);
         AMediaFormat_delete(format);

@@ -19,6 +19,12 @@ constexpr size_t kMaxFrame = 64 * 1024 * 1024;
 constexpr size_t kMaxFragmentBytes = 16 * 1024 * 1024;
 constexpr uint64_t kFragmentTargetMs = 2000;
 constexpr uint64_t kIndexTargetMs = 10000;
+#ifdef RECORD_MP4_TEST_INDEX_ENTRIES
+constexpr size_t kIndexEntryLimit = RECORD_MP4_TEST_INDEX_ENTRIES;
+static_assert(kIndexEntryLimit >= 2 && kIndexEntryLimit <= 65535, "invalid test index limit");
+#else
+constexpr size_t kIndexEntryLimit = 65535;
+#endif
 
 struct Bytes {
     std::vector<uint8_t> data;
@@ -182,6 +188,7 @@ struct Writer::Impl {
     int64_t base_us = -1, last_us = -1;
     uint64_t pending_tick = 0, fragment_start_tick = 0, committed_end_tick = 0, committed = 0;
     uint32_t last_step = 33, sequence = 1;
+    uint64_t index_target_ms = kIndexTargetMs;
     bool pending_key = false;
     std::vector<uint8_t> pending, payload;
     std::vector<Sample> samples;
@@ -244,6 +251,27 @@ struct Writer::Impl {
                write_u64_at(fd, fragment_duration, committed_end_tick);
     }
 
+    bool compact_index() {
+        // sidx has a 16-bit entry count. Grow seek intervals instead of
+        // stopping a long recording when the initial intervals fill it.
+        std::vector<IndexEntry> compact;
+        compact.reserve(index.size());
+        for (size_t i = 0; i < index.size();) {
+            IndexEntry entry = index[i++];
+            if (i < index.size() && index[i].size <= 0x7fffffffU - entry.size &&
+                index[i].duration <= UINT32_MAX - entry.duration) {
+                entry.size += index[i].size;
+                entry.duration += index[i].duration;
+                ++i;
+            }
+            compact.push_back(entry);
+        }
+        if (compact.size() >= index.size()) return false;
+        index.swap(compact);
+        index_target_ms = std::min<uint64_t>(index_target_ms * 2, UINT32_MAX);
+        return true;
+    }
+
     void add_index(uint32_t bytes, uint32_t duration, bool key) {
         if (!index_valid) return;
         if (index.empty()) {
@@ -251,13 +279,15 @@ struct Writer::Impl {
             index.push_back({bytes, duration});
             return;
         }
-        IndexEntry& last = index.back();
+        const IndexEntry& last = index.back();
         const bool overflow = bytes > 0x7fffffffU - last.size || duration > UINT32_MAX - last.duration;
-        if ((key && last.duration >= kIndexTargetMs) || overflow) {
-            if (!key || index.size() >= 65535) { index.clear(); index_valid = false; return; }
+        if ((key && last.duration >= index_target_ms) || overflow) {
+            if (!key || (index.size() >= kIndexEntryLimit && !compact_index())) {
+                index.clear(); index_valid = false; return; // Sequential playback remains possible.
+            }
             index.push_back({bytes, duration});
         } else {
-            last.size += bytes; last.duration += duration;
+            index.back().size += bytes; index.back().duration += duration;
         }
     }
 

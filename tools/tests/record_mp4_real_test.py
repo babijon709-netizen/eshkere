@@ -79,6 +79,17 @@ def packet_stream(path, annexb=False):
     return bytes(data)
 
 
+def repeated_keyframes(path, count, step_us):
+    with av.open(str(path)) as movie:
+        stream = movie.streams.video[0]
+        config = stream.codec_context.extradata
+        key = next(bytes(packet) for packet in movie.demux(stream) if packet.size and packet.is_keyframe)
+    data = bytearray(struct.pack("<IIII", 320, 240, len(config), 0) + config)
+    for index in range(count):
+        data += struct.pack("<qII", index * step_us, 1, len(key)) + key
+    return bytes(data)
+
+
 def frames(path):
     levels, pts = [], []
     with av.open(str(path)) as movie:
@@ -123,9 +134,10 @@ def sparse_over_4gb(original, target):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: record_mp4_real_test.py /path/to/record_mp4_driver")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("usage: record_mp4_real_test.py DRIVER [SMALL_INDEX_DRIVER]")
     driver = str(Path(sys.argv[1]).resolve())
+    small_index_driver = str(Path(sys.argv[2]).resolve()) if len(sys.argv) == 3 else None
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         source, result = root / "source.mp4", root / "result.mp4"
@@ -163,7 +175,27 @@ def main():
         sparse_over_4gb(result, huge)
         huge_levels, _ = frames(huge)
         assert huge_levels == levels
-        print("PASS: real H.264 MP4, seek, interrupted recovery and >4 GiB sparse offsets")
+
+        # Six samples cover more than 49.7 days, crossing a 32-bit millisecond
+        # duration; the media is tiny because the same valid IDR is repeated.
+        long_movie = root / "long-duration.mp4"
+        long_run = subprocess.run([driver, str(long_movie)],
+                                  input=repeated_keyframes(source, 6, 1_000_000_000_000), capture_output=True)
+        assert long_run.returncode == 0, long_run.stderr.decode()
+        with av.open(str(long_movie)) as movie:
+            assert movie.duration > (1 << 32) * 1000, movie.duration
+            assert len(list(movie.decode(video=0))) == 6
+        if small_index_driver:
+            compact = root / "compacted-index.mp4"
+            compact_run = subprocess.run([small_index_driver, str(compact)],
+                                         input=repeated_keyframes(source, 12, 10_000_000), capture_output=True)
+            assert compact_run.returncode == 0, compact_run.stderr.decode()
+            compact_data = compact.read_bytes()
+            index_pos = next(pos for pos, _, kind in top_boxes(compact_data) if kind == b"sidx")
+            entry_count = int.from_bytes(compact_data[index_pos + 38:index_pos + 40], "big")
+            assert 1 <= entry_count <= 3, entry_count
+            assert len(frames(compact)[0]) == 12
+        print("PASS: real H.264, seeking, crash recovery, >4 GiB offsets and 64-bit duration/index")
 
 
 if __name__ == "__main__":

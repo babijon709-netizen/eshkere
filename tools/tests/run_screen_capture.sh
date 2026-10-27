@@ -20,8 +20,10 @@ fi
 # >4 GiB offsets. Other capture tests do not require this optional dependency.
 "${CXX:-g++}" -std=c++17 -O2 -Wall -Wextra -Werror -Ijni/include \
     jni/src/record_mp4.cpp tools/tests/record_mp4_driver.cpp -o "$tmp/record_mp4_driver"
+"${CXX:-g++}" -std=c++17 -O2 -Wall -Wextra -Werror -DRECORD_MP4_TEST_INDEX_ENTRIES=3 -Ijni/include \
+    jni/src/record_mp4.cpp tools/tests/record_mp4_driver.cpp -o "$tmp/record_mp4_small_index"
 if python3 -c 'import av' 2>/dev/null; then
-    python3 tools/tests/record_mp4_real_test.py "$tmp/record_mp4_driver"
+    python3 tools/tests/record_mp4_real_test.py "$tmp/record_mp4_driver" "$tmp/record_mp4_small_index"
 else
     echo "SKIP: real H.264 MP4 test (install PyAV 16.0.1)"
 fi

@@ -38,14 +38,19 @@ and round-trips the actual config trailer, including bitrate, ignored legacy
 duration bits and unchanged flag layout. These tests cannot establish what an
 OEM compositor or recording app does on a real device.
 
-`run_screen_capture.sh` runs the real asynchronous capture-job implementation
-with fake executable commands, temporary paths and the app's ignored SIGCHLD.
-It also uses a two-second test segment to exercise autonomous rollovers, one-file
-finalization, stop at a boundary, collisions, merge failure and parent death.
-The real remuxer is tested with mock MediaNDK tracks, large sample buffers,
-timestamps, incompatible formats, write errors and corrupted output. These host
-mocks are not real MP4s and do not capture Android pixels; the production segment
-remains 180 seconds.
+`run_screen_capture.sh` exercises the asynchronous supervisor with a fake
+recorder, ignored SIGCHLD, simultaneous screenshots, normal stop, failure,
+parent death and a single uninterrupted output. It also tests the legacy remuxer
+with MediaNDK mocks. When PyAV 16.0.1 is installed, it tests the actual MP4 writer
+with real H.264 in AVCC and Annex B forms, playback, seek, sudden death, sparse
+sample offsets over 4 GiB, 64-bit duration and index compaction. Without PyAV,
+that real-video test is explicitly skipped. These host tests do not capture Android
+pixels.
+
+`.github/workflows/android-recording-smoke.yml` builds the actual recorder for
+x86_64 Android emulators, captures their displays, and checks both Android's own
+media extractor and host H.264 playback. It does not run the production arm64
+binary, an OEM firmware, the overlay or a game.
 `run_startup_cli.sh` tests the real key gate through pipes, a line-buffered
 launcher and a PTY, before and after the ELF patcher, including a complete
 prompt line before input, CRLF, wrong key and EOF.

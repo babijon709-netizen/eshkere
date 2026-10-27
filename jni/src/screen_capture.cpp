@@ -133,7 +133,8 @@ void exec_media(const char* executable, char* const argv[]) {
     };
     execve(executable, argv, env);
     static constexpr char failed[] = "capture: execve failed\n";
-    (void)write(STDERR_FILENO, failed, sizeof(failed) - 1);
+    const ssize_t ignored = write(STDERR_FILENO, failed, sizeof(failed) - 1);
+    (void)ignored;
     _exit(127);
 }
 
@@ -181,7 +182,7 @@ void exec_media(const char* executable, char* const argv[]) {
         check_control(control_fd, stop_requested, 0);
         if (kind == Kind::Video && !stop_requested && status == 0) {
             static constexpr char early[] = "capture: recorder stopped unexpectedly\n";
-            if (log_fd >= 0) (void)write(log_fd, early, sizeof(early) - 1);
+            if (log_fd >= 0) { const ssize_t ignored = write(log_fd, early, sizeof(early) - 1); (void)ignored; }
             status = -1;
         }
     }
@@ -189,7 +190,8 @@ void exec_media(const char* executable, char* const argv[]) {
     // recoverable fragments even when the encoder or disk failed.
     remove_empty_reservation(path, reservation);
     if (log_fd >= 0) close(log_fd);
-    (void)write(result_fd, &status, sizeof(status));
+    ssize_t sent;
+    do { sent = write(result_fd, &status, sizeof(status)); } while (sent < 0 && errno == EINTR);
     close(result_fd); close(control_fd);
     _exit(0);
 }

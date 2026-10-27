@@ -44,7 +44,16 @@ def main():
         if len(pids) != 1 or not pids[0].isdigit():
             raise RuntimeError(f"unexpected recorder pids: {pids}")
         run("adb", "shell", "kill", "-INT", pids[0])
-        output = process.communicate(timeout=15)[0]
+        try:
+            output = process.communicate(timeout=15)[0]
+        except subprocess.TimeoutExpired as exc:
+            partial = exc.output or b""
+            if isinstance(partial, bytes):
+                partial = partial.decode(errors="replace")
+            state = run("adb", "shell", "cat", f"/proc/{pids[0]}/status", check=False).stdout
+            stack = run("adb", "shell", "debuggerd", "-b", pids[0], check=False, timeout=12)
+            raise RuntimeError(f"recorder did not stop: {partial}; process status: {state[-1500:]}; "
+                               f"native stack: {(stack.stdout + stack.stderr)[-3500:]}") from exc
         if process.returncode:
             raise RuntimeError(f"recorder failed ({process.returncode}): {output}")
         platform = run("adb", "shell", f"{remote}/record-inspect", f"{remote}/capture.mp4", check=False)

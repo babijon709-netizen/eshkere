@@ -149,10 +149,12 @@ int Run(int fd, int bitrate) {
         // An immediate stop may arrive while MediaCodec is still starting.
         // Allow a short opportunity for one frame before requesting EOS.
         if (g_stop && !eos_requested && (saw_frame || now >= first_frame_deadline)) {
+            std::fprintf(stderr, "capture: stopping virtual display\n");
             display.detach();
             eos_requested = true;
             eos_deadline = now + 3500;
             if (signal_eos(codec->codec) != AMEDIA_OK) { error = "encoder did not accept stop"; failed = true; break; }
+            std::fprintf(stderr, "capture: draining encoder\n");
         }
         if (eos_requested && now >= eos_deadline) { error = "encoder did not finish in time"; failed = true; break; }
         if (!eos_requested && now >= next_display_check) {

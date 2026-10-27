@@ -131,7 +131,7 @@ jobs:
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --key 0x6A09E667F3BCC909
           python3 tools/obf/elf_crypt.py "$RUNNER_TEMP/startup-encrypted" --check
           "$COMPILER" -std=c++17 -O2 -DIMGUI_ENABLE_TEST_ENGINE -DIMGUI_IMPL_OPENGL_ES3 \
-            -fPIE -pie -static-libstdc++ -Ijni/include -Ijni/include/ImGui \
+            -fPIE -pie -static-libstdc++ -Ijni/include -Ijni/include/ImGui -Ijni/include/ImGui/backends \
             tools/tests/android_startup_ui.cpp jni/src/ImGui/imgui.cpp \
             jni/src/ImGui/imgui_draw.cpp jni/src/ImGui/imgui_widgets.cpp jni/src/ImGui/imgui_tables.cpp \
             jni/src/ImGui/backends/imgui_impl_opengl3.cpp -lEGL -lGLESv3 -landroid -ldl \

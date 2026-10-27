@@ -93,6 +93,9 @@ def tap_node(nodes, terms, exact=False):
 def prepare():
     adb("root", check=False)
     adb("wait-for-device")
+    # Keep the disposable emulator offline; no MT account or network is needed.
+    adb("shell", "svc", "wifi", "disable", check=False)
+    adb("shell", "svc", "data", "disable", check=False)
     adb("shell", "setenforce", "0", check=False)
     adb("shell", "chmod", "0755", "/data/local/tmp")
     adb("install", "-r", "-g", os.environ["MT_APK"], timeout=120)
@@ -122,12 +125,13 @@ def start_file(binary):
     TRACE.append(f"OpenFileActivity: {text(result.stdout)} {text(result.stderr)}")
     print(TRACE[-1], flush=True)
     time.sleep(3)
-    for i in range(6):
+    for i in range(8):
         nodes, ocr = snapshot(f"open-{i}")
         combined = "\n".join(x[0] for x in nodes) + "\n" + ocr
         if re.search(r"Enter\s+key\s*:", combined, re.I):
             return
-        if tap_node(nodes, ("linux script", "execute script", "execute", "run")):
+        if tap_node(nodes, ("linux script", "execute script", "execute", "run",
+                            "benzware-mt-test.sh")):
             time.sleep(2)
             continue
         time.sleep(2)

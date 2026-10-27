@@ -64,8 +64,9 @@ struct Display::Impl {
     void* gui = nullptr;
     void* utils = nullptr;
     void* android = nullptr;
+    void* binder = nullptr;
     std::string why;
-    Sp physical, display, producer, mirror, client;
+    Sp binder_process, physical, display, producer, mirror, client;
     uint64_t physical_id = 0;
     uint32_t mirror_stack = 0;
 
@@ -110,7 +111,16 @@ struct Display::Impl {
         gui = dlopen("/system/lib64/libgui.so", RTLD_NOW | RTLD_LOCAL);
         utils = dlopen("/system/lib64/libutils.so", RTLD_NOW | RTLD_LOCAL);
         android = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);
-        if (!gui || !utils || !android) return fail("cannot load Android display libraries");
+        binder = dlopen("/system/lib64/libbinder.so", RTLD_NOW | RTLD_LOCAL);
+        if (!gui || !utils || !android || !binder) return fail("cannot load Android display libraries");
+        auto binder_self = sym<Sp (*)()>(binder, "_ZN7android12ProcessState4selfEv");
+        auto start_binder = sym<void (*)(void*)>(binder, "_ZN7android12ProcessState15startThreadPoolEv");
+        if (!binder_self || !start_binder) return fail("Binder thread-pool API unavailable");
+        binder_process = binder_self();
+        if (!binder_process.pointer) return fail("cannot initialize Binder process");
+        // SurfaceFlinger and MediaCodec call back into the producer. Without
+        // a Binder pool the transaction can deadlock on older Android.
+        start_binder(binder_process.pointer);
 #define GET(field, lib, name) field = sym<decltype(field)>(lib, name)
         GET(get_builtin, gui, "_ZN7android21SurfaceComposerClient17getBuiltInDisplayEi");
         GET(get_internal, gui, "_ZN7android21SurfaceComposerClient23getInternalDisplayTokenEv");
@@ -213,8 +223,8 @@ struct Display::Impl {
         return storage;
     }
     bool apply(void* tx) {
-        // screenrecord uses an asynchronous transaction. Synchronous apply
-        // can block indefinitely on Android 8/9 while the display is starting.
+        // Match screenrecord's asynchronous display transaction; Binder
+        // callbacks are handled by the fresh helper's thread pool.
         const int result = apply_two ? apply_two(tx, false, false) : apply_one(tx, false);
         if (delete_transaction) delete_transaction(tx);
         return result == 0 || fail("SurfaceFlinger rejected display transaction");

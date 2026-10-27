@@ -48,9 +48,10 @@ that real-video test is explicitly skipped. These host tests do not capture Andr
 pixels.
 
 `.github/workflows/android-recording-smoke.yml` builds the actual recorder for
-x86_64 Android emulators, captures their displays, and checks both Android's own
-media extractor and host H.264 playback. It does not run the production arm64
-binary, an OEM firmware, the overlay or a game.
+x86_64 Android emulators, captures their displays, and checks Android's media
+extractor and host H.264 playback. An encrypted test binary exercises the real
+supervisor's self-exec and normal/parent-death stops. It does not run the full
+production arm64 binary, an OEM firmware, the overlay or a game.
 `run_startup_cli.sh` tests the real key gate through pipes, a line-buffered
 launcher and a PTY, before and after the ELF patcher, including a complete
 prompt line before input, CRLF, wrong key and EOF.

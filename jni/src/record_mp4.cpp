@@ -18,6 +18,7 @@ constexpr size_t kIndexReserve = 1024 * 1024;
 constexpr size_t kMaxFrame = 64 * 1024 * 1024;
 constexpr size_t kMaxFragmentBytes = 16 * 1024 * 1024;
 constexpr uint64_t kFragmentTargetMs = 2000;
+constexpr uint64_t kFragmentMaxMs = 10000;
 constexpr uint64_t kIndexTargetMs = 10000;
 #ifdef RECORD_MP4_TEST_INDEX_ENTRIES
 constexpr size_t kIndexEntryLimit = RECORD_MP4_TEST_INDEX_ENTRIES;
@@ -355,7 +356,9 @@ struct Writer::Impl {
             if (tick <= pending_tick || tick - pending_tick > UINT32_MAX) return fail("unsupported timestamp gap");
             last_step = static_cast<uint32_t>(tick - pending_tick);
             if (!append_pending(last_step)) return false;
-            if ((key && tick - fragment_start_tick >= kFragmentTargetMs) || payload.size() >= kMaxFragmentBytes) {
+            const uint64_t fragment_ms = tick - fragment_start_tick;
+            if ((key && fragment_ms >= kFragmentTargetMs) || fragment_ms >= kFragmentMaxMs ||
+                payload.size() >= kMaxFragmentBytes) {
                 if (!flush_fragment()) return false;
             }
         }
@@ -389,7 +392,8 @@ struct Writer::Impl {
         if (!started) return fail("MP4 output was not started");
         bool okay = why.empty();
         if (okay && !pending.empty()) {
-            if (!append_pending(last_step)) okay = false;
+            // Do not duplicate a long idle gap as the final frame duration.
+            if (!append_pending(std::min(last_step, 1000U))) okay = false;
         }
         if (!samples.empty() && !flush_fragment()) okay = false;
         if (!duration_header()) { fail("cannot update MP4 duration"); okay = false; }

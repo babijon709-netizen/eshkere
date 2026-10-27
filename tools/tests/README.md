@@ -8,6 +8,8 @@ tools/tests/run_menu_ui.sh --bench
 tools/tests/run_capture_surface.sh
 tools/tests/run_screen_capture.sh
 tools/tests/run_startup_cli.sh
+tools/tests/run_startup_ui.sh
+tools/tests/run_farm_tests.sh
 tools/tests/run_predict.sh
 ```
 
@@ -53,10 +55,19 @@ extractor and host H.264 playback. An encrypted test binary exercises the real
 supervisor's self-exec and normal/parent-death stops. The Android 8 run records
 for over three minutes and checks the recorder PID, playback and seeking. It
 does not run the full production arm64 binary, an OEM firmware, the overlay or a game.
-`run_startup_cli.sh` tests the real key gate through pipes, a line-buffered
-launcher and a PTY, before and after the ELF patcher, including a complete
-prompt line before input, CRLF, wrong key and EOF.
-These are host tests, not evidence that the arm64 binary starts on a device.
+`run_startup_cli.sh` exercises the real nonblocking reader through pipes, a
+buffered launcher and a detached PTY before/after the ELF patcher.
+`run_startup_ui.sh` sends taps to the actual ImGui keyboard in both orientations
+and at a small viewport. The Android recording workflow additionally tests the
+reader on Bionic and renders/taps the keyboard in an EGL pbuffer on x86_64
+emulators. It does not install MT Manager or prove that a real device's overlay
+and physical touch work.
+
+`run_farm_tests.sh` tests the real scanner with fake `memio` memory and the real
+controller with fake target/input calls, under ASan/UBSan: low positive HP,
+missing/foreign rays, transient reads, independent sibling resources, retrying
+input writes and timing. It does not exercise a live game or determine whether
+its offsets/raycast data are correct on a particular device.
 
 `run_predict.sh` feeds the pose-delay estimator (`aim_predict.h`) a synthetic
 strafer with a known delay between the pose we read and the true position, at

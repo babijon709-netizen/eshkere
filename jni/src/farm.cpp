@@ -1,5 +1,6 @@
 #include "farm.h"
 #include "farm_joy.h"          // память-джойстик: движение без тача
+#include "farm_control_core.h"
 #include "cfg.h"
 #include "main.h"
 #include "game.h"
@@ -105,29 +106,14 @@ constexpr float kReachBodyAllowance = 1.20f;
 // Меньше этого живая дальность недостоверна (в конструкторе FPMelee заглушки
 // 0.5/0.1 — префаб их перезаписывает, но и префаб может не успеть примениться).
 constexpr float kReachLiveMin = 0.70f;
-// Пока у игры нет данных рейкаста прицела (обёртка GKo пуста), удар не
-// засчитывается вовсе — FPMelee.ZkX играет один On_Woosh. Лог 14.09.2026:
-// валидность луча 97% на aim3d ~0.50 м и 19% на ~0.75 м, а из 48 замахов без
-// урона луча не было в 43. Поэтому (а) тап держим, пока луч не появится, но не
-// дольше kNoRaySwingAfter — вдруг на этой сборке обёртка просто не читается, и
-// (б) стик тем временем поджимает ближе, к kNoRayCloseTo, где луч живёт.
-constexpr float kNoRaySwingAfter = 1.5f;   // с без луча — потом пробный замах
-constexpr float kNoRayCloseTo    = 0.50f;  // м: докуда поджимаем, пока луча нет
-                                           // (ровно тот aim3d, где луч жил в 97%)
-
-// Луч игры ВАЛИДЕН, но ни во что не попал (ray_valid && !ray_hit_object): не свой
-// узел, не чужой, не перекрытие и не «луча нет». Раньше этот случай не попадал ни
-// под одно разрешение на замах (ray_self / слепой замах при noRay), и бот стоял
-// у узла без единого удара, пока watchdog не сдавал его через 12 с. Игра
-// пересчитывает луч, когда двигается камера, — поэтому поворот пальцем «будил»
-// фарм. Теперь: (а) мелкий качок камеры через накопитель заставляет игру
-// пересчитать луч, (б) через kRayMissSwingAfter разрешены пробные замахи (не
-// больше kRayMissProbeMax подряд без падения здоровья узла).
-constexpr float kRayMissNudgeAfter = 0.30f;  // с промаха луча до первого качка
-constexpr float kRayMissNudgeEvery = 0.50f;  // с между качками
-constexpr float kRayMissNudgeDeg   = 0.40f;  // град: амплитуда качка (внутри допуска)
-constexpr float kRayMissSwingAfter = 0.45f;  // с промаха до пробного замаха
-constexpr int   kRayMissProbeMax   = 3;      // пробных замахов подряд без прогресса
+// Пока у игры нет подтверждённого луча, замах запрещён: сбой чтения
+// не доказывает, что впереди нет чужой постройки. Поджимаемся к узлу и
+// слегка двигаем камеру, чтобы игра пересчитала луч; watchdog ограничивает
+// время ожидания.
+constexpr float kNoRayCloseTo    = 0.50f;
+constexpr float kRayMissNudgeAfter = 0.30f;
+constexpr float kRayMissNudgeEvery = 0.50f;
+constexpr float kRayMissNudgeDeg   = 0.40f;
 
 // Допуск наведения камеры, градусы. Камера ведёт ту же точку, по которой бьёт:
 // крестик, когда он есть (tgt.look_spot), иначе центр корпуса узла. Корпусу
@@ -189,22 +175,12 @@ constexpr float kLostHold      = 0.35f;  // цель может мигнуть �
 // kFlickerGiveUp, переключаемся по-настоящему — иначе бот застыл бы навсегда.
 constexpr int   kNodeDebounce  = 2;      // кадров подряд на новом узле
 constexpr float kFlickerGiveUp = 1.0f;   // с прыжков — больше не держимся
-constexpr float kDepletedFrac  = 0.005f;
-constexpr int   kDepletedFrames = 2;     // дебаунс чтения остатка
 constexpr float kStuckTime     = 2.20f;  // нет продвижения к точке подхода
 // После смены узла бот сначала доворачивается на новую цель и только потом
 // идёт. Без этого он с первого кадра давил вперёд по прежнему курсу — у
 // срубленного дерева это ровно пень, — упирался, и до kStuckTime копился
 // «нет продвижения»: со стороны выглядело как бег вокруг добытого места.
 constexpr float kFreshTurnTime  = 0.30f;  // с: доворот на новую цель
-// Узел добыт, но сервер ещё не прислал нулевой остаток: у срубленного дерева луч
-// игры перестаёт попадать в узел сразу, а m_CurrentHealth /
-// fractionRemaining обновляются позже. Без этого признака бот продолжал
-// поджимать вперёд по «нет луча» и крутился у пня, пока не придёт нулевой
-// остаток. Луч, который только что бил по нашему узлу и перестал, — это и есть
-// «добыто», причём мгновенно.
-constexpr float kRayLostHarvest = 0.25f;  // с без луча в узле — считаем добытым
-constexpr float kRayLostBlacklist = 20.0f; // с: ложное срабатывание не жжёт узел
 constexpr float kFreshTurnYaw   = 12.0f;  // град: с этого угла уже идём
 constexpr float kEvadeTime     = 1.70f;  // ~0.6 назад + ~1.1 вбок
 constexpr int   kEvadeMax      = 4;
@@ -254,10 +230,9 @@ void UpdateFarm(float dt) {
 static void UpdateFarmInner(float dt) {
     static bool  s_moveDown = false;  // стик движения ведём (память, не тач)
     static bool  s_camTurn = false;   // камера ведётся памятью: идёт доводка
-    static bool  s_swingOn  = false;  // кнопка атаки зажата памятью (удары)
+    static farm_control::Swing s_swing; // безопасный импульс и повтор записи
     static float s_memWX = 0.f, s_memWY = 0.f; // последняя запись в накопитель
     static bool  s_memPend = false;   // запись ждёт подтверждения накопителем
-    static int   s_swingTimer = 0;      // мс до следующего зажатия/отпускания удара
     static float s_memWait = 0.f;     // сколько ждём подтверждения записи, с
     static unsigned long long s_nodeId = 0;
     static float s_settle = 0.f;      // пауза между целями (пальцы подняты)
@@ -268,24 +243,18 @@ static void UpdateFarmInner(float dt) {
     static float s_blockedTime = 0.f; // сколько подряд узел перекрыт
     static float s_clearTime = 0.f;   // сколько линия удара чистая (дебаунс прощения обходов)
     static int   s_bestStreak = 0;    // максимум серии по крестику на этом узле
-    static int   s_depletedFrames = 0;
     static float s_lastWalk = 1e9f;   // лучшая дистанция до точки подхода
     static float s_stuckTime = 0.f;
     static float s_freshTurn = 0.f;   // остаток доворота на новую цель
-    static bool  s_rayOnNode = false; // луч игры бил по текущему узлу
-    static float s_rayLostTime = 0.f; // сколько подряд он уже промахивается
     static float s_evadeTime = 0.f;   // > 0: идёт манёвр обхода препятствия
     static float s_evadeDir = 1.f;    // +1 вправо, -1 влево
     static int   s_evadeCount = 0;
     static int   s_evadeWhy = 0;      // 0 нет, 1 застрял на подходе, 2 узел перекрыт
     static float s_walkOffTime = 0.f; // гистерезис отпускания джойстика
     static float s_joyX = 0.f, s_joyY = 0.f;         // сглаженный вектор стика
-    static float s_noRayTime = 0.f;   // сколько подряд у игры нет луча прицела
     static float s_rayMissTime = 0.f; // луч валиден, но никуда не попал, с
     static float s_nudgeTimer = 0.f;  // до следующего качка камеры, с
     static float s_nudgeSign = 1.f;   // направление качка (чередуется)
-    static int   s_blindSwings = 0;   // замахов вслепую (без луча) уже ушло
-    static float s_blindHp = -1.f;    // здоровье узла перед последним слепым
     static unsigned long long s_candId = 0; // узел-кандидат на смену цели
     static int   s_candFrames = 0;    // сколько кадров подряд он лучший
     static float s_flickerTime = 0.f; // сколько держимся прежнего, с
@@ -295,12 +264,13 @@ static void UpdateFarmInner(float dt) {
     static float s_lookWaitT = 0.f;
     static bool  s_coarseArmed = true;
 
+    const auto writeAttack = [](bool on) { return farmjoy::attack(on); };
     auto releaseAll = [&]() {
         farmjoy::release();
         s_moveDown = false;
         s_joyX = 0.f; s_joyY = 0.f;
         s_camTurn = false; s_memPend = false;
-        if (s_swingOn)  { farmjoy::attack(false); s_swingOn = false; }
+        s_swing.stop(writeAttack);
         s_memWait = 0.f;
         s_lookWait = false; s_lookWaitT = 0.f;
         s_coarseArmed = true;
@@ -310,13 +280,10 @@ static void UpdateFarmInner(float dt) {
         s_joyX = 0.f; s_joyY = 0.f;
         s_mineTime = 0.f; s_fracStart = -1.f; s_bestStreak = 0;
         s_healthStart = -1.f; s_blockedTime = 0.f; s_clearTime = 0.f;
-        s_depletedFrames = 0;
         s_lastWalk = 1e9f; s_stuckTime = 0.f; s_freshTurn = 0.f;
-        s_rayOnNode = false; s_rayLostTime = 0.f;
         s_evadeTime = 0.f; s_evadeCount = 0; s_evadeWhy = 0;
-        s_walkOffTime = 0.f; s_noRayTime = 0.f;
+        s_walkOffTime = 0.f;
         s_rayMissTime = 0.f; s_nudgeTimer = 0.f;
-        s_blindSwings = 0; s_blindHp = -1.f;
         s_candId = 0; s_candFrames = 0; s_flickerTime = 0.f;
         s_spotAimStuck = 0.f;
         s_lookWait = false; s_lookWaitT = 0.f;
@@ -369,7 +336,10 @@ static void UpdateFarmInner(float dt) {
     FrameBoxes(sw, sh);
 
     FarmTarget tgt;
-    const bool haveTgt = esp_farm_get_target(tgt) && tgt.valid;
+    // Пока реально добываем живой узел, удерживаем его даже если другой стал
+    // чуть ближе. При смерти/blacklist подборщик возьмёт следующего.
+    const unsigned long long preferred = (g_farmPhase == 3 || s_mineTime > 0.f) ? s_nodeId : 0;
+    const bool haveTgt = esp_farm_get_target(tgt, preferred) && tgt.valid;
     esp_farm_debug(g_farmNodes, g_farmReason);
     if (!haveTgt) {
         // Рабочая цель может исчезнуть на пару кадров (рескан реестра, сбой
@@ -378,7 +348,7 @@ static void UpdateFarmInner(float dt) {
         // ввод, а по-настоящему сбрасываемся, только если цель не вернулась.
         if (s_nodeId != 0 && s_lostTime < kLostHold) {
             s_lostTime += dt;
-            if (s_swingOn) { farmjoy::attack(false); s_swingOn = false; } // вслепую не машем
+            s_swing.stop(writeAttack); // вслепую не машем
             if (s_moveDown) { farmjoy::release(); s_joyX = 0.f; s_joyY = 0.f; s_moveDown = false; }
             s_evadeTime = 0.f;
             s_camTurn = false; s_memPend = false; s_memWait = 0.f;
@@ -419,7 +389,6 @@ static void UpdateFarmInner(float dt) {
     // шли вообще без луча, а из 39 результативных луч был в 37. Отсутствие
     // луча не привязано к крестику: по корпусу узла луч нужен ровно так же.
     const bool noRay = !tgt.ray_valid;
-    s_noRayTime = noRay ? (s_noRayTime + dt) : 0.f;
     const bool rayMiss = tgt.ray_valid && !tgt.ray_self && !tgt.ray_foreign && !tgt.ray_blocked;
     s_rayMissTime = rayMiss ? (s_rayMissTime + dt) : 0.f;
 
@@ -448,11 +417,10 @@ static void UpdateFarmInner(float dt) {
         // сбрасывается, иначе каждое мигание стоило бы 0.7 с паузы.
         if (tgt.id == s_candId) ++s_candFrames;
         else { s_candId = tgt.id; s_candFrames = 1; s_flickerTime = 0.f; }
-        const bool wasHarvestingPrev = (g_farmPhase == 3) || (s_mineTime > 0.f);
-        if (s_nodeId != 0 && !wasHarvestingPrev &&
+        if (s_nodeId != 0 &&
             s_candFrames < kNodeDebounce && s_flickerTime < kFlickerGiveUp) {
             s_flickerTime += dt;
-            if (s_swingOn)  { farmjoy::attack(false); s_swingOn = false; }   // вслепую не машем
+            s_swing.stop(writeAttack);   // вслепую не машем
             if (s_evadeTime > 0.f && s_moveDown) {
                 farmjoy::release(); s_joyX = 0.f; s_joyY = 0.f; s_moveDown = false;
                 s_evadeTime = 0.f;
@@ -475,28 +443,16 @@ static void UpdateFarmInner(float dt) {
         s_freshTurn = kFreshTurnTime;
     }
 
-    // Уже добытый узел уходит в чёрный список на месте, а не обходится кругами:
-    // подборщик вернулся бы к нему, только когда в радиусе ничего нет, а танцы
-    // вокруг пустого пня никому не нужны.
-    const bool healthDepleted =
-        (tgt.node_health_max > 0.5f && tgt.node_health >= 0.f && tgt.node_health <= 0.001f);
-    if (healthDepleted || (tgt.fraction >= 0.f && tgt.fraction < kDepletedFrac)) {
-        if (healthDepleted || ++s_depletedFrames >= kDepletedFrames) {
-            esp_farm_blacklist(tgt.id, 120.f);
-            esp_farm_note_harvest(tgt.id);   // место добычи — не цель для поиска
-            releaseAll();
-            resetNode();
-            // Паузы после добычи нет вовсе: releaseAll уже поднял ввод, а
-            // s_settle и «цель пропала» только добавляли простоя. Следующий
-            // узел берётся в этом же кадре, доворот — kFreshTurnTime.
-            s_settle = 0.f;
-            s_lostTime = kLostHold;
-            s_freshTurn = kFreshTurnTime;
-            g_farmPhase = 0;
-            return;
-        }
-    } else {
-        s_depletedFrames = 0;
+    // Только подтверждённый нулевой HP является признаком добычи. Маленькая
+    // доля и пропажа луча могут встречаться у ещё живого узла.
+    if (farm_control::health_depleted(tgt.node_health >= 0.f, tgt.node_health)) {
+        esp_farm_blacklist(tgt.id, 6.f);
+        releaseAll();
+        resetNode();
+        s_settle = 0.f;
+        s_lostTime = kLostHold;
+        g_farmPhase = 0;
+        return;
     }
 
     // Пауза между целями: пальцы подняты, камера стоит, следующая цель
@@ -635,33 +591,9 @@ static void UpdateFarmInner(float dt) {
     const int phase = inReach ? 3 : 2;
     g_farmPhase = phase;
 
-    // ---- узел добыт ------------------------------------------------------------
-    // Луч игры бил по этому узлу и перестал: ствол/порода уже не там (срублено,
-    // разлетелось), даже если остаток ресурса в памяти ещё не ноль. Смена цели
-    // в этом кадре вместо ожидания нуля и поджима вперёд в пустое место.
-    if (phase == 3) {
-        if (tgt.ray_self) {
-            s_rayOnNode = true;
-            s_rayLostTime = 0.f;
-        } else if (s_rayOnNode && !tgt.ray_blocked) {
-            // Перекрытие (ветка, соседний ствол) — не «добыто»: этот случай
-            // разбирает обычная логика обхода.
-            s_rayLostTime += dt;
-            if (s_rayLostTime > kRayLostHarvest) {
-                esp_farm_blacklist(tgt.id, kRayLostBlacklist);
-                esp_farm_note_harvest(tgt.id);
-                releaseAll();
-                resetNode();
-                s_settle = 0.f;
-                s_freshTurn = kFreshTurnTime;
-                g_farmPhase = 0;
-                return;
-            }
-        }
-    } else {
-        s_rayOnNode = false;
-        s_rayLostTime = 0.f;
-    }
+    // Потеря ray_self не означает, что узел добыт: камера могла перейти
+    // на новый крестик или чтение луча могло пропасть на медленном кадре.
+    // В этом случае Swing ниже отпустит атаку и дождётся подтверждения луча.
 
     // Сел ли прицел на ТОЧКУ УДАРА. По крестику ждём и yaw, и pitch внутри
     // допуска: иначе удар ляжет мимо X и серия не вырастет (ради неё всё и
@@ -791,9 +723,8 @@ static void UpdateFarmInner(float dt) {
             (phase == 3 && !aimSettled && !tgt.ray_self && tgt.walk_dist > kArriveWalk) ||
             // Нет луча игры — прицел мимо меша: поджимаем вплотную, там ствол
             // перекрывает уход декали вбок и луч появляется (97% на 0.5 м).
-            // Только пока ждём луч: после kNoRaySwingAfter поведение прежнее,
-            // чтобы на сборке с нечитаемым GKo бот не тёрся о ствол вечно.
-            (phase == 3 && noRay && s_noRayTime < kNoRaySwingAfter &&
+            // Пока ждём подтверждённого луча; watchdog ограничивает попытку.
+            (phase == 3 && noRay &&
              distNow > kNoRayCloseTo);
         if (s_evadeTime > 0.f) wantWalk = true;  // манёвр ведёт стик сам
 
@@ -955,89 +886,17 @@ static void UpdateFarmInner(float dt) {
             holdMs = fminf(fmaxf(periodMs * 0.10f, 40.f), 120.f);
             idleMs = fmaxf(periodMs - holdMs, 60.f);
         }
-        // Узел при смерти: новый замах не начинаем. Последний удар мог уже
-        // убить узел — его GameObject вот-вот освободится, и чтение крестика
-        // (экстеншен/маркер) начнёт отдавать чужую память (аллокатор отдаёт
-        // адреса тут же, вплоть до объектов постройки). Дебаунс остатка
-        // (kDepletedFrames) сменит цель сам; наша задача — не махать вслепую
-        // по мёртвому узлу и не считать его крестик своим.
-        const bool nodeDying =
-            (tgt.node_health >= 0.f && tgt.node_health_max > 0.f &&
-             tgt.node_health <= 0.001f);
-        // Можно ли бить по лучу игры:
-        //   ray_self — можно: игра сама подтверждает, что линия удара стоит
-        //     в САМОМ узле (поддерево трансформов / коллайдер крестика);
-        //   ray_foreign (луч в посторонний объект) — нельзя НИКОГДА, на
-        //     какой бы дистанции он ни стоял: удар уйдёт в чужую геометрию.
-        //     Прежняя проверка смотрела только «чужое ближе точки прицела на
-        //     0.6 м» — упёршись в постройку носом, бот продолжал махать;
-        //   луча нет вовсе — после kNoRaySwingAfter разрешаем ОДИН пробный
-        //     замах (вдруг на этой сборке обёртка GKo не читается у нас, а у
-        //     игры она жива), и дальше только пока слепые замахи дают прогресс:
-        //     здоровье узла падает. Не падает — прекращаем: они уходят
-        //     неизвестно куда, в том числе в постройку.
-        const bool healthDropped = tgt.node_health >= 0.f && tgt.node_health < s_blindHp - 0.01f;
-        const bool blindNoRay =
-            noRay && atSpot && s_noRayTime >= kNoRaySwingAfter &&
-            (s_blindSwings == 0 || healthDropped);
-        // Луч валиден, но промахнулся: см. kRayMiss* выше. Не требуем atSpot —
-        // без крестика первый удар по корпусу как раз и создаёт X.
-        const bool blindMiss =
-            rayMiss && s_rayMissTime >= kRayMissSwingAfter &&
-            (s_blindSwings < kRayMissProbeMax || healthDropped);
-        const bool blindSwing = blindNoRay || blindMiss;
-        const bool swingByRay = tgt.ray_self || blindSwing;
-        const bool swingBlocked = !swingByRay || tgt.ray_blocked;
-        if (continuousTool) {
-            if (!aimSettled || swingBlocked || nodeDying) {
-                if (s_swingOn) {
-                    farmjoy::attack(false);
-                    s_swingOn = false;
-                }
-                s_swingTimer = 0;
-            } else {
-                farmjoy::attack(true);
-                s_swingOn = true;
-                s_swingTimer = 0;
-                if (!tgt.ray_valid || rayMiss) {
-                    if (s_blindSwings == 0 || healthDropped) {
-                        s_blindHp = tgt.node_health;
-                        ++s_blindSwings;
-                    }
-                } else {
-                    s_blindSwings = 0;
-                }
-            }
-        } else {
-            s_swingTimer -= (int)roundf(dt * 1000.f);
-            if (s_swingTimer <= 0 && (!aimSettled || swingBlocked || nodeDying) && !s_swingOn) {
-                s_swingTimer = 0;              // ждём камеру/обход/узел, не теряя такт
-            } else if (s_swingTimer <= 0) {
-                if (!s_swingOn) {
-                    // Зажимаем кнопку атаки в памяти хендлера ввода — тот же путь,
-                    // которым идёт зажатая кнопка атаки на экране. Экрана и зоны
-                    // огня для удара больше не нужно.
-                    farmjoy::attack(true);
-                    s_swingOn = true;
-                    s_swingTimer = (int)holdMs;
-                    if (!tgt.ray_valid || rayMiss) {   // замах вслепую — под контроль
-                        s_blindHp = tgt.node_health;
-                        ++s_blindSwings;
-                    } else {
-                        s_blindSwings = 0;     // луч жив — слепой режим кончился
-                    }
-                } else {
-                    farmjoy::attack(false);
-                    s_swingOn = false;
-                    s_swingTimer = (int)idleMs;
-                }
-            }
-        }
+        // Атака возможна только по подтверждённому своему коллайдеру. На
+        // пропавшем луче или чужой геометрии зажатие снимается в том же кадре.
+        const bool nodeDying = farm_control::health_depleted(
+            tgt.node_health >= 0.f, tgt.node_health);
+        const bool swingAllowed = farm_control::safe_to_swing(
+            aimSettled, tgt.ray_valid, tgt.ray_self, tgt.ray_foreign,
+            tgt.ray_blocked, nodeDying);
+        s_swing.tick((int)roundf(dt * 1000.f), swingAllowed, continuousTool,
+                     (int)holdMs, (int)idleMs, writeAttack);
     } else {
-        if (s_swingOn) { farmjoy::attack(false); s_swingOn = false; }
-        s_swingTimer = 0;
-        s_blindSwings = 0;    // фаза ушла — счётчик слепых замахов обнуляем
-        s_blindHp = -1.f;
+        s_swing.stop(writeAttack);
     }
 
     // ---- watchdog'и ------------------------------------------------------------

@@ -17,6 +17,7 @@
 #include "str.h"
 #include "overlay_geometry.h"
 #include "startup_key.h"
+#include "startup_key_ui.h"
 #include "screen_capture.h"
 #include "capture_merge.h"
 #include "record_capture.h"
@@ -414,9 +415,19 @@ int main(int argc, char* argv[]) {
             return skeldiag::Run(argc - i, argv + i);
     }
 
-    // Ввод выполняем до отделения от MT Manager, пока доступен его поток ввода.
-    // Диагностические команды выше остаются отдельным CLI-режимом без оверлея.
-    if (!startup_key::Verify()) return 1;
+    // Some MT launchers buffer even a flushed line or keep stdin open without
+    // presenting an input widget. Print for terminals/pipes, but never block on
+    // a launcher: the overlay provides the same key prompt while we continue
+    // polling stdin, including when it is a PTY.
+    signal(SIGPIPE, SIG_IGN);
+    startup_key::FdReader startup_input;
+    startup_key::PrintPrompt();
+    const startup_key::InputResult initial_key = startup_input.Poll(STDIN_FILENO, 100);
+    if (initial_key == startup_key::InputResult::Invalid) {
+        std::cerr << "Invalid key. Launch cancelled.\n";
+        return 1;
+    }
+    const bool need_key_ui = (initial_key != startup_key::InputResult::Accepted);
 
     // Ранняя демонизация (fork + setsid + перенос из cgroup MT Manager +
     // oom_score_adj = -1000) до создания любых потоков и стража-трейсера.
@@ -471,15 +482,8 @@ int main(int argc, char* argv[]) {
     AudioInit();
     if (!Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, false))
         Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
-    // Полное скрытие процесса: оверлей и тач подняты — дальше живём
-    // «невидимкой»: отвязка от терминала и ptrace-слот, занятый потомком
-    // (attach отладчиков запрещён). Бинарник остаётся на диске.
-    stealth::ApplyRuntime();
-    // Если полноценный тач не поднялся с первого раза (гонка за /dev/uinput
-    // или grab на старте — обычное дело сразу после запуска игры), чит раньше
-    // навсегда оставался в read-only: автофарм «просто не идёт», пока не
-    // перезапустишь. Теперь фоновый поток раз в 3 секунды пробует поднять
-    // инъекцию заново, пока не получится.
+    // Retry touch before the key UI as well: a temporary uinput/grab race at
+    // launch must not leave that screen permanently unusable.
     static std::atomic<bool> s_touchRetryRun{true};
     std::thread([]() {
         while (s_touchRetryRun.load() && main_thread_flag.load()) {
@@ -493,9 +497,46 @@ int main(int argc, char* argv[]) {
                 Touch_Init(displayInfo.width, displayInfo.height, displayInfo.orientation, true);
         }
     }).detach();
+
+    if (need_key_ui) {
+        startup_key::Entry entry;
+        bool accepted = false;
+        while (main_thread_flag.load() && !accepted) {
+            const startup_key::InputResult input = startup_input.Poll(STDIN_FILENO);
+            if (input == startup_key::InputResult::Accepted) { accepted = true; break; }
+            if (input == startup_key::InputResult::Invalid) {
+                std::cerr << "Invalid key. Launch cancelled.\n";
+                break;
+            }
+            drawBegin();
+            float vw = 0.f, vh = 0.f;
+            VisibleScreen(vw, vh);
+            Touch_BlockRect(true, 0.f, 0.f, vw, vh);
+            const startup_key_ui::Result result = startup_key_ui::Draw(entry, vw, vh);
+            drawEnd();
+            if (result == startup_key_ui::Result::Accepted) accepted = true;
+            if (result == startup_key_ui::Result::Cancelled) break;
+        }
+        Touch_BlockRect(false, 0.f, 0.f, 0.f, 0.f);
+        if (!accepted) {
+            s_touchRetryRun.store(false);
+            ArmShutdownDeadline();
+            Blur::Free();
+            shutdown();
+            Touch_Close();
+            CfgWatchFree();
+            AudioFree();
+            _exit(1);
+        }
+    }
+
+    // Only after a successful key check may the launcher be detached and the
+    // descriptors redirected to /dev/null. No game attachment has started yet.
+    stealth::ApplyRuntime();
     // Версия выбирается до транспорта и до первого bind: весь reader видит
     // один согласованный набор оффсетов на протяжении сессии.
     if (!modesel::RunVersionSelect() || !modesel::RunModeSelect()) {
+        s_touchRetryRun.store(false);
         // Приложение закрыли, не выбрав режим: выходим тем же порядком,
         // что и обычный выход (привязки и чит-конвейеров ещё нет — их
         // остановка здесь пустая, но последовательность та же).
@@ -587,6 +628,7 @@ int main(int argc, char* argv[]) {
         drawEnd();
         g_frame_done.store(true);
     }
+    s_touchRetryRun.store(false);
     // Start the deadline before EGL teardown as well: the compositor itself
     // may be the blocked component holding the last overlay frame on screen.
     ArmShutdownDeadline();

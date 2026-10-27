@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real startup prompt through pipes and a pseudo-terminal."""
 import os
+import fcntl
 import pty
 import queue
 import select
@@ -12,13 +13,15 @@ import time
 
 PROMPT = b"Enter key:\n"
 
-# The diagnostic CLI deliberately bypasses the gate; the ordinary path must
-# still prompt before fork/setsid and before stdio is redirected to /dev/null.
+# The diagnostic CLI deliberately bypasses the gate. The normal path must
+# present both console and overlay routes before redirecting stdio/attaching.
 with open("jni/src/main.cpp", encoding="utf-8") as source:
     main = source.read().split("int main(int argc, char* argv[])", 1)[1]
-    assert main.index("--check-driver") < main.index("startup_key::Verify()")
-    assert main.index("startup_key::Verify()") < main.index("stealth::DaemonizeEarly()")
-    assert main.index("startup_key::Verify()") < main.index("stealth::ApplyRuntime()")
+    assert main.index("--check-driver") < main.index("startup_key::PrintPrompt()")
+    assert main.index("startup_key::PrintPrompt()") < main.index("stealth::DaemonizeEarly()")
+    assert main.index("startup_key_ui::Draw") < main.index("stealth::ApplyRuntime()")
+    assert main.index("stealth::ApplyRuntime()") < main.index("start_attach_thread()")
+    assert "startup_input.Poll(STDIN_FILENO)" in main
 
 
 def read_prompt(fd, process):
@@ -79,10 +82,17 @@ def terminal(binary):
     attrs = termios.tcgetattr(slave)
     attrs[3] &= ~termios.ECHO
     termios.tcsetattr(slave, termios.TCSANOW, attrs)
-    p = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    def controlling_terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    p = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave,
+                         close_fds=True, preexec_fn=controlling_terminal)
     os.close(slave)
     try:
         read_prompt(master, p)
+        # Wait beyond the initial nonblocking probe: the child has forked and
+        # detached its session, just as it does before the real overlay.
+        time.sleep(0.25)
         os.write(master, b"t.me/benzware\n")
         assert p.wait(timeout=5) == 0
     finally:
@@ -96,7 +106,23 @@ for binary in sys.argv[1:]:
     piped(binary, b"t.me/benzware\n", 0, b"")
     piped(binary, b"t.me/benzware\r\n", 0, b"")
     piped(binary, b"wrong\n", 1, b"Invalid key")
-    piped(binary, b"", 1, b"interactive terminal")
+    piped(binary, b"", 2, b"GUI fallback required")
     line_buffered_launcher(binary)
     terminal(binary)
-    print(f"startup prompt via pipe, line-buffered launcher and PTY: PASS ({os.path.basename(binary)})")
+    # Model a file-manager launcher that waits for process exit before showing
+    # any stdout, while keeping stdin open. The fallback must be activated
+    # without seeing or consuming a key, and later pipe input must still work.
+    p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert p.stderr.readline() == b"GUI fallback ready\n"
+        assert p.poll() is None
+        p.stdin.write(b"t.me/benzware\n")
+        p.stdin.flush()
+        out, err = p.communicate(timeout=5)
+        assert p.returncode == 0, (p.returncode, err)
+        assert out == PROMPT
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    print(f"startup gate via pipe, buffered launcher and detached PTY: PASS ({os.path.basename(binary)})")

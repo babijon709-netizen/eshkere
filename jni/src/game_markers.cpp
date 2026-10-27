@@ -267,7 +267,7 @@ static std::unordered_map<uint64_t, uint8_t> g_marker_class_kind;
 
 
 std::vector<FarmEntity> g_farm_entities;
-std::unordered_map<uint64_t, int> g_farm_blacklist; // identity -> frames left
+std::unordered_map<uint64_t, double> g_farm_blacklist; // component -> monotonic expiry
 // Когда можно начинать следующий проход скана реестра, в mono_seconds().
 // Раньше здесь был счётчик КАДРОВ (120, при пустом списке 30), рассчитанный на
 // 60 fps: устройство пользователя рисует 118 кадров/с, поэтому скан запускался

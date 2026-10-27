@@ -339,7 +339,7 @@ int         esp_local_aim_source();
 // попадание в крестик засчитывается в серию и даёт бонусный ресурс.
 struct FarmTarget {
     bool  valid = false;
-    unsigned long long id = 0;    // NetworkIdentity (для чёрного списка)
+    unsigned long long id = 0;    // Mineable-компонент: отдельный узел и blacklist
     int   kind = 0;               // 0 дерево, 1 камень, 2 металл, 3 сера
     float fraction = -1.f;        // остаток ресурса 0..1, -1 = не читается
 
@@ -485,7 +485,7 @@ void        esp_farm_set_resources(unsigned mask);
 void        esp_farm_set_range(float meters);
 // Ближайший подходящий узел по состоянию последнего esp_get_boxes() (нужна
 // его камера).
-bool        esp_farm_get_target(FarmTarget& out);
+bool        esp_farm_get_target(FarmTarget& out, unsigned long long preferred_id = 0);
 // Пин крестика: телепортировать крестик текущего узла в точку, куда реально
 // падает удар (живой луч прицела игры). Дерево — переписывается сегмент
 // MTQ/MTu (проверка серии), руда — мировая позиция маркера (os()). Работает
@@ -502,9 +502,6 @@ bool        esp_farm_cross_pin(const FarmTarget& target, bool enabled);
 bool        esp_farm_cross_healthy();
 // Сдаться на узле (недостижим / застряли) на `seconds`.
 void        esp_farm_blacklist(unsigned long long id, float seconds);
-// Узел только что добыт: записи узлов в паре метров от места добычи коротко
-// не выбираются (пень, дроп, устаревший список) — бот не крутится вокруг пня.
-void        esp_farm_note_harvest(unsigned long long id);
 // Почему последний esp_farm_get_target() ничего не вернул + сколько узлов
 // насчитал последний скан реестра. Причины: 0 ок, 1 фарм выключен,
 // 2 кадр не опубликован (нет камеры/позиции), 3 в реестре нет подходящих

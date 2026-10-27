@@ -61,8 +61,8 @@ inline bool wr_buf(uint64_t addr, const void* in, size_t size) {
 }
 
 struct FarmEntity {
-    uint64_t identity = 0;      // NetworkIdentity (stable id for the blacklist)
-    uint64_t component = 0;     // the Mineable* component (fraction reads)
+    uint64_t identity = 0;      // NetworkIdentity, may own several mineable components
+    uint64_t component = 0;     // Mineable* component: per-node id, HP and blacklist
     uint64_t transform = 0;     // native Transform (position)
     Vec3     pos{};
     bool     pos_valid = false;
@@ -110,7 +110,7 @@ extern int g_farm_idle_reason;
 
 // Состояние реестра/скана, общее с автофармой (определено в game_markers.cpp).
 extern std::vector<FarmEntity> g_farm_entities;
-extern std::unordered_map<uint64_t, int> g_farm_blacklist;
+extern std::unordered_map<uint64_t, double> g_farm_blacklist;
 extern double g_farm_next_scan;
 
 // Резолверы реестра маркеров (определены в game_markers.cpp).

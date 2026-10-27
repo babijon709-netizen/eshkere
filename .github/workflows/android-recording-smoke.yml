@@ -32,7 +32,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [26, 30, 34, 35]
+        include:
+          - {api: 26, target: default}
+          - {api: 28, target: default}
+          - {api: 29, target: default}
+          - {api: 30, target: default}
+          - {api: 34, target: default}
+          - {api: 35, target: google_apis}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -50,6 +56,14 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager 'ndk;26.3.11579264'
           python3 -m pip install --user 'av==16.0.1'
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -Ijni/include \
+            jni/src/record_mp4.cpp tools/tests/record_mp4_driver.cpp -o "$RUNNER_TEMP/mp4-driver"
+          python3 tools/tests/record_mp4_real_test.py "$RUNNER_TEMP/mp4-driver"
+          COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"
+          "$COMPILER" -std=c++17 -O2 -Wall -Wextra -Werror -fPIE -pie -static-libstdc++ -Ijni/include \
+            jni/src/record_capture.cpp jni/src/record_display.cpp jni/src/record_mp4.cpp \
+            tools/tests/android_record_helper.cpp -lmediandk -landroid -ldl -llog -o "$RUNNER_TEMP/record-helper"
+          echo "ANDROID_RECORD_HELPER=$RUNNER_TEMP/record-helper" >> "$GITHUB_ENV"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -59,8 +73,10 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
-          target: default
+          target: ${{ matrix.target }}
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: python3 tools/tests/android_record_symbols.py
+          script: |
+            python3 tools/tests/android_record_symbols.py
+            python3 tools/tests/android_record_smoke.py

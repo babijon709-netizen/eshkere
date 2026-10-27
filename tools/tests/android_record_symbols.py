@@ -17,9 +17,12 @@ def main():
                 "mirrorDisplayE", "getDefaultE", "getIGraphicBufferProducerE", "getBuiltInDisplayE",
                 "getInternalDisplayTokenE", "getPhysicalDisplayIdsE", "getPhysicalDisplayTokenE",
                 "getDisplayStateE", "getDisplayInfoE", "setDisplaySurfaceE", "setDisplayProjectionE",
-                "setDisplayLayerStackE", "setLayerStackE", "openGlobalTransactionE", "closeGlobalTransactionE",
-                "TransactionC", "TransactionD", "Transaction5applyE")
-        symbols = [line.split()[-1] for line in result.stdout.splitlines() if any(key in line for key in keys)]
+                "setDisplayLayerStackE", "setLayerStackE", "setDisplaySizeE",
+                "openGlobalTransactionE", "closeGlobalTransactionE",
+                "TransactionC1E", "TransactionC2E", "TransactionD1E", "TransactionD2E", "Transaction5applyE",
+                "SortedVectorINS_12DisplayStateEEC")
+        symbols = [line.split()[-1] for line in result.stdout.splitlines()
+                   if len(line.split()[-1]) < 220 and any(key in line for key in keys)]
         api = subprocess.run(["adb", "shell", "getprop", "ro.build.version.sdk"],
                              check=True, capture_output=True, text=True).stdout.strip()
         if not symbols:

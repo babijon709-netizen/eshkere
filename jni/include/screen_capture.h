@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include "screen_capture_options.h"
 
 // A fallback for WindowManager/MediaProjection paths which omit standalone
 // SurfaceFlinger layers. These commands capture the physical display instead;
@@ -26,7 +27,8 @@ public:
     Job& operator=(const Job&) = delete;
 
     StartResult start(Kind kind, const std::string& executable,
-                      const std::string& directory, const std::string& log_path = {});
+                      const std::string& directory, const std::string& log_path = {},
+                      VideoOptions options = {});
     bool stop();
     bool poll(Event& event);
     void shutdown();
@@ -42,7 +44,7 @@ private:
 };
 
 StartResult Screenshot();
-StartResult StartVideo();
+StartResult StartVideo(VideoOptions options = {});
 bool StopVideo();
 bool VideoRunning();
 bool VideoStopping();

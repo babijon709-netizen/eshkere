@@ -245,7 +245,7 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
 struct CfgExt2Trailer {
     uint32_t magic;          // "CFX2"
     uint32_t version;        // 1
-    uint32_t flags;
+    uint32_t flags;          // bits 18–21: recording duration and bitrate
     float    esp_arrow_ring;
     float    esp_radar_size;
     float    esp_radar_range;
@@ -270,6 +270,11 @@ struct CfgExt2Trailer {
 };
 static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
 
+static void ApplyCaptureConfig(uint32_t flags) {
+    g_state.streamer_mode = overlay_capture::visible_from_config(flags);
+    g_state.capture_video = screen_capture::video_from_config(flags);
+}
+
 static void WriteExt2Trailer(std::ostream& f) {
     CfgExt2Trailer t{};
     t.magic = kCfgExt2Magic;
@@ -291,7 +296,8 @@ static void WriteExt2Trailer(std::ostream& f) {
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
               (g_state.esp_armor     ? (1u << 16) : 0u) |
-              overlay_capture::config_flag(g_state.streamer_mode);
+              overlay_capture::config_flag(g_state.streamer_mode) |
+              screen_capture::video_config_flags(g_state.capture_video);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
     t.esp_radar_size   = g_state.esp_radar_size;
     t.esp_radar_range  = g_state.esp_radar_range;
@@ -772,9 +778,9 @@ static void LoadCfgByName(const char* name, bool announce) {
         b01(g_state.esp_team); b01(g_state.ui_dark_mode);
         g_state.viewmodel.no_ballistics = false;
         g_state.a_no_ballistics = 0.f;
-        // Old profiles have no bit (or no trailer): retain the legacy
-        // capture-visible default even after loading one over a newer profile.
-        g_state.streamer_mode = overlay_capture::visible_from_config(hasExt2 ? ext2.flags : 0u);
+        // Old profiles have no new bits (or no trailer): restore the legacy
+        // capture-visible and video defaults even after loading a newer profile.
+        ApplyCaptureConfig(hasExt2 ? ext2.flags : 0u);
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
             g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;

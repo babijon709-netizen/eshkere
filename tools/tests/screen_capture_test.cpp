@@ -103,16 +103,35 @@ int main(int argc, char** argv) {
     assert(video.running() && video.stop() && video.stopping() && !video.stop());
     e = wait_for(video);
     assert(e.success && e.kind == Kind::Video && e.exit_code == 0);
+    assert(contents(e.path).find("video started duration=180 bitrate=auto") != std::string::npos);
     assert(contents(e.path).find("video finalized") != std::string::npos);
     assert(!video.running() && !video.stopping());
 
+    // The forked command receives a snapshot in seconds and bits/second.
+    VideoOptions selected{60, 8};
+    assert(video.start(Kind::Video, fake, videos, log, selected) == StartResult::Started);
+    selected = {120, 16};
+    assert(video.stop());
+    e = wait_for(video); assert(e.success);
+    assert(contents(e.path).find("video started duration=60 bitrate=8000000") != std::string::npos);
+
     // The still and video jobs can overlap; the second supervisor must close
     // the first job's inherited socket so it cannot keep that job alive.
-    assert(video.start(Kind::Video, fake, videos, log) == StartResult::Started);
+    assert(video.start(Kind::Video, fake, videos, log, {120, 4}) == StartResult::Started);
     assert(shot.start(Kind::Screenshot, fake, shots, log) == StartResult::Started);
     e = wait_for(shot); assert(e.success && e.kind == Kind::Screenshot);
     assert(video.stop());
     e = wait_for(video); assert(e.success && e.kind == Kind::Video);
+    assert(contents(e.path).find("video started duration=120 bitrate=4000000") != std::string::npos);
+
+    assert(video.start(Kind::Video, fake, videos, log, {180, 16}) == StartResult::Started);
+    assert(video.stop());
+    e = wait_for(video); assert(e.success);
+    assert(contents(e.path).find("video started duration=180 bitrate=16000000") != std::string::npos);
+    assert(video.start(Kind::Video, fake, videos, log, {-1, 999}) == StartResult::Started);
+    assert(video.stop());
+    e = wait_for(video); assert(e.success);
+    assert(contents(e.path).find("video started duration=180 bitrate=auto") != std::string::npos);
 
     // Closing the control channel (normal app exit or process death) also
     // requests a graceful stop; it must not leave an orphaned recorder.

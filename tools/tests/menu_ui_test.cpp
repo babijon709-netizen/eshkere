@@ -34,9 +34,10 @@ float g_cfgLoadAnim[kMaxConfigs] = {};
 static int loads = 0, saves = 0, updates = 0, applies = 0;
 static int screenshots = 0, videoStarts = 0, videoStops = 0;
 static bool videoRunning = false, videoStopping = false;
+static screen_capture::VideoOptions lastVideoOptions{};
 namespace screen_capture {
 StartResult Screenshot() { ++screenshots; return StartResult::Started; }
-StartResult StartVideo() { ++videoStarts; videoRunning = true; return StartResult::Started; }
+StartResult StartVideo(VideoOptions options) { lastVideoOptions = options; ++videoStarts; videoRunning = true; return StartResult::Started; }
 bool StopVideo() { if (videoStopping) return false; ++videoStops; videoStopping = true; return true; }
 bool VideoRunning() { return videoRunning; }
 bool VideoStopping() { return videoStopping; }
@@ -242,23 +243,44 @@ static void configAndOptionsTests() {
     tap(tab(4), id("##cfgcreate")); assert(saves == 1);
     fresh("options"); assert(frame(tab(5)) < 750.f);
     assert(g_state.streamer_mode); // preserve legacy full-screen capture behavior
-    tap(tab(5), groupId("##options_streamer", "enable")); assert(!g_state.streamer_mode);
-    for (auto group : {"##options_streamer", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
-    for (auto label : {"##lang0", "##lang1", "##ud2", "##acc8", "##hud_cnt", "##pstyle0", "##pstyle1", "##exit"}) assert(items.count(id(label)));
+    assert(g_state.capture_video.duration_seconds == 180 && g_state.capture_video.bitrate_mbps == 0);
+    assert(!items.count(groupId("##options_capture", "enable"))); // switch has an explicit label inside
+    for (auto group : {"##options_capture", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"}) expand(5, group);
+    for (auto label : {"##capture_overlay", "##lang0", "##lang1", "##ud2", "##acc8", "##hud_cnt", "##pstyle0", "##pstyle1", "##exit"}) assert(items.count(id(label)));
+    tap(tab(5), id("##capture_overlay")); assert(!g_state.streamer_mode);
     screenshots = videoStarts = videoStops = 0; videoRunning = videoStopping = false;
     tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 1);
     tap(tab(5), choiceId("##capture_actions", 0)); assert(screenshots == 2); // actions aren't sticky choices
+    tap(tab(5), choiceId("##capture_duration", 0)); assert(g_state.capture_video.duration_seconds == 60);
+    tap(tab(5), choiceId("##capture_bitrate", 2)); assert(g_state.capture_video.bitrate_mbps == 8);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStarts == 1 && videoRunning);
+    assert(lastVideoOptions.duration_seconds == 60 && lastVideoOptions.bitrate_mbps == 8);
+    // Changing settings while running must only change the next start.
+    tap(tab(5), choiceId("##capture_duration", 1)); assert(g_state.capture_video.duration_seconds == 120);
+    tap(tab(5), choiceId("##capture_bitrate", 3)); assert(g_state.capture_video.bitrate_mbps == 16);
+    assert(lastVideoOptions.duration_seconds == 60 && lastVideoOptions.bitrate_mbps == 8);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1 && videoStopping);
     tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStops == 1); // no repeated stop
+    videoRunning = videoStopping = false;
+    tap(tab(5), choiceId("##capture_actions", 1)); assert(videoStarts == 2);
+    assert(lastVideoOptions.duration_seconds == 120 && lastVideoOptions.bitrate_mbps == 16);
+    tap(tab(5), choiceId("##capture_duration", 2)); assert(g_state.capture_video.duration_seconds == 180);
+    tap(tab(5), choiceId("##capture_bitrate", 1)); assert(g_state.capture_video.bitrate_mbps == 4);
+    tap(tab(5), choiceId("##capture_bitrate", 0)); assert(g_state.capture_video.bitrate_mbps == 0);
     tap(tab(5), id("##lang1")); assert(lang::english());
     frame(tab(5)); assert(items.count(id("##ud2"))); // expansion survives localization
-    assert(std::strcmp(lang::text("Стример-мод"), "Streamer mode") == 0);
-    assert(std::strcmp(lang::text("Скриншот"), "Screenshot") == 0);
-    assert(std::strcmp(lang::text("Начать запись"), "Start recording") == 0);
-    assert(std::strcmp(lang::text("Остановить запись"), "Stop recording") == 0);
-    assert(std::strcmp(lang::text("Ошибка захвата|см. capture.log"), "Capture failed|see capture.log") == 0);
-    tap(tab(5), groupId("##options_streamer", "enable")); assert(g_state.streamer_mode);
+    for (const auto& entry : {std::pair{"Запись экрана", "Screen recording"},
+                              std::pair{"Оверлей в захвате", "Overlay in capture"},
+                              std::pair{"Лимит записи", "Recording limit"},
+                              std::pair{"Битрейт, Мбит/с", "Bitrate, Mbps"},
+                              std::pair{"Авто", "Auto"}, std::pair{"1 мин", "1 min"},
+                              std::pair{"2 мин", "2 min"}, std::pair{"3 мин", "3 min"},
+                              std::pair{"Скриншот", "Screenshot"},
+                              std::pair{"Начать запись", "Start recording"},
+                              std::pair{"Остановить запись", "Stop recording"},
+                              std::pair{"Ошибка захвата|см. capture.log", "Capture failed|see capture.log"}})
+        assert(std::strcmp(lang::text(entry.first), entry.second) == 0);
+    tap(tab(5), id("##capture_overlay")); assert(g_state.streamer_mode);
     tap(tab(5), id("##hud_cnt")); assert(g_calibMode == 5);
     g_calibMode = 0;
     tap(tab(5), id("##pstyle1")); assert(!g_state.ui_panel_left);
@@ -362,7 +384,7 @@ int main(int argc, char** argv) {
         "##aim_target", "##aim_filters", "##aim_tuning", "##aim_touch_settings",
         "##esp_players", "##esp_arrows", "##esp_radar", "##esp_ore", "##esp_entities", "##esp_loot", "##esp_distance",
         "##misc_fov", "##misc_hands", "##misc_freecam", "##misc_xray", "##misc_weapon", "##misc_farm", "##misc_world", "##misc_fakelag", "##misc_fps",
-        "##options_streamer", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"};
+        "##options_capture", "##options_language", "##options_appearance", "##options_hud", "##options_tabs"};
     auto* window = ImGui::FindWindowByName(windowName.c_str());
     for (const char* group : expandedGroups)
         window->StateStorage.SetBool(ImHashStr("expanded", 0, id(group)), true);
@@ -379,6 +401,17 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // ToggleRow clips instead of scaling text; keep the capture switch label
+    // readable at the narrow tested content width in both languages.
+    fresh("capture-label-width"); width = 464.f;
+    frame([&] {
+        const float available = width - 2.f * (Layout::Inset + Layout::PadX) - 72.f - 16.f;
+        for (const char* label : {"Оверлей в захвате", "Overlay in capture"}) {
+            const float measured = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize() * 1.15f,
+                                                                   FLT_MAX, 0.f, label).x;
+            assert(measured <= available);
+        }
+    });
     ImGui::DestroyContext();
     std::puts("PASS: compact widgets, all five tabs, feature controls, calibration actions, profiles, localization, clipping, scroll bounds");
     return 0;

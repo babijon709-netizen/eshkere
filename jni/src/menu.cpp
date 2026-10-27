@@ -492,18 +492,7 @@ float TabContent(int tab, float dt, float cW) {
         // применяется сразу, на текущем кадре. Названия самих языков пишем на
         // них самих — так строка понятна при любом выбранном языке.
         SHdr(XS("Интерфейс"));
-        if (SettingsHeader("##options_streamer", XS("Стример-мод"), XS("Скриншоты и запись"),
-                           false, &g_state.streamer_mode, g_state.a_streamer_mode)) {
-            const float indent = Layout::Inset + Layout::PadX;
-            ImGui::Indent(indent);
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImMax(1.f, ImGui::GetContentRegionAvail().x - indent));
-            ImGui::PushStyleColor(ImGuiCol_Text, C::Dim());
-            ImGui::TextWrapped("%s", XS("Вкл: разрешить захват оверлея. Выкл: попросить исключить."));
-            ImGui::TextWrapped("%s", XS("Встроенный захват: весь экран, видео до 3 минут без звука. Системная запись может не видеть оверлей."));
-            ImGui::PopStyleColor();
-            ImGui::PopTextWrapPos();
-            ImGui::Unindent(indent);
-
+        if (SettingsHeader("##options_capture", XS("Запись экрана"))) {
             const char* const actions[] = {
                 XS("Скриншот"),
                 screen_capture::VideoStopping() ? XS("Остановка...") :
@@ -514,7 +503,7 @@ float TabContent(int tab, float dt, float cW) {
                 if (action == 1 && screen_capture::VideoRunning()) {
                     if (screen_capture::StopVideo()) ShowToast(XS("Останавливаю запись"));
                 } else {
-                    const auto result = action == 0 ? screen_capture::Screenshot() : screen_capture::StartVideo();
+                    const auto result = action == 0 ? screen_capture::Screenshot() : screen_capture::StartVideo(g_state.capture_video);
                     switch (result) {
                         case screen_capture::StartResult::Started:
                             ShowToast(action == 0 ? XS("Создаю скриншот") : XS("Запускаю запись"));
@@ -526,6 +515,22 @@ float TabContent(int tab, float dt, float cW) {
                     }
                 }
             }
+
+            CardBg(Layout::RowH);
+            ToggleRow("##capture_overlay", XS("Оверлей в захвате"), &g_state.streamer_mode,
+                      g_state.a_streamer_mode, true, true);
+
+            SHdr(XS("Лимит записи"), 4.f);
+            const char* const durations[] = {XS("1 мин"), XS("2 мин"), XS("3 мин")};
+            int duration = screen_capture::duration_index(g_state.capture_video.duration_seconds);
+            if (ChoiceRow("##capture_duration", &duration, durations, 3))
+                g_state.capture_video.duration_seconds = screen_capture::duration_at(duration);
+
+            SHdr(XS("Битрейт, Мбит/с"), 4.f);
+            const char* const bitrates[] = {XS("Авто"), "4", "8", "16"};
+            int bitrate = screen_capture::bitrate_index(g_state.capture_video.bitrate_mbps);
+            if (ChoiceRow("##capture_bitrate", &bitrate, bitrates, 4))
+                g_state.capture_video.bitrate_mbps = screen_capture::bitrate_at(bitrate);
         }
         if (SettingsHeader("##options_language", XS("Язык"), lang::english() ? "English" : "Русский"))
         {

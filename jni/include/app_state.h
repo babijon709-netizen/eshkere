@@ -5,6 +5,7 @@
 #include <atomic>
 #include "imgui.h"
 #include "viewmodel.h"
+#include "screen_capture_options.h"
 
 struct InputState {
     bool touchConsumed = false;
@@ -132,6 +133,8 @@ struct AppState {
     // экрана. По умолчанию вкл, как в старых версиях (Create(..., false)).
     // Это не обходит ограничения записи отдельного приложения или OEM.
     bool  streamer_mode = true;
+    // Settings affect the next recording; zero bitrate uses Android's default.
+    screen_capture::VideoOptions capture_video{};
     // ui_fps выключен навсегда (счётчик убран), рамки карточек — всегда вкл.
     bool  ui_fps = false, ui_dark_mode = true, ui_show_sep = true;
     // Акцент интерфейса (палитра в «Опциях»): 0 = фиолет по умолчанию,

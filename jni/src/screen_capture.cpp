@@ -181,7 +181,8 @@ Job g_video;
 Job::~Job() { shutdown(); }
 
 StartResult Job::start(Kind kind, const std::string& executable,
-                       const std::string& directory, const std::string& log_path) {
+                       const std::string& directory, const std::string& log_path,
+                       VideoOptions options) {
     if (running()) return StartResult::Busy;
     if (executable.empty() || executable[0] != '/' || access(executable.c_str(), X_OK) != 0)
         return StartResult::MissingCommand;
@@ -212,15 +213,27 @@ StartResult Job::start(Kind kind, const std::string& executable,
         if (log_fd >= 0)
             (void)dprintf(log_fd, "\n[capture] %s -> %s\n", executable.c_str(), path_.c_str());
     }
-    char* args[5] = {const_cast<char*>(executable.c_str()), nullptr, nullptr, nullptr, nullptr};
+    // Prepare arguments before forking. Changes in the menu while recording
+    // affect only the next video; Auto omits --bit-rate entirely.
+    options = sanitize(options);
+    char duration[16];
+    char bitrate[16];
+    std::snprintf(duration, sizeof(duration), "%d", options.duration_seconds);
+    std::snprintf(bitrate, sizeof(bitrate), "%d", options.bitrate_mbps * 1000000);
+    char* args[7] = {};
+    int arg = 0;
+    args[arg++] = const_cast<char*>(executable.c_str());
     if (kind == Kind::Screenshot) {
-        args[1] = const_cast<char*>("-p");
-        args[2] = const_cast<char*>(path_.c_str());
+        args[arg++] = const_cast<char*>("-p");
     } else {
-        args[1] = const_cast<char*>("--time-limit");
-        args[2] = const_cast<char*>("180");
-        args[3] = const_cast<char*>(path_.c_str());
+        args[arg++] = const_cast<char*>("--time-limit");
+        args[arg++] = duration;
+        if (options.bitrate_mbps != 0) {
+            args[arg++] = const_cast<char*>("--bit-rate");
+            args[arg++] = bitrate;
+        }
     }
+    args[arg] = const_cast<char*>(path_.c_str());
     const long max_fd = max_open_files();
     const pid_t supervisor = fork();
     if (supervisor == 0) {
@@ -288,9 +301,9 @@ StartResult Screenshot() {
     return g_screenshot.start(Kind::Screenshot, "/system/bin/screencap",
                               "/sdcard/Pictures/Benzware", capture_log_path());
 }
-StartResult StartVideo() {
+StartResult StartVideo(VideoOptions options) {
     return g_video.start(Kind::Video, "/system/bin/screenrecord",
-                         "/sdcard/Movies/Benzware", capture_log_path());
+                         "/sdcard/Movies/Benzware", capture_log_path(), options);
 }
 bool StopVideo() { return g_video.stop(); }
 bool VideoRunning() { return g_video.running(); }

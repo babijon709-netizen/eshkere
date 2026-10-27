@@ -58,11 +58,19 @@ jobs:
           python3 -m pip install --user 'av==16.0.1'
           g++ -std=c++17 -O2 -Wall -Wextra -Werror -Ijni/include \
             jni/src/record_mp4.cpp tools/tests/record_mp4_driver.cpp -o "$RUNNER_TEMP/mp4-driver"
-          python3 tools/tests/record_mp4_real_test.py "$RUNNER_TEMP/mp4-driver"
+          if ! python3 tools/tests/record_mp4_real_test.py "$RUNNER_TEMP/mp4-driver" >"$RUNNER_TEMP/mp4.log" 2>&1; then
+            python3 -c 'import pathlib,sys; print("::error title=MP4 writer smoke::"+pathlib.Path(sys.argv[1]).read_text().replace("%","%25").replace("\n","%0A"))' "$RUNNER_TEMP/mp4.log"
+            cat "$RUNNER_TEMP/mp4.log"
+            exit 1
+          fi
           COMPILER="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang++"
-          "$COMPILER" -std=c++17 -O2 -Wall -Wextra -Werror -fPIE -pie -static-libstdc++ -Ijni/include \
+          if ! "$COMPILER" -std=c++17 -O2 -Wall -Wextra -Werror -fPIE -pie -static-libstdc++ -Ijni/include \
             jni/src/record_capture.cpp jni/src/record_display.cpp jni/src/record_mp4.cpp \
-            tools/tests/android_record_helper.cpp -lmediandk -landroid -ldl -llog -o "$RUNNER_TEMP/record-helper"
+            tools/tests/android_record_helper.cpp -lmediandk -landroid -ldl -llog -o "$RUNNER_TEMP/record-helper" >"$RUNNER_TEMP/record-build.log" 2>&1; then
+            python3 -c 'import pathlib,sys; print("::error title=Recorder build::"+pathlib.Path(sys.argv[1]).read_text().replace("%","%25").replace("\n","%0A"))' "$RUNNER_TEMP/record-build.log"
+            cat "$RUNNER_TEMP/record-build.log"
+            exit 1
+          fi
           echo "ANDROID_RECORD_HELPER=$RUNNER_TEMP/record-helper" >> "$GITHUB_ENV"
       - name: Enable KVM
         run: |

@@ -19,6 +19,7 @@
 #include "startup_key.h"
 #include "screen_capture.h"
 #include "capture_merge.h"
+#include "record_capture.h"
 #include "mode_select.h"
 #include "metadata_dump.h"
 #include "skeleton_diag.h"
@@ -30,6 +31,8 @@
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -382,8 +385,17 @@ static void PollScreenCaptures() {
 
 int main(int argc, char* argv[]) {
     BW_GUARD();
-    // Private helper mode is reached by exec, before the key gate, stealth,
-    // Binder, rendering or game initialization. It does not start the menu.
+    // Private helpers run after a fresh exec, before the key gate, stealth,
+    // Binder, rendering or game initialization. They do not start the menu.
+    if (argc == 4 && strcmp(argv[1], "--capture-record") == 0) {
+        char *fd_end = nullptr, *rate_end = nullptr;
+        errno = 0;
+        const long fd = std::strtol(argv[2], &fd_end, 10);
+        const long rate = std::strtol(argv[3], &rate_end, 10);
+        if (errno || fd_end == argv[2] || *fd_end || rate_end == argv[3] || *rate_end ||
+            fd < 3 || fd > INT_MAX || rate < 0 || rate > INT_MAX) return 2;
+        return record_capture::Run(static_cast<int>(fd), static_cast<int>(rate));
+    }
     if (argc == 4 && strcmp(argv[1], "--capture-merge") == 0)
         return capture_merge::Run(argv[2], argv[3]);
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver

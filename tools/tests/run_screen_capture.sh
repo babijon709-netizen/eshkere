@@ -16,8 +16,12 @@ fi
 "${CXX:-g++}" -std=c++17 -O1 -g -pthread -Ijni/include \
     tools/tests/screen_capture_test.cpp jni/src/screen_capture.cpp -o "$tmp/screen_capture_test"
 "$tmp/screen_capture_test" "$tmp/fake_capture" "$tmp/output"
-# Android caps each recording command at 180s; shorten only the test build so
-# several real supervisor rollovers and failures can be checked quickly.
-"${CXX:-g++}" -std=c++17 -O1 -g -pthread -DSCREEN_CAPTURE_TEST_SEGMENT_SECONDS=2 -Ijni/include \
-    tools/tests/screen_capture_rollover_test.cpp jni/src/screen_capture.cpp -o "$tmp/screen_capture_rollover_test"
-"$tmp/screen_capture_rollover_test" "$tmp/fake_capture" "$tmp/rollover-output"
+# The writer test uses real H.264 and tests seeking, crash recovery and sparse
+# >4 GiB offsets. Other capture tests do not require this optional dependency.
+"${CXX:-g++}" -std=c++17 -O2 -Wall -Wextra -Werror -Ijni/include \
+    jni/src/record_mp4.cpp tools/tests/record_mp4_driver.cpp -o "$tmp/record_mp4_driver"
+if python3 -c 'import av' 2>/dev/null; then
+    python3 tools/tests/record_mp4_real_test.py "$tmp/record_mp4_driver"
+else
+    echo "SKIP: real H.264 MP4 test (install PyAV 16.0.1)"
+fi

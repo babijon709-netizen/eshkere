@@ -17,8 +17,8 @@ struct Event {
     std::string path;
 };
 
-// One asynchronous capture job. Video segments are finalized into one MP4
-// after stop; on failure they remain recoverable. Exposed for the host rig.
+// One asynchronous capture job. Video is encoded continuously into one MP4;
+// complete fragments remain available if a later write fails. Exposed for tests.
 class Job {
 public:
     Job() = default;

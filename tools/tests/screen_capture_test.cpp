@@ -1,5 +1,4 @@
 #include "screen_capture.h"
-#include "fake_merge.h"
 
 #include <cassert>
 #include <chrono>
@@ -57,8 +56,6 @@ static void wait_for_file(const fs::path& dir, const std::string& needle) {
 }
 
 int main(int argc, char** argv) {
-    const int helper = fake_merge_helper(argc, argv);
-    if (helper >= 0) return helper;
     assert(argc == 3);
     const std::string fake = fs::absolute(argv[1]).string();
     const fs::path root = fs::absolute(argv[2]);
@@ -108,17 +105,17 @@ int main(int argc, char** argv) {
     assert(video.running() && video.stop() && video.stopping() && !video.stop());
     e = wait_for(video);
     assert(e.success && e.kind == Kind::Video && e.exit_code == 0);
-    assert(contents(e.path).find("video started duration=180 bitrate=auto") != std::string::npos);
+    assert(contents(e.path).find("video started bitrate=auto") != std::string::npos);
     assert(contents(e.path).find("video finalized") != std::string::npos);
     assert(!video.running() && !video.stopping());
 
-    // The forked command receives a snapshot in seconds and bits/second.
+    // The forked recorder receives a bitrate snapshot in bits/second.
     VideoOptions selected{8};
     assert(video.start(Kind::Video, fake, videos, log, selected) == StartResult::Started);
     selected = {16};
     assert(video.stop());
     e = wait_for(video); assert(e.success);
-    assert(contents(e.path).find("video started duration=180 bitrate=8000000") != std::string::npos);
+    assert(contents(e.path).find("video started bitrate=8000000") != std::string::npos);
 
     // The still and video jobs can overlap; the second supervisor must close
     // the first job's inherited socket so it cannot keep that job alive.
@@ -127,16 +124,44 @@ int main(int argc, char** argv) {
     e = wait_for(shot); assert(e.success && e.kind == Kind::Screenshot);
     assert(video.stop());
     e = wait_for(video); assert(e.success && e.kind == Kind::Video);
-    assert(contents(e.path).find("video started duration=180 bitrate=4000000") != std::string::npos);
+    assert(contents(e.path).find("video started bitrate=4000000") != std::string::npos);
 
     assert(video.start(Kind::Video, fake, videos, log, {16}) == StartResult::Started);
     assert(video.stop());
     e = wait_for(video); assert(e.success);
-    assert(contents(e.path).find("video started duration=180 bitrate=16000000") != std::string::npos);
+    assert(contents(e.path).find("video started bitrate=16000000") != std::string::npos);
     assert(video.start(Kind::Video, fake, videos, log, {999}) == StartResult::Started);
     assert(video.stop());
     e = wait_for(video); assert(e.success);
-    assert(contents(e.path).find("video started duration=180 bitrate=auto") != std::string::npos);
+    assert(contents(e.path).find("video started bitrate=auto") != std::string::npos);
+
+    // The same recorder stays alive throughout a long session. There is one
+    // output and one start, not a rollover or a hidden remux.
+    const fs::path continuous_dir = root / "continuous";
+    assert(video.start(Kind::Video, fake, continuous_dir.string(), log) == StartResult::Started);
+    std::this_thread::sleep_for(2500ms);
+    assert(video.running() && video.stop());
+    e = wait_for(video); assert(e.success);
+    const std::string recorded = contents(e.path);
+    const size_t start_pos = recorded.find("video started");
+    assert(start_pos != std::string::npos && recorded.find("video started", start_pos + 1) == std::string::npos);
+    assert(recorded.find("video finalized") != std::string::npos);
+    size_t outputs = 0;
+    for (const auto& entry : fs::directory_iterator(continuous_dir)) {
+        assert(entry.path().filename().string().find("-part") == std::string::npos);
+        if (entry.path().extension() == ".mp4") ++outputs;
+    }
+    assert(outputs == 1);
+
+    // Failure and an unexpected successful exit are both surfaced, while a
+    // nonempty partial recording is never removed.
+    const std::string failed_dir = (root / "fake-fail").string();
+    assert(video.start(Kind::Video, fake, failed_dir, log) == StartResult::Started);
+    e = wait_for(video); assert(!e.success && e.exit_code == 9 && fs::exists(e.path));
+    assert(contents(e.path).find("video started") != std::string::npos);
+    const std::string early_dir = (root / "fake-early").string();
+    assert(video.start(Kind::Video, fake, early_dir, log) == StartResult::Started);
+    e = wait_for(video); assert(!e.success && e.exit_code == -1 && fs::exists(e.path));
 
     // Closing the control channel (normal app exit or process death) also
     // requests a graceful stop; it must not leave an orphaned recorder.

@@ -18,6 +18,7 @@
 #include "overlay_geometry.h"
 #include "startup_key.h"
 #include "screen_capture.h"
+#include "capture_merge.h"
 #include "mode_select.h"
 #include "metadata_dump.h"
 #include "skeleton_diag.h"
@@ -381,6 +382,10 @@ static void PollScreenCaptures() {
 
 int main(int argc, char* argv[]) {
     BW_GUARD();
+    // Private helper mode is reached by exec, before the key gate, stealth,
+    // Binder, rendering or game initialization. It does not start the menu.
+    if (argc == 4 && strcmp(argv[1], "--capture-merge") == 0)
+        return capture_merge::Run(argv[2], argv[3]);
     // Проверка драйвера из терминала (Termux/adb): su -c ./benzware --check-driver
     // (базовая) или --scan-driver (полный скан кодов команд) — без GUI,
     // до запуска оверлея и игры.

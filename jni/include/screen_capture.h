@@ -17,8 +17,8 @@ struct Event {
     std::string path;
 };
 
-// One asynchronous capture job. A video job spans successive screenrecord
-// segments until stopped; a screenshot runs once. Exposed for the host rig.
+// One asynchronous capture job. Video segments are finalized into one MP4
+// after stop; on failure they remain recoverable. Exposed for the host rig.
 class Job {
 public:
     Job() = default;

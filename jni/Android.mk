@@ -69,7 +69,7 @@ LOCAL_SRC_FILES := \
     src/main.cpp src/bw_obf.cpp \
     src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
     src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
-    src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp src/screen_capture.cpp \
+    src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp src/screen_capture.cpp src/capture_merge.cpp \
     src/game.cpp src/game_viewmodel.cpp src/game_markers.cpp src/game_farm.cpp \
     src/lang.cpp \
     src/Android_draw/draw.cpp src/Android_touch/TouchHelperA.cpp \
@@ -80,6 +80,6 @@ LOCAL_SRC_FILES := \
     src/ImGui/imgui_widgets.cpp src/ImGui/backends/imgui_impl_android.cpp \
     src/ImGui/backends/imgui_impl_opengl3.cpp
 
-LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv3 -lOpenSLES -lz -ldl
+LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv3 -lOpenSLES -lmediandk -lz -ldl
 
 include $(BUILD_EXECUTABLE)

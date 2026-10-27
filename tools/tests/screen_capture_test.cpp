@@ -1,4 +1,5 @@
 #include "screen_capture.h"
+#include "fake_merge.h"
 
 #include <cassert>
 #include <chrono>
@@ -38,7 +39,9 @@ static std::string contents(const fs::path& p) {
 static bool file_with(const fs::path& dir, const std::string& needle) {
     if (!fs::exists(dir)) return false;
     for (const auto& entry : fs::directory_iterator(dir))
-        if (entry.is_regular_file() && contents(entry.path()).find(needle) != std::string::npos)
+        if (entry.is_regular_file() && entry.path().extension() == ".mp4" &&
+            entry.path().filename().string().find("-part") == std::string::npos &&
+            contents(entry.path()).find(needle) != std::string::npos)
             return true;
     return false;
 }
@@ -54,6 +57,8 @@ static void wait_for_file(const fs::path& dir, const std::string& needle) {
 }
 
 int main(int argc, char** argv) {
+    const int helper = fake_merge_helper(argc, argv);
+    if (helper >= 0) return helper;
     assert(argc == 3);
     const std::string fake = fs::absolute(argv[1]).string();
     const fs::path root = fs::absolute(argv[2]);

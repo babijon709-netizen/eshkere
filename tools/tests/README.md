@@ -40,9 +40,12 @@ OEM compositor or recording app does on a real device.
 
 `run_screen_capture.sh` runs the real asynchronous capture-job implementation
 with fake executable commands, temporary paths and the app's ignored SIGCHLD.
-It also uses a two-second test segment to exercise autonomous repeated rollovers,
-stop at a boundary, collisions, early exits, failures and parent death. It does
-not capture Android pixels; the production segment remains 180 seconds.
+It also uses a two-second test segment to exercise autonomous rollovers, one-file
+finalization, stop at a boundary, collisions, merge failure and parent death.
+The real remuxer is tested with mock MediaNDK tracks, large sample buffers,
+timestamps, incompatible formats, write errors and corrupted output. These host
+mocks are not real MP4s and do not capture Android pixels; the production segment
+remains 180 seconds.
 `run_startup_cli.sh` tests the real key gate through pipes, a line-buffered
 launcher and a PTY, before and after the ELF patcher, including a complete
 prompt line before input, CRLF, wrong key and EOF.

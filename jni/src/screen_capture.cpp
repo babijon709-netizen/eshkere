@@ -19,7 +19,7 @@ namespace screen_capture {
 namespace {
 
 // Android's screenrecord enforces a maximum of 180 seconds per invocation.
-// A video session rolls over to a fresh file instead of having a session limit.
+// A video session rolls over internally and is remuxed after stop.
 #ifdef SCREEN_CAPTURE_TEST_SEGMENT_SECONDS
 constexpr int kSegmentSeconds = SCREEN_CAPTURE_TEST_SEGMENT_SECONDS;
 #else
@@ -44,27 +44,39 @@ bool ensure_directory(const std::string& path) {
     }
 }
 
-bool reserve_path(const std::string& directory, Kind kind, std::string& path) {
+bool reserve_path(const std::string& directory, Kind kind, std::string& path,
+                  std::string& first_part, struct stat& reservation) {
     const time_t now = time(nullptr);
     struct tm tm{};
     if (!localtime_r(&now, &tm)) return false;
     char timestamp[32];
     if (!strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", &tm)) return false;
-    const char* suffix = kind == Kind::Screenshot ? ".png" : kFirstPartSuffix;
+    const char* suffix = kind == Kind::Screenshot ? ".png" : ".mp4";
     for (unsigned i = 0; i < 1000; ++i) {
         char name[112];
         const int length = snprintf(name, sizeof(name), "/benzware-%s-%d-%03u%s",
                                     timestamp, static_cast<int>(getpid()), i, suffix);
         if (length <= 0 || static_cast<size_t>(length) >= sizeof(name)) return false;
         path = directory + name;
-        // Do not overwrite an earlier capture, even when two taps share a second.
+        // Reserve both names. Neither a prior result nor a recoverable part
+        // from an interrupted session may be overwritten.
         const int fd = open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
-        if (fd >= 0) {
-            (void)fchmod(fd, 0644);
-            close(fd);
+        if (fd < 0) { if (errno == EEXIST) continue; return false; }
+        (void)fchmod(fd, 0644);
+        const bool stated = fstat(fd, &reservation) == 0;
+        close(fd);
+        if (!stated) { (void)unlink(path.c_str()); return false; }
+        if (kind == Kind::Screenshot) return true;
+        first_part = path.substr(0, path.size() - sizeof(".mp4") + 1) + kFirstPartSuffix;
+        const int part_fd = open(first_part.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
+        if (part_fd >= 0) {
+            (void)fchmod(part_fd, 0644);
+            close(part_fd);
             return true;
         }
-        if (errno != EEXIST) return false;
+        const int error = errno;
+        (void)unlink(path.c_str());
+        if (error != EEXIST) return false;
     }
     return false;
 }
@@ -141,13 +153,50 @@ bool reserve_next_part(char* path, char* digits) {
     return true;
 }
 
+void previous_part(char* digits) {
+    for (int i = kPartDigits - 1; i >= 0; --i) {
+        if (digits[i] != '0') { --digits[i]; return; }
+        digits[i] = '9';
+    }
+}
+
+void redirect_log(int log_fd) {
+    if (log_fd >= 0) {
+        (void)dup2(log_fd, STDOUT_FILENO);
+        (void)dup2(log_fd, STDERR_FILENO);
+        if (log_fd > STDERR_FILENO) close(log_fd);
+    }
+}
+
+// The parent wipes its environment. Both system media commands and our
+// freshly exec'd merge helper need this minimal Android environment.
+void exec_media(const char* executable, char* const argv[]) {
+    char* const env[] = {
+        const_cast<char*>("PATH=/system/bin:/system/xbin"),
+        const_cast<char*>("ANDROID_ROOT=/system"),
+        const_cast<char*>("ANDROID_ASSETS=/system/app"),
+        const_cast<char*>("ANDROID_DATA=/data"),
+        const_cast<char*>("ANDROID_STORAGE=/storage"),
+        const_cast<char*>("ANDROID_ART_ROOT=/apex/com.android.art"),
+        const_cast<char*>("ANDROID_I18N_ROOT=/apex/com.android.i18n"),
+        const_cast<char*>("ANDROID_TZDATA_ROOT=/apex/com.android.tzdata"),
+        const_cast<char*>("EXTERNAL_STORAGE=/sdcard"),
+        const_cast<char*>("TMPDIR=/data/local/tmp"), nullptr
+    };
+    execve(executable, argv, env);
+    static constexpr char failed[] = "capture: execve failed\n";
+    (void)write(STDERR_FILENO, failed, sizeof(failed) - 1);
+    _exit(127);
+}
+
 // The app deliberately ignores SIGCHLD, so it cannot waitpid() the recorder.
-// This supervisor owns the current child and rolls video into 180-second MP4
-// parts until stopped. EOF on the control socket also ends the session if the
-// app exits or crashes. All post-fork work uses fixed buffers and syscalls.
+// This supervisor owns the child and rolls video into 180-second segments.
+// On stop or parent death it execs a clean helper to finalize one MP4. All work
+// before exec uses fixed buffers and syscalls, never media APIs after fork.
 [[noreturn]] void supervise(Kind kind, int result_fd, int control_fd, int log_fd,
                             long max_fd, const char* executable, char* const argv[],
-                            char* part_path, char* part_digits) {
+                            char* part_path, char* part_digits, const char* final_path,
+                            struct stat reservation) {
     close_inherited(max_fd, result_fd, control_fd, log_fd);
     set_signal(SIGCHLD, SIG_DFL);
     set_signal(SIGPIPE, SIG_IGN);
@@ -159,34 +208,12 @@ bool reserve_next_part(char* path, char* digits) {
         if (child == 0) {
             close(result_fd);
             close(control_fd);
-            if (log_fd >= 0) {
-                (void)dup2(log_fd, STDOUT_FILENO);
-                (void)dup2(log_fd, STDERR_FILENO);
-                if (log_fd > STDERR_FILENO) close(log_fd);
-            }
+            redirect_log(log_fd);
             set_signal(SIGINT, SIG_DFL);
             set_signal(SIGTERM, SIG_DFL);
             set_signal(SIGHUP, SIG_DFL);
             set_signal(SIGPIPE, SIG_DFL);
-            // The parent wipes its environment; Android media helpers need a
-            // minimal replacement, prepared here without allocation.
-            char* const env[] = {
-                const_cast<char*>("PATH=/system/bin:/system/xbin"),
-                const_cast<char*>("ANDROID_ROOT=/system"),
-                const_cast<char*>("ANDROID_ASSETS=/system/app"),
-                const_cast<char*>("ANDROID_DATA=/data"),
-                const_cast<char*>("ANDROID_STORAGE=/storage"),
-                const_cast<char*>("ANDROID_ART_ROOT=/apex/com.android.art"),
-                const_cast<char*>("ANDROID_I18N_ROOT=/apex/com.android.i18n"),
-                const_cast<char*>("ANDROID_TZDATA_ROOT=/apex/com.android.tzdata"),
-                const_cast<char*>("EXTERNAL_STORAGE=/sdcard"),
-                const_cast<char*>("TMPDIR=/data/local/tmp"),
-                nullptr
-            };
-            execve(executable, argv, env);
-            static constexpr char failed[] = "capture: execve failed\n";
-            (void)write(STDERR_FILENO, failed, sizeof(failed) - 1);
-            _exit(127);
+            exec_media(executable, argv);
         }
         if (child < 0) {
             if (kind == Kind::Video && !file_nonempty(part_path)) (void)unlink(part_path);
@@ -245,13 +272,51 @@ bool reserve_next_part(char* path, char* digits) {
         }
         // A stop/parent death between parts must not leave an empty placeholder.
         check_control(control_fd, stop_requested, 0);
-        if (stop_requested) { (void)unlink(part_path); break; }
+        if (stop_requested) {
+            (void)unlink(part_path);
+            previous_part(part_digits);
+            break;
+        }
         if (log_fd >= 0) {
             static constexpr char next[] = "[capture] next segment: ";
             (void)write(log_fd, next, sizeof(next) - 1);
             (void)write(log_fd, part_path, strlen(part_path));
             (void)write(log_fd, "\n", 1);
         }
+    }
+    if (kind == Kind::Video && status == 0) {
+        if (log_fd >= 0) {
+            static constexpr char merging[] = "[capture] finalizing one MP4\n";
+            (void)write(log_fd, merging, sizeof(merging) - 1);
+        }
+        const pid_t helper = fork();
+        if (helper == 0) {
+            close(result_fd);
+            close(control_fd);
+            redirect_log(log_fd);
+            set_signal(SIGINT, SIG_DFL);
+            set_signal(SIGTERM, SIG_DFL);
+            set_signal(SIGHUP, SIG_DFL);
+            set_signal(SIGPIPE, SIG_DFL);
+            char* const merge_args[] = {const_cast<char*>("/proc/self/exe"),
+                const_cast<char*>("--capture-merge"), part_path,
+                const_cast<char*>(final_path), nullptr};
+            exec_media("/proc/self/exe", merge_args);
+        }
+        status = -1;
+        if (helper > 0) {
+            pid_t waited;
+            do { waited = waitpid(helper, &status, 0); } while (waited < 0 && errno == EINTR);
+            if (waited != helper) status = -1;
+        }
+    }
+    if (kind == Kind::Video && status != 0) {
+        // Also clean up when the app has already exited, without touching a
+        // replaced or nonempty file. Numbered source segments remain intact.
+        struct stat current{};
+        if (lstat(final_path, &current) == 0 && S_ISREG(current.st_mode) && current.st_size == 0 &&
+            current.st_dev == reservation.st_dev && current.st_ino == reservation.st_ino)
+            (void)unlink(final_path);
     }
     if (log_fd >= 0) close(log_fd);
     // One small write is atomic for a pipe; the parent reads it non-blocking.
@@ -274,7 +339,9 @@ StartResult Job::start(Kind kind, const std::string& executable,
     if (running()) return StartResult::Busy;
     if (executable.empty() || executable[0] != '/' || access(executable.c_str(), X_OK) != 0)
         return StartResult::MissingCommand;
-    if (!ensure_directory(directory) || !reserve_path(directory, kind, path_))
+    std::string first_part;
+    struct stat reservation{};
+    if (!ensure_directory(directory) || !reserve_path(directory, kind, path_, first_part, reservation))
         return StartResult::StorageError;
 
     int results[2] = {-1, -1};
@@ -284,6 +351,7 @@ StartResult Job::start(Kind kind, const std::string& executable,
         if (results[0] >= 0) close(results[0]);
         if (results[1] >= 0) close(results[1]);
         unlink(path_.c_str());
+        if (!first_part.empty()) unlink(first_part.c_str());
         path_.clear();
         return StartResult::SpawnError;
     }
@@ -291,6 +359,7 @@ StartResult Job::start(Kind kind, const std::string& executable,
     if (read_flags < 0 || fcntl(results[0], F_SETFL, read_flags | O_NONBLOCK) < 0) {
         close(results[0]); close(results[1]); close(control[0]); close(control[1]);
         unlink(path_.c_str());
+        if (!first_part.empty()) unlink(first_part.c_str());
         path_.clear();
         return StartResult::SpawnError;
     }
@@ -321,8 +390,8 @@ StartResult Job::start(Kind kind, const std::string& executable,
             args[arg++] = bitrate;
         }
     }
-    char* const part_path = path_.data();
-    char* const part_digits = kind == Kind::Video ? part_path + path_.size() - kPartDigits - 4 : nullptr;
+    char* const part_path = kind == Kind::Video ? first_part.data() : path_.data();
+    char* const part_digits = kind == Kind::Video ? part_path + first_part.size() - kPartDigits - 4 : nullptr;
     args[arg] = part_path;
     const long max_fd = max_open_files();
     const pid_t supervisor = fork();
@@ -330,7 +399,7 @@ StartResult Job::start(Kind kind, const std::string& executable,
         close(results[0]);
         close(control[0]);
         supervise(kind, results[1], control[1], log_fd, max_fd, executable.c_str(), args,
-                  part_path, part_digits);
+                  part_path, part_digits, path_.c_str(), reservation);
     }
     close(results[1]);
     close(control[1]);
@@ -338,6 +407,7 @@ StartResult Job::start(Kind kind, const std::string& executable,
     if (supervisor < 0) {
         close(results[0]); close(control[0]);
         unlink(path_.c_str());
+        if (!first_part.empty()) unlink(first_part.c_str());
         path_.clear();
         return StartResult::SpawnError;
     }

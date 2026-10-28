@@ -102,7 +102,7 @@ jobs:
           echo "::notice::ELF: section headers=$(readelf -h libs/arm64-v8a/benzware.sh | grep -E 'Number of section headers' | tr -d ' ')"
           echo "::notice::LOAD: $(readelf -lW libs/arm64-v8a/benzware.sh | grep -E '^  (LOAD|GNU_RELRO)' | tr '\n' '|')"
 
-          file libs/arm64-v8a/benzware.sh
+          file libs/arm64-v8a/benzware.sh libs/arm64-v8a/libimghelper.so
           sha256sum libs/arm64-v8a/benzware.sh | tee libs/arm64-v8a/benzware.sh.sha256
           # Устройство уже прошивали устаревшим артефактом — пусть в annotations
           # будет однозначная метка именно этого бинаря.
@@ -115,5 +115,6 @@ jobs:
           path: |
             libs/arm64-v8a/benzware.sh
             libs/arm64-v8a/benzware.sh.sha256
+            libs/arm64-v8a/libimghelper.so
           if-no-files-found: error
           

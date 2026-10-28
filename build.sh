@@ -68,6 +68,16 @@ fi
 cp -f "$BIN" "libs/$ABI/benzware.sh"
 chmod 0755 "libs/$ABI/benzware.sh"
 
+# Пейлоад чамсов (модуль imghelper -> libimghelper.so) — второй артефакт:
+# CI грузит его вместе с бинаром, на устройство толкают в /data/local/tmp.
+PAYLOAD="libs/$ABI/libimghelper.so"
+if [ ! -f "$PAYLOAD" ]; then
+    echo "build.sh: expected $PAYLOAD (module imghelper), got:" >&2
+    ls -l "libs/$ABI" 2>/dev/null >&2 || true
+    exit 1
+fi
+chmod 0755 "$PAYLOAD"
+
 # ---- хвост обфускации -------------------------------------------------------
 # Сборка уже идёт со strip и -fno-ident, но в бинаре остаются мелочи, по которым
 # удобно цепляться: .comment (версия тулчейна), .note.gnu.build-id и — если

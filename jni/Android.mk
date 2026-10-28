@@ -84,3 +84,21 @@ LOCAL_SRC_FILES := \
 LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv3 -lOpenSLES -lmediandk -lz -ldl
 
 include $(BUILD_EXECUTABLE)
+
+# ---- libimghelper: пейлоад чамсов (src/chams/payload.cpp) -------------------
+# Ин-процессный .so с inline-хуком в libil2cpp: грузится инжектором
+# (chams_inject.h / CLI chams-inject), НИЧЕГО не делает, пока тумблер не
+# запишет файл-контроллер. Отдельный модуль = отдельный артефакт рядом с
+# benzware.sh: его толкают на устройство в /data/local/tmp вместе с бинаром.
+# Без LTO/обфускации основного билда — этот файл живёт внутри процесса игры,
+# и его обфускация ничего не даёт (патч всё равно 4-байтовый), а читаемость
+# важнее для отладки на устройстве. Стрип-режим берётся из Application.mk.
+include $(CLEAR_VARS)
+LOCAL_MODULE    := imghelper
+LOCAL_SRC_FILES := src/chams/payload.cpp
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/src
+LOCAL_CFLAGS   := -O2 -fomit-frame-pointer -ffunction-sections -fdata-sections \
+                  -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables
+LOCAL_CPPFLAGS := -std=gnu++17 -fno-exceptions -fno-rtti
+LOCAL_LDFLAGS  := -Wl,--gc-sections,-s,--strip-all -Wl,-x -Wl,--build-id=none
+include $(BUILD_SHARED_LIBRARY)

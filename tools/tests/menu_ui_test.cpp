@@ -178,7 +178,7 @@ static void espTests() {
     fresh("esp");
     const float compact = frame(tab(2)); assert(compact < 950.f);
     expand(2, "##esp_players");
-    for (const auto* label : {"##vb", "##vvs", "##v3", "##vn", "##vd", "##vw", "##vtr", "##vsk", "##var", "##vtm",
+    for (const auto* label : {"##vb", "##vvs", "##v3", "##vch", "##vn", "##vd", "##vw", "##vtr", "##vsk", "##var", "##vtm",
                               "##esp_stretch", "##esp_thickness"}) assert(items.count(id(label)));
     // Flip only the dedicated arrow switch while leaving its settings closed.
     tap(tab(2), groupId("##esp_arrows", "enable")); assert(g_state.esp_arrows);

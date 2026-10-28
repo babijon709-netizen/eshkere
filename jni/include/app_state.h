@@ -36,6 +36,13 @@ struct AppState {
     bool  silent_auto_zone = true;
     float a_silent_zone = 0;
     bool  esp_box = false, esp_name = false, esp_wall = false, esp_chams = false;
+    // Чамсы противников ХУКОМ в код игры (пейлоад libimghelper.so, см.
+    // chams_inject.h и src/chams/payload.cpp) — отдельный механизм, не путать
+    // с оверлейными «3D боксы» esp_chams выше. Состояние живёт в ext2 (бит 17);
+    // инжект и патч кода происходят ТОЛЬКО при включённом значении, при
+    // старте с выключенным — ноль действий.
+    bool  chams_lib = false;
+    float a_chams_lib = 0.f;
     bool  esp_weapon = false, esp_tracer = false, esp_skeleton = false;
     bool  esp_armor = false;
     bool  esp_ore = false, esp_animal = false, esp_loot = false, esp_team = false;

@@ -23,6 +23,7 @@
 #include "mode_select.h"
 #include "metadata_dump.h"
 #include "skeleton_diag.h"
+#include "chams_inject.h"
 #include "mem_io.h"
 #include "kernel_io.h"
 #include "stealth.h"
@@ -412,6 +413,11 @@ int main(int argc, char* argv[]) {
             return metadump::Run(argc - i, argv + i);
         if (strcmp(argv[i], "skel") == 0 || strcmp(argv[i], "--skel") == 0)
             return skeldiag::Run(argc - i, argv + i);
+        // chams-inject — разовый инжектор пейлоада чамсов (chams_inject.h):
+        // копия .so в каталог игры + один ptrace-dlopen. Активность пейлоада
+        // всё равно решает тумблер меню (файл-контроллер), не этот запуск.
+        if (strcmp(argv[i], "chams-inject") == 0 || strcmp(argv[i], "--chams-inject") == 0)
+            return chams_inject::Run(argc - i, argv + i);
     }
 
     // MT Manager's script executor supplies a terminal. Keep this process
@@ -564,6 +570,12 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // Чамсы-хук: пока тумблер не трогали — вызов пустой (ноль действий на
+        // старте). При включении: файл-контроллер + ленивый инжект пейлоада
+        // (отдельный std::thread, игра не блокируется); при выключении —
+        // только файл-контроллер, пейлоад сам восстановит материалы и снимет
+        // патч на ближайшем кадре (chams/payload.cpp).
+        chams_inject::SyncFromState(g_state.chams_lib);
         DrawEspOverlay();
         UpdateAim(ImGui::GetIO().DeltaTime);
         UpdateFarm(ImGui::GetIO().DeltaTime);
@@ -593,6 +605,7 @@ int main(int argc, char* argv[]) {
     ArmShutdownDeadline();
     screen_capture::Shutdown();
     g_fakeLag.destroy();
+    chams_inject::Shutdown();   // ctl-файл в «0», даже если игра останется жить
     Blur::Free();
     shutdown();
     Touch_Close();

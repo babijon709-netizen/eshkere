@@ -333,6 +333,7 @@ float TabContent(int tab, float dt, float cW) {
 {"##vb",  XS("Боксы"),      &g_state.esp_box,          &g_state.a_esp_box,          &cfg::esp::box_col},
 {"##vvs", XS("Проверка видимости"), &cfg::esp::vis_check, &g_state.a_esp_vis,       &cfg::esp::box_col_invis},
 {"##v3",  XS("3D боксы"),   &g_state.esp_chams,        &g_state.a_esp_chams,        &cfg::esp::box_col_invis},
+{"##vch", XS("Чамсы (хук)"), &g_state.chams_lib,       &g_state.a_chams_lib,        nullptr},
 {"##vn",  XS("Ники"),       &g_state.esp_name,         &g_state.a_esp_name,         &cfg::esp::name_col},
 {"##vd",  XS("Дистанция"),  &g_state.esp_wall,         &g_state.a_esp_wall,         &cfg::esp::distance_col},
 {"##vw",  XS("Оружие"),     &g_state.esp_weapon,       &g_state.a_esp_weapon,       &cfg::esp::weapon_col},
@@ -341,8 +342,8 @@ float TabContent(int tab, float dt, float cW) {
 {"##var", XS("Броня"),      &g_state.esp_armor,        &g_state.a_esp_armor,        nullptr},
 {"##vtm", XS("Союзники"),   &g_state.esp_team,         &g_state.a_esp_team,         &cfg::esp::ally_col},
         };
-        if (group("##esp_players", XS("Игроки"), players, 10)) {
-            drawRows(players, 10);
+        if (group("##esp_players", XS("Игроки"), players, 11)) {
+            drawRows(players, 11);
             SHdr(XS("Линии и боксы"), 8.f);
             CardBg(Layout::SliderH * 2.f);
             SliderRow("##esp_stretch", XS("Растяг экрана"), &g_state.screen_stretch_x,
@@ -1464,6 +1465,7 @@ void RenderMenu() {
     Tick(g_state.a_esp_name,   g_state.esp_name,           dt);
     Tick(g_state.a_esp_wall,   g_state.esp_wall,           dt);
     Tick(g_state.a_esp_chams,  g_state.esp_chams,          dt);
+    Tick(g_state.a_chams_lib,  g_state.chams_lib,          dt);
     Tick(g_state.a_esp_weapon, g_state.esp_weapon,         dt);
     Tick(g_state.a_esp_ore,    g_state.esp_ore,            dt);
     Tick(g_state.a_esp_ore_stone,  g_state.esp_ore_stone,  dt);

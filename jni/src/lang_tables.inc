@@ -266,6 +266,7 @@ static const LangPair kUiEn[] = {
     {"Цвет счётчика", "Counter color"},
     {"Цвет, радиус и дистанция", "Color, radius and distance"},
     {"Цвета руды", "Ore colors"},
+    {"Чамсы (хук)", "Chams (hook)"},
     {"Через /proc/<pid>/mem — работает без драйвера", "Via /proc/<pid>/mem — no driver required"},
     {"Через ядерный драйвер — мимо /proc и его запретов", "Via the kernel driver — bypasses /proc and its restrictions"},
     {"Что добывать", "What to farm"},

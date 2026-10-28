@@ -1,9 +1,7 @@
 #pragma once
 // mode_select.h — экран выбора способа чтения ПЕРЕД запуском чита.
 //
-// Минималистичный экран: заголовок «Способ чтения» по центру сверху и три
-// кнопки: «Прямое чтение», «DitPro» и «RT-Dev» (случайный
-// `/dev/[A-GNY]{1,6}`, ioctl 0x801/0x802). FT и RT-Hook не предлагаются.
+// Экран выбора транспорта: прямое чтение, FT, DitPro, RT-Dev и RT-Hook.
 // Без фона, подписей и строк состояния: причины отказа приходят тостом по
 // тапу, повторный тап по кнопке драйвера перепроверяет драйвер (прошить
 // .sh можно и после запуска).
@@ -46,6 +44,8 @@ enum Mode {
     MODE_EXTERNAL = 0,   // process_vm — «Прямое чтение»
     MODE_DITPRO   = 1,   // ditPro 131 KPM syscall
     MODE_RT_DEV   = 2,   // /dev/[A-GNY]{1,6} RT-Dev
+    MODE_FT       = 3,   // legacy socket-backed kernel transport
+    MODE_RT_HOOK  = 4,   // syscall ioctl hook transport
 };
 
 // ---- кнопка режима (только текст, без подписи) -----------------------------
@@ -166,6 +166,8 @@ static bool RunModeSelect() {
 
     bool ditpro = memio::ditpro_available();     // DitPro доступен
     bool rt_dev = memio::rt_dev_available();     // RT-Dev найден и отвечает
+    bool ft = memio::ft_available();             // FT socket driver отвечает
+    bool rt_hook = memio::rt_hook_available();   // ioctl hook отвечает
 
     int   picked = -1;         // -1 — ещё не выбрали
 
@@ -196,7 +198,7 @@ static bool RunModeSelect() {
             // Заголовок + кнопки — единый блок ровно по центру экрана
             // (по горизонтали и по вертикали): без фона, только текст
             // с тенью для читаемости поверх экрана под оверлеем.
-            // Две карточки сверху; RT-Dev расположен по центру второй строки.
+            // Пять карточек: две колонки в первых рядах, последняя по центру.
             const char* title = XS("Способ чтения");
             const float tfs = fs * 1.55f;
             const ImVec2 ts = fn->CalcTextSizeA(tfs, FLT_MAX, 0.f, title);
@@ -204,17 +206,18 @@ static bool RunModeSelect() {
             const float btnH = fs * 3.4f;
             const float btnW = ImMin((vw - 36.f - gap) / 2.f, 300.f);
             const float tGap = fs * 1.3f;                 // заголовок -> кнопки
-            const float blockH = tfs + tGap + btnH * 2.f + gap;
+            const float blockH = tfs + tGap + btnH * 3.f + gap * 2.f;
             const float ty = (vh - blockH) * 0.5f;       // центр по вертикали
             const float tx = (vw - ts.x) * 0.5f;
             dl->AddText(fn, tfs, {tx + 2.f, ty + 2.f}, IM_COL32(0, 0, 0, 110), title);
             dl->AddText(fn, tfs, {tx, ty}, C::U(C::Txt()), title);
 
-            // Сетка кнопок под заголовком.
+            // Сетка: две кнопки в первых двух рядах, последняя по центру.
             const float rowW = btnW * 2.f + gap;
             const float by   = ty + tfs + tGap;
             const float bx   = (vw - rowW) * 0.5f;
-            const float by2  = by + btnH + gap;           // второй ряд
+            const float by2  = by + btnH + gap;
+            const float by3  = by2 + btnH + gap;
 
             ImGui::SetCursorScreenPos({bx, by});
             if (ModeButton("##mode_ext", btnW, btnH,
@@ -231,7 +234,6 @@ static bool RunModeSelect() {
                     PlaySound(SND_CLICK);
                     ShowToast(XS("DitPro: нет root — запусти чит от su"));
                 } else {
-                    // Select only the DitPro ABI; never fall through to FT.
                     memio::kernel_transport().invalidate();
                     ditpro = memio::kernel_transport().select_ditpro();
                     if (ditpro) {
@@ -244,12 +246,51 @@ static bool RunModeSelect() {
                 }
             }
 
-            ImGui::SetCursorScreenPos({(vw - btnW) * 0.5f, by2});
+            ImGui::SetCursorScreenPos({bx, by2});
+            if (ModeButton("##mode_ft", btnW, btnH,
+                           XS("FT"), ft, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("FT: нет root — запусти чит от su"));
+                } else {
+                    if (!ft) {
+                        memio::kernel_transport().invalidate();
+                        ft = memio::ft_available();
+                    }
+                    if (ft) {
+                        picked = MODE_FT;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("FT-драйвер не найден или не отвечает"));
+                    }
+                }
+            }
+
+            ImGui::SetCursorScreenPos({bx + btnW + gap, by2});
+            if (ModeButton("##mode_rt_hook", btnW, btnH,
+                           XS("RT-Hook"), rt_hook, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("RT-Hook: нет root — запусти чит от su"));
+                } else {
+                    if (!rt_hook) {
+                        memio::rt_hook_transport().invalidate();
+                        rt_hook = memio::rt_hook_available();
+                    }
+                    if (rt_hook) {
+                        picked = MODE_RT_HOOK;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("RT-Hook не найден — проверь модуль hookdd"));
+                    }
+                }
+            }
+
+            ImGui::SetCursorScreenPos({(vw - btnW) * 0.5f, by3});
             if (ModeButton("##mode_rt_dev", btnW, btnH,
                            XS("RT-Dev"), rt_dev, true, fs)) {
-                // RT-Dev создаёт random root-only char-узел из точного
-                // паттерна /dev/[A-GNY]{1,6} и принимает ioctl 0x801/0x802.
-                // Повторный тап пересканирует узлы: модуль можно прошить после старта.
                 if (geteuid() != 0) {
                     PlaySound(SND_CLICK);
                     ShowToast(XS("RT-Dev: нет root — запусти чит от su"));
@@ -282,13 +323,13 @@ static bool RunModeSelect() {
     // Применяем выбранный (или дефолтный при выходе через сигнал) транспорт.
     // Достаточно одного вызова до первого bind — весь код чтения выше по
     // стеку работает через memio::Transport и про режимы не знает (mem_io.h).
-    const Mode mode = (picked == MODE_DITPRO) ? MODE_DITPRO
-                     : (picked == MODE_RT_DEV) ? MODE_RT_DEV
-                                               : MODE_EXTERNAL;
+    const Mode mode = picked >= 0 ? static_cast<Mode>(picked) : MODE_EXTERNAL;
     if (picked >= 0 && mode != MODE_EXTERNAL) ClearToast();
     const int backend = mode == MODE_DITPRO ? ESP_MEM_DITPRO
                       : mode == MODE_RT_DEV ? ESP_MEM_RT_DEV
-                                            : ESP_MEM_EXTERNAL;
+                      : mode == MODE_FT ? ESP_MEM_FT
+                      : mode == MODE_RT_HOOK ? ESP_MEM_RT_HOOK
+                                             : ESP_MEM_EXTERNAL;
     esp_set_mem_backend(backend);
     // Сохранить выбор для one-shot CLI (dump/skel). Только при реальном
     // выборе: выход без тапа не должен затирать прошлый .mode.

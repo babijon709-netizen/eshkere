@@ -1233,6 +1233,16 @@ inline bool driver_available(int* family_out = nullptr) {
     return true;
 }
 
+// FT is the socket-backed legacy transport only; never treat a DitPro syscall
+// match as FT. Its protocol is discovered against this process before game bind.
+inline bool ft_available() {
+    KernelTransport& t = kernel_transport();
+    if (t.use_ditpro()) t.invalidate();
+    if (!t.connected() && t.connect() < 0 && t.gong_connect() < 0) return false;
+    if (!t.map_known()) t.detect_protocol();
+    return !t.use_ditpro() && t.map_known();
+}
+
 // Полная проверка драйвера (диагностика): протокол выучен и подтверждён
 // живыми пробами. false не значит «кернел выключен»: режим включается и
 // проверяется привязкой к игре (bind читает ELF-заголовок libil2cpp).

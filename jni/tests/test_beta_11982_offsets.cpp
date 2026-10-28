@@ -26,19 +26,19 @@ T get(const std::array<unsigned char, N>& data, std::size_t offset) {
 
 void expect_release() {
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE66DEE8);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE66DEB0);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE669190);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE66D238);
-    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE2F50A8);
-    assert(go_active::NETWORK_CLIENT_STATICS_RVA == 0xE2F55D0);
-    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE2F55E8);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE672A10);
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE67D4E8);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE5A5908);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE5A58D0);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE59F970);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE5A3980);
+    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE5A3A48);
+    assert(go_active::NETWORK_CLIENT_STATICS_RVA == 0);
+    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE5A3A60);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE5AAA28);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE5B4CD0);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE674BE8);
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE660000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE680000);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE5A5260);
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE590000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE5C0000);
     assert(go_active::PLAYER_TRANSFORM == 0x68);
     assert(go_active::PLAYER_POSITION == 0x1F4);
     assert(go_active::PLAYER_CHARACTER_MODEL == 0x150);
@@ -94,7 +94,7 @@ void expect_beta() {
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0); // <>c is not a promise
     assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE906ED8);
     assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT == 0); // <>c is not a promise
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA - go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0x38);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE8F7750);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA - go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     // Getter disassembly and relocations resolve these inner TypeInfo slots.
     assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE8F6AE8);

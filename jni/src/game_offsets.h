@@ -1,19 +1,19 @@
 #pragma once
 #include <cstdint>
 
-// Release profile, build 11978.
-// Source: dump11978.7z (dump.cs + il2cpp.h + libil2cpp.so + script.json),
+// Release profile, build 11985.
+// Source: dump11985.7z (dump.cs + il2cpp.h + libil2cpp.so + script.json),
 // 32402 типа. Managed fields are resolved from dump.cs; TypeInfo RVAs are the
 // inner Il2CppClass* slots listed by script.json's TypeInfoPointers
 // (секция начинается с байта 411223142, 22755 слотов).
 //
 // Каждое значение сверено трёхсторонне: dump11966 (прежний релиз) ->
-// dumpbeta11977 (бета) -> dump11978: релиз 11978 сошёлся с бетой 11977 по
+// dumpbeta11977 (бета) -> dump11985: релиз 11985 сошёлся с бетой 11977 по
 // всем спорным местам (вставка AssetReference в FPManager @0x80, EmptyHands
 // в WeaponPiece @0x10, хвост PlayerManager +0x10, KCC/ragdoll/вьюхи).
 // Сверка с актуальной бетой 11982 и её отличия — в game_offsets_beta.h.
 //
-// Ключевой RE сборки 11978 (дроу-путь, file_off = RVA − 0x4000 для .text):
+// Ключевой RE сборки 11985 (дроу-путь, file_off = RVA − 0x4000 для .text):
 //   FPManager.LTI(WeaponPiece&, int slot) RVA 0x6D59828 — аналог Kxi 11966:
 //     пересоздаёт CTS `str x,[x0,#0x88]!` и UTCS `str x,[x0,#0x98]!`, piece
 //     передаётся ПО ССЫЛКЕ (ldr q0,[x21]; ldr x8,[x21,#0x10] = 0x18 байт);
@@ -23,7 +23,7 @@
 //   обёртка RVA 0x7BB7088 — копирует piece_local 0x18 байт из +0xD0/+0xE0
 //     (аналог pMj/pMZ, читавших QVN +0xC0 в 11966).
 //   Прочие RVA в комментариях ниже (Kxi 0x68EE210, pFz 0x68EFBC8, FDN
-//   0x68FCD10, ...) — ИСТОРИЧЕСКИЕ, из dump11966; в 11978 они съехали.
+//   0x68FCD10, ...) — ИСТОРИЧЕСКИЕ, из dump11966; в 11985 они съехали.
 
 namespace game_offsets {
 
@@ -35,7 +35,7 @@ namespace game_offsets {
 // Names are kept purely as breadcrumbs; when re-checking after an update,
 // match structs and fields POSITIONALLY (offset + type).
 //
-// Карта ротации 11966 -> 11978 (позиции сверены по обоим дампам; комментарии
+// Карта ротации 11966 -> 11985 (позиции сверены по обоим дампам; комментарии
 // ниже цитируют имена обоих билдов, где поле сместилось):
 //   хендлер событий hsL -> kAu (базы hsN -> kAH -> kAg); sync-обёртки
 //   hkz/hkh/GuI`1 -> kAK<T,K>/kAr<T> (форма та же: Action 0x10, Filter 0x18,
@@ -124,19 +124,19 @@ inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 // мусор 0xa000b409/0xa000b3fd (это «таблица типов v2» протектора S16 из
 // малых целых, НЕ слоты классов). Перекрёстное подтверждение: PM-PLH = 0x30,
 // как и в прошлом рабочем билде (0xD9C5310/0xD9C52E0).
-inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE66DEE8; // release 11978: Oxide.PlayerManager TypeInfo slot
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE5A5908; // release 11985: Oxide.PlayerManager TypeInfo slot
 // Cysharp.Threading.Tasks.PlayerLoopHelper.
-inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE66DEB0; // release 11978 TypeInfo slot; инвариант PM − PLH = 0x38 сохранён
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE5A58D0; // release 11985 TypeInfo slot; слот найден напрямую в script.json
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = 0x08; // activePlayerList
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = 0x10; // clientPlayerList
 
 
-// Managed-object layouts verified against release 11978.
+// Managed-object layouts verified against release 11985.
 inline constexpr std::uint64_t IL2CPP_CLASS_STATIC_FIELDS_OFFSET = 0xB8;
 inline constexpr std::uint64_t PLAYERLOOPHELPER_RUNNERS = 0x30;
 inline constexpr std::uint64_t LOOPRUNNER_ITEMS = 0x38;
 inline constexpr std::uint64_t LOOPRUNNER_TAIL = 0x30;
-// Две раскладки промисов UniTask.Delay, сверены по dump11949/11966/11978
+// Две раскладки промисов UniTask.Delay, сверены по dump11949/11966/11985
 // (поля в объекте: 0x10 nextNode, дальше тройка). Именование историческое:
 // «голый» набор полей — у DelayIgnoreTimeScalePromise (unscaled-таймер),
 // «SCALED» набор — у обычного DelayPromise (ждёт Time.deltaTime).
@@ -147,16 +147,16 @@ inline constexpr std::uint64_t DELAYPROMISE_SCALED_TIMESPAN = 0x1C;   // DelayPr
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_ELAPSED = 0x20;    // DelayPromise.elapsed
 inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = 0x18; // DelayPromise.initialFrame
 // TypeInfo-слоты классов промисов для быстрого подбора (см.
-// fast_loot_memory.h): release 11978, взяты из script.json TypeInfoPointers
-// (Δ8 между двумя классами промисов сохранён: 0xE67D4E8/0xE67D4E0).
+// fast_loot_memory.h): release 11985, взяты из script.json TypeInfoPointers
+// (Δ8 между двумя классами промисов сохранён: 0xE5B4CD0/0xE5B4CC8).
 // _ALT — запасной слот: в бете пара классов опознаётся по имени в рантайме
 // из двух кандидатов (см. game_offsets_beta.h), в релизе запасной не нужен.
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE67D4E8;     // Cysharp...UniTask.DelayPromise (TDI 21933)
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE5B4CD0;     // Cysharp...UniTask.DelayPromise (TDI 21933)
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0;
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE67D4E0;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise (TDI 21935)
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE5B4CC8;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise (TDI 21935)
 inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0;
 inline constexpr std::uint64_t FPHITSCAN_CONFIG = 0x130;
-// Projectile/config offsets rechecked against release 11978. The beta profile
+// Projectile/config offsets rechecked against release 11985. The beta profile
 // pins the pre-11966 values for the weapon fields that diverged.
 inline constexpr std::uint64_t FPBOW_PROJECTILE_PREFAB = 0x150;
 inline constexpr std::uint64_t FPCROSSBOW_CONFIG = 0x138;
@@ -168,7 +168,7 @@ inline constexpr std::uint64_t FPSNOWBALL_PROJECTILE_PREFAB = 0x130;
 inline constexpr std::uint64_t FPSPEAR_PROJECTILE_PREFAB = 0x178;
 // FPHitscan copies config values into these live fields during lMf/sPo. The
 // config alone is therefore not enough for a weapon which is already drawn.
-inline constexpr std::uint64_t FPWEAPON_TYPE = 0xDC; // FPWeaponBase.weaponType, release 11978
+inline constexpr std::uint64_t FPWEAPON_TYPE = 0xDC; // FPWeaponBase.weaponType, release 11985
 inline constexpr std::uint64_t FPWEAPON_EFFECTIVE_RELOAD_PERIOD = 0xE8;
 inline constexpr std::uint64_t FPWEAPON_SHOT_PERIOD = 0x124;
 // Per-instance source fields copied into the attack cache; checked in both supplied dumps.
@@ -221,9 +221,9 @@ inline constexpr std::uint64_t RECOILCONFIG_MAX_RECOIL = 0x20;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MIN_SIDE = 0x28;
 inline constexpr std::uint64_t RECOILCONFIG_MAX_SIDE = 0x2C;
 
-inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE669190; // release 11978: Oxide.GameControllerBase TypeInfo slot
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE59F970; // release 11985: Oxide.GameControllerBase TypeInfo slot
 // Build 11966 TypeInfoPointers gives the inner slot directly.
-inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE672A10; // release 11978
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE5AAA28; // release 11985
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
 inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled
 // CreateVegetationRenderer checks +0x18; StartStreaming checks +0x19 before
@@ -231,7 +231,7 @@ inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // st
 inline constexpr std::uint64_t GAME_CONTROLLER_LOCAL_PLAYER_FIELD   = 0x10; // <KOG>k__BackingField (PlayerManager; 11966: <ukT>)
 inline constexpr std::uint64_t GAME_CONTROLLER_CAMERA_MANAGER_FIELD = 0x38; // <KOx>k__BackingField (CameraManager; 11966: <ukA>)
 inline constexpr std::uint64_t CAMERA_MANAGER_CAMERA_FIELD          = 0x20; // m_Camera
-// Статические поля GameControllerBase (dump11978, Oxide.GameControllerBase;
+// Статические поля GameControllerBase (dump11985, Oxide.GameControllerBase;
 // в dump11966 позиции те же, имена <qSp>/<qSt>/<qmo>/<qme>):
 // вход в UI-ветку ввода и в хендлер ввода — оба нужны «память-джойстику»
 // автофарма (стик вместо синтетического тача).
@@ -342,13 +342,13 @@ inline constexpr std::uint64_t PLAYER_TRANSFORM = 0x68; // worldCameraRoot
 // сваливалось на более тяжёлый KCC/model path.
 inline constexpr std::uint64_t PLAYER_POSITION = 0x1F4;
 inline constexpr std::uint64_t PLAYER_CHARACTER_MODEL = 0x150; // characterModel (UnityEngine.GameObject)
-inline constexpr std::uint64_t PLAYER_NICKLABEL = 0x130; // nicklabel (class Di в 11978; был Il, ранее ij/wK)
+inline constexpr std::uint64_t PLAYER_NICKLABEL = 0x130; // nicklabel (class Di в 11985; был Il, ранее ij/wK)
 // PlayerManager "uWc" (0x220, was LLI): the real human-readable display name (confirmed
 // on-device — equals the nicklabel widget's private name string, e.g.
 // "пахановский" / "#Фришка"), whereas userID/voice names carry the machine id.
-inline constexpr std::uint64_t PLAYER_DISPLAY_NAME = 0x240;  // 11978: string KSQ (11966: zNy); ВНИМАНИЕ: 0x220 — enum HackType lastViolationType, вставка +0x20 до animator
+inline constexpr std::uint64_t PLAYER_DISPLAY_NAME = 0x240;  // 11985: string KSQ (11966: zNy); ВНИМАНИЕ: 0x220 — enum HackType lastViolationType, вставка +0x20 до animator
 
-// nicklabel (Di в 11978; gt/ij/wK в прежних): player back-ref + nickname UI.Text.
+// nicklabel (Di в 11985; gt/ij/wK в прежних): player back-ref + nickname UI.Text.
 inline constexpr std::uint64_t NICKLABEL_PLAYER_BACKREF = 0x20;
 inline constexpr std::uint64_t NICKLABEL_NICKNAME_TEXT  = 0x38;
 // UnityEngine.UI.Text: managed string with the visible nickname.
@@ -357,9 +357,9 @@ inline constexpr std::uint64_t UI_TEXT_MTEXT = 0xE0;
 inline constexpr std::uint64_t FPOBJECT_OBJECT_NAME = 0x78;
 // Dissonance voice identity: reliable synced display-name source.
 // PlayerManager.uWr (0x2E8, was LLT) : VoicePlayerState -> <Name>k__BackingField.
-inline constexpr std::uint64_t PLAYER_VOICE_STATE  = 0x338;  // 11978: VoicePlayerState KSm (хвост PM сдвинут +0x10; 11966: zsd @0x328) — единственное поле типа Dissonance.VoicePlayerState в классе
+inline constexpr std::uint64_t PLAYER_VOICE_STATE  = 0x338;  // 11985: VoicePlayerState KSm (хвост PM сдвинут +0x10; 11966: zsd @0x328) — единственное поле типа Dissonance.VoicePlayerState в классе
 inline constexpr std::uint64_t VOICE_STATE_NAME     = 0x38;
-// PlayerManager.voicePlayer (kIq в 11978; WDB/pJk/fuI в прежних) -> string at 0x78 (rEV).
+// PlayerManager.voicePlayer (kIq в 11985; WDB/pJk/fuI в прежних) -> string at 0x78 (rEV).
 inline constexpr std::uint64_t PLAYER_VOICE_PLAYER = 0x140;
 inline constexpr std::uint64_t VOICE_PLAYER_TAG     = 0x78;
 // FPObject -> Oxide.Item -> Oxide.ItemData display strings.
@@ -399,7 +399,7 @@ inline constexpr std::uint64_t IL2CPP_STRING_CHARS  = 0x14;
 //   FPManager.<KLR>k__BackingField (0xB8) == aim blend 0..1 (secondary hint)
 inline constexpr std::uint64_t PLAYER_EVENT_HANDLER          = 0x78;  // тип kAu (11966: hsL)
 inline constexpr std::uint64_t EVENT_HANDLER_MANAGER_BACKREF = 0xD0;
-inline constexpr std::uint64_t EVENT_HANDLER_AIM_ACTIVITY    = 0x2B0;  // 11978: Aim kAj @0x2B0 — вставки Footstep/StepLength/SetVehicleLock сдвинули его с 0x298 (как в бете 11977); AttackContinuously @0x1F0 не сдвинут
+inline constexpr std::uint64_t EVENT_HANDLER_AIM_ACTIVITY    = 0x2B0;  // 11985: Aim kAj @0x2B0 — вставки Footstep/StepLength/SetVehicleLock сдвинули его с 0x298 (как в бете 11977); AttackContinuously @0x1F0 не сдвинут
 // eventHandler.MovementInput (0x128): Vsf<Vector2> — «канал движения» игрока
 // (вход KCC), ровно как LookDirection (0x140) для взгляда. Значение внутри
 // обёртки — по SYNC_VALUE_OFFSET (+0x20). Отдаём его памяти-джойстику
@@ -510,18 +510,18 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // re-identified positionally against the _Mirror_SyncVarHookDelegate__loaded /
 // _weaponPiece / _weaponState tail, not by name (names are re-obfuscated).
 // В PlayerWeapon лежат ДВЕ копии WeaponPiece: SyncVar (wDN @0x130) и «рабочая»
-// (wDT @0xD0). В 11978 живой путь дроу читает SyncVar (drawSV: `ldr q0,
+// (wDT @0xD0). В 11985 живой путь дроу читает SyncVar (drawSV: `ldr q0,
 // [x19,#0x130]` и `ldr w2,[x19,#0x150]`, затем FPManager.LTI), рабочую копию
 // пишет только серверный RPC ceC (на устройстве не наблюдался). Для подписей
 // оружия читается SyncVar.
-inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // 11978: Yp playerWeaponViewReference (тип-интерфейс; реализация YU, декоратор kun); 11966: 0xE8
+inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // 11985: Yp playerWeaponViewReference (тип-интерфейс; реализация YU, декоратор kun); 11966: 0xE8
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar wDN; 11966: 0x110 (QVW)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160; // 11966: 0x138
 // Oxide.WeaponPiece (value type): Enabled 0x0, Number 0x2. Размер 0x18 — piece ВСЕГДА передаётся по ссылке
 // (q0 = [0x00..0x10), x8 = [0x10..0x18)), а не одним регистром.
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = 0x00;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER  = 0x02;
-// The third-person weapon view (11978: class YU : Yp, TDI 4515; 11966: ON,
+// The third-person weapon view (11985: class YU : Yp, TDI 4515; 11966: ON,
 // ранее sR/Mo. Интерфейс Yp, был OB/sY/Ms; декоратор kun (sealed : Yp,
 // единственное поле Yp @0x10), был WRU/pGW/fSN).
 // После каждой ротации имён класс ищется ПО ФОРМЕ ПОЛЕЙ, не по имени:
@@ -529,7 +529,7 @@ inline constexpr std::uint64_t WEAPONPIECE_NUMBER  = 0x02;
 //   WeaponBase  -> MonoBehaviour на спавненном weapon GameObject
 //   WeaponPiece -> копия piece вьюхи
 //   Transform   -> root transform спавна
-// В 11978 тройка уехала на +8 (как в бете 11977): 0x48/0x50/0x60 -> 0x50/0x58/0x70.
+// В 11985 тройка уехала на +8 (как в бете 11977): 0x48/0x50/0x60 -> 0x50/0x58/0x70.
 // Декоратор по-прежнему заворачивает настоящую вьюху в своё первое поле
 // (+0x10) — при чтении разворачиваем один уровень (weapon_name_from_view).
 inline constexpr std::uint64_t WEAPONVIEW_WEAPON_BASE    = 0x50;  // YU.PkQ WeaponBase
@@ -569,7 +569,7 @@ inline constexpr std::uint64_t EVENT_HANDLER_LAST_HIT_TIME   = 0x178;
 inline constexpr std::uint64_t SYNC_VALUE_OFFSET             = 0x20;
 inline constexpr std::uint64_t ACTIVITY_ACTIVE_FLAG          = 0x10;
 inline constexpr std::uint64_t PLAYER_FP_MANAGER             = 0x90;
-// 11978: в FPManager вставлен AssetReference KLE @0x80 (загрузка ассета
+// 11985: в FPManager вставлен AssetReference KLE @0x80 (загрузка ассета
 // вьюхи, как в бете 11977) — всё, что лежало с 0x78, уехало на +0x10.
 inline constexpr std::uint64_t FPMANAGER_CURRENT_WEAPON      = 0x58; // KLY FPWeaponBase (11966: uzN) — типизированный кэш, через него проходит зомби-резолв §4.24
 inline constexpr std::uint64_t FPMANAGER_CURRENT_OBJECT      = 0x50; // _currentWeapon (authoritative active FPObject)
@@ -610,7 +610,7 @@ inline constexpr std::uint64_t FPMELEE_HIT_RADIUS            = 0x134;
 inline constexpr std::uint64_t FPMELEE_TIME_BETWEEN_ATTACKS  = 0x138;
 inline constexpr std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK    = 0x13C;
 // Oxide.FPTool : Oxide.FPMelee. The expanded release 11966 base shifts these
-// FPTool-specific fields by +8 (база 11978 идентична 11966 — сверено);
+// FPTool-specific fields by +8 (база 11985 идентична 11966 — сверено);
 // beta keeps its previous profile values.
 inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES          = 0x168; // enum ToolPurpose, флаги
 // Рядом (не читаем): 0x16C m_Efficiency, 0x170 alwaysCrit, 0x171 useAmmo,
@@ -642,7 +642,7 @@ inline constexpr std::uint64_t GKO_RAY_ORIGIN                = 0x74;  // Vector3
 inline constexpr std::uint64_t RAYCASTHIT_DISTANCE           = 0x1C;  // m_Distance внутри RaycastHit
 
 // ---- Проверка видимости (vis_check): RaycastManager + AimAssist (kwY; 11966: hwR/YuB) --
-// Сверка по дампам 11978 Release (kwY, AimTarget 8273, AimAssistConfig 8270,
+// Сверка по дампам 11985 Release (kwY, AimTarget 8273, AimAssistConfig 8270,
 // RaycastManager 9930), 11966 Release (TypeDefIndex 9814/9543/9541/7910/7912)
 // и 11959 Beta (9811/9540/9538/7907/7909): все смещения совпадают.
 inline constexpr std::uint64_t PLAYER_MOUSE_LOOK             = 0x70;  // PlayerManager.mouseLook (Oxide.MouseLook)
@@ -726,7 +726,7 @@ inline constexpr std::uint64_t MARKER_DATA_HEAD_POS          = 0x28;  // lr.Peh 
 inline constexpr std::uint64_t MARKER_DATA_TRANSFORM         = 0x40;  // lr.POZ (Transform PlayerModelInfo.head; 11966: NX.Rqv)
 inline constexpr std::uint64_t MARKER_DATA_USER_ID           = 0x58;  // lp.POe (string userId; 11966: NV.Rqd)
 inline constexpr std::uint64_t MARKER_DATA_IS_HIT            = 0x73;  // lp.POX (bool, копируется в ctx+0x50 в NearbyPlayerScreenMarkerView::Tick; 11966: NV.Rqb)
-inline constexpr std::uint64_t PLAYER_HIT_TRACKER            = 0x358; // 11978: PlayerManager.KSn (lE hit tracker; хвост PM +0x10, 11966: uGa/Nt @0x348)
+inline constexpr std::uint64_t PLAYER_HIT_TRACKER            = 0x358; // 11985: PlayerManager.KSn (lE hit tracker; хвост PM +0x10, 11966: uGa/Nt @0x348)
 inline constexpr std::uint64_t HIT_TRACKER_HIT_DICT          = 0x18;  // lE.PTe (Dictionary<uint, float> hit expire times; 11966: Nt.RWf)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_CONTEXT    = 0x28;  // ScreenMarkerView.context (ScreenMarkerModuleContext)
 inline constexpr std::uint64_t SCREEN_MARKER_VIEW_MODULES    = 0x30;  // ScreenMarkerView.modules (List<lW>; 11966: List<Nk/IH>)
@@ -743,7 +743,7 @@ inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL        = 0x2C;  // Occlusi
 inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME       = 0x38;  // OcclusionModule.PKO (float)
 inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL         = 0x3C;  // OcclusionModule.PKT.hasValue (uint8)
 inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED     = 0x3D;  // OcclusionModule.PKT.value (uint8, 0=виден, 1=за стеной)
-inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xE674BE8; // release 11978: kiQ TypeInfo slot (25 LayerMask-статик 0x00..0x60, как hMj в 11966 / IWt в бете)
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xE5A5260; // release 11985: Pee TypeInfo slot (25 LayerMask-статик 0x00..0x60, как hMj в 11966 / IWt в бете)
 inline constexpr std::int32_t  MARKER_TYPE_NEARBY_PLAYER     = 10;    // MarkerType.NearbyPlayer
 // Тот же struct UnityEngine.RaycastHit (dump.cs 62a8534, строка 642061):
 //   m_Point 0x0 (Vector3), m_Normal 0xC (Vector3), m_FaceID 0x18,
@@ -782,14 +782,14 @@ inline constexpr std::uint64_t KCC_LOOK_HEIGHT_OFFSET     = 0x90; // float, eye 
 //   +0x00 MoveState State (0 idle,1 walk,2 run,3 crouching,4 air,5 climb,6 swim,7 dead)
 //   +0x04 Pose (0 Stand, 1 Crouch)   +0x08 bool Aim  +0x0C Vector3 Position
 //   +0x18 Vector3 RealVelocity       +0x38 Vector3 BaseVelocity
-// 11978: у KCC ДВА поля Move — bWC @0xF0 (новый, рядом с CharacterAnimation)
+// 11985: у KCC ДВА поля Move — bWC @0xF0 (новый, рядом с CharacterAnimation)
 // и bWa @0x1AC (преемник RhW @0x13C: стоит сразу за PlayerInput bWJ @0x184,
 // как в бете 11977 — «Move после PlayerInput, 0x6C байт»). Нужен второй.
 inline constexpr std::uint64_t KCC_MOVE                   = 0x1AC;  // 11966: 0x13C; State +0x0 (uint8), Pose +0x4, Aim +0x8, Position +0xC, RealVelocity +0x18
 inline constexpr std::uint64_t KCC_VISIBILITY             = 0x308;  // [SyncVar(hook = "OnVisibilityChanged")] public Visibility visibility (0 = Visible, 1 = Hidden); 11966: 0x298
 inline constexpr std::uint64_t KCC_MOTOR_ENABLED          = 0x30D;  // [SyncVar] private bool motorEnabled (bhP); 11966: 0x29D
 inline constexpr std::uint64_t KCC_HAS_OBSERVER_MOVE      = 0x3C0;  // private bool bhA (11966: RMu @0x350) — сразу после полного ObserverMove bhF @0x380; 1 after first full ObserverMove on remote client
-// MoveState значения (enum MoveState 11978 TypeDefIndex 4450, сверен с 11949):
+// MoveState значения (enum MoveState 11985 TypeDefIndex 4450, сверен с 11949):
 // 0 IDLE, 1 WALKING, 2 RUNNING, 3 CROUCHING, 4 AIRBORNE, 5 CLIMBING,
 // 6 SWIMMING, 7 DEAD, 8 SEATED. Поза (Move.Pose, TypeDefIndex 4451) знает
 // только Stand 0 и Crouch 1 — лежачей позы в этой сборке НЕТ.
@@ -814,7 +814,7 @@ inline constexpr std::uint64_t KCC_CHARACTER_ANIMATION     = 0xE0;  // bWK Chara
 inline constexpr std::uint64_t CHAR_ANIM_PLAYER_BACKREF    = 0x78;  // bnI PlayerManager
 inline constexpr std::uint64_t CHAR_ANIM_RAGDOLL           = 0x38;
 inline constexpr std::uint64_t RAGDOLL_PELVIS_RIGIDBODY    = 0x20;
-// 11978: в Ragdoll вставлен bool m_Interpolate (0x60) перед m_SurfaceTexture —
+// 11985: в Ragdoll вставлен bool m_Interpolate (0x60) перед m_SurfaceTexture —
 // m_Bones (Rigidbody[]) уехал с 0x88 на 0x90, как в бете 11977.
 inline constexpr std::uint64_t RAGDOLL_BONES_ARRAY         = 0x90;
 inline constexpr std::uint64_t RAGDOLL_BODYPART_TRANSFORM  = 0x10;
@@ -851,14 +851,14 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 // MineableTree / MineableObjectWithRandomSpawn), each a Mirror.NetworkBehaviour,
 // so the client-side Mirror registry lists all of them:
 //   Mirror.NetworkClient.spawned : Dictionary<uint, NetworkIdentity>
-// The NetworkClient TypeInfo slot is from release 11978 script.json's
+// The NetworkClient TypeInfo slot is from release 11985 script.json's
 // TypeInfoPointers; its static-field access pattern is also checked against the
 // owning class's methods:
 //   ldr x0,[x19] ; ldr x8,[x0,#0xb8] (static_fields) ; ldr x0,[x8,#0x28] (spawned)
-inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE66D238; // release 11978: Mirror.NetworkClient TypeInfo slot
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE5A3980; // release 11985: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionary<uint, NetworkIdentity>; 0x28 handlers
 
-// ---- Mirror: сетевые таймнги (release 11978) --------------------------------
+// ---- Mirror: сетевые таймнги (release 11985) --------------------------------
 // Поза удалённого игрока, которую читает чит, — это снапшот: он отстаёт от
 // удалённого времени на NetworkClient.bufferTime, и сам снапшот приехал к нам
 // через rtt/2. Попадание сервер считает в своём «сейчас», то есть через rtt/2
@@ -874,9 +874,9 @@ inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionar
 // [слот] — Il2CppClass*. Резолвер в game.cpp берёт класс только по точному
 // имени и namespace, поэтому сдвиг слота в чужом билде даёт откат к
 // константам, а не чтение мусора.
-inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE2F50A8;
-inline constexpr std::uint64_t NETWORK_CLIENT_STATICS_RVA  = 0xE2F55D0;
-inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA   = 0xE2F55E8;
+inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE5A3A48;
+inline constexpr std::uint64_t NETWORK_CLIENT_STATICS_RVA  = 0;
+inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA   = 0xE5A3A60;
 inline constexpr std::uint64_t NETWORK_CLIENT_BUFFER_MULTIPLIER = 0x108; // double
 inline constexpr std::uint64_t NETWORK_SERVER_TICK_RATE         = 0x8;   // int
 inline constexpr std::uint64_t NETWORK_TIME_RTT                 = 0x20;  // double, _rtt.Value
@@ -948,21 +948,19 @@ inline constexpr std::uint64_t HEALTH_VALUE          = 0x20; // второй к�
 inline constexpr std::uint64_t VITALS_MAX_HEALTH     = 0x88; // GenericVitals.m_MaxHealth
 
 // ---- Время суток: TOD_Sky (ассет Time Of Day) ------------------------------
-// In dump11978 TOD_Sky is the obfuscated class `QA` (TypeDefIndex 706): its
-// only static field is List<QA> at 0x0 and Cycle is at 0x40 (в dump11966 —
-// `lE` TDI 704, в бете 11977 — `Gf`; сигнатура та же). The nested
+// In dump11985 TOD_Sky is the obfuscated class `Hi` (TypeDefIndex 706): its
+// static List<Hi> is at 0x0 and Cycle is at 0x40. The nested
 // TOD_CycleParameters fields are Hour 0x10, Day 0x14, Month 0x18, Year 0x1C.
-// script.json TypeInfoPointers lists `QA_TypeInfo` at 0xE66E548; corroborated
-// by GameControllerBase.TODSky (instance field @0x178, type QA).
-// libil2cpp.so 11978 .data spans 0xE3D7800..0xEA3C4E0 (file_off = RVA −
-// 0xC000); the scan window below is inside that section and contains BOTH
-// structural-scan targets: QA_TypeInfo 0xE66E548 (day_tod_scan) and
-// kiQ_TypeInfo 0xE674BE8 (resolve_solid_wall_masks, 25 LayerMask-статик).
+// script.json TypeInfoPointers lists Hi_TypeInfo at 0xE59FF08; the field layout
+// is confirmed by dump.cs. GameControllerBase.TODSky remains at 0x178.
+// libil2cpp.so 11985 .data is RVA 0xE310C98..0xE972AD0; the scan window below
+// contains Hi_TypeInfo (day_tod_scan) and Pee_TypeInfo 0xE5A5260
+// (resolve_solid_wall_masks, 25 LayerMask statics).
 // day_tod_scan() checks 1 KiB per frame and validates candidates against the
 // list/Cycle/date signature; re-check the range against the next dump's ELF
 // before changing the profile.
-inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE660000;
-inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xE680000; // includes QA_TypeInfo 0xE66E548 and kiQ_TypeInfo 0xE674BE8
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE590000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xE5C0000; // 11985 release metadata window
 inline constexpr std::uint64_t TOD_SKY_CYCLE      = 0x40; // TOD_Sky.Cycle
 inline constexpr std::uint64_t TOD_CYCLE_HOUR     = 0x10; // TOD_CycleParameters.Hour
 inline constexpr std::uint64_t TOD_CYCLE_DAY      = 0x14;
@@ -1041,9 +1039,9 @@ inline constexpr std::uint64_t OREHS_MINEABLE          = 0x40; // Pjt — обр
 // `age += Time.deltaTime` и сравнивает с 15.0 (`fmov s1,#15.0; fcmp s0,s1;
 // b.le`); при превышении — SetActive(false) на своём GameObject и хвостовой
 // вызов владельца (Pjo, 0x38). Так что «поле OREHS_MARKER заполнено» !=
-// «крестик жив»: проверять надо возраст. Имена 11978: Pjo/Pjn/PjM/Pjh
+// «крестик жив»: проверять надо возраст. Имена 11985: Pjo/Pjn/PjM/Pjh
 // (11966: lzF/lzN/lzA/lHG, из il2cpp.h дампа 62a8534).
-// Полный расклад класса (сверен с dump.cs 11978): 0x20 meshRenderer,
+// Полный расклад класса (сверен с dump.cs 11985): 0x20 meshRenderer,
 // 0x28 ignoringLayerMask, 0x30 sizeByDistance (AnimationCurve), 0x38 Pjo
 // (владелец), 0x40 Pjn (MaterialPropertyBlock), 0x48 PjM (smooth),
 // 0x50 PjW (HashSet<Collider>), 0x58 Pjh (возраст).
@@ -1054,7 +1052,7 @@ inline constexpr std::uint64_t OREMARK_AGE             = 0x58; // Pjh, float —
 inline constexpr float         OREMARK_LIFETIME        = 15.0F;
 
 // MineableObjectExtension_TreeHitstreaks : mQ — деревья (11966: JE).
-// В 11966 поле MovingMethod исчезало (0x20 занимал шаблон); в 11978 оно
+// В 11966 поле MovingMethod исчезало (0x20 занимал шаблон); в 11985 оно
 // вернулось на 0x20, шаблон снова на 0x28 — константы не менялись.
 inline constexpr std::uint64_t TREEHS_MARKER_TEMPLATE  = 0x28; // hitStreakMarkerOriginal (HitMarkerItem) — шаблон
 inline constexpr std::uint64_t TREEHS_STREAK           = 0x48; // Pxi int (11966: MTz; сбрасывается в gie)
@@ -1077,8 +1075,8 @@ inline constexpr std::uint64_t HITMARK_RENDERER        = 0x30; // Renderer
 inline constexpr std::uint64_t HITMARK_MARK            = 0x38; // Transform самого крестика
 inline constexpr std::uint64_t HITMARK_AGE             = 0xC8; // PjC, float — сколько уже прожито (11966: lzr)
 
-// ServerPlayersAnalytics.EntityType values used for the labels (enum 11978
-// TypeDefIndex 4016; значения 0..25 сверены с 11966, в 11978 добавлен Wolf).
+// ServerPlayersAnalytics.EntityType values used for the labels (enum 11985
+// TypeDefIndex 4016; значения 0..25 сверены с 11966, в 11985 добавлен Wolf).
 enum class MineableEntityType : std::int32_t {
     None = 0, Bear = 1, Boar = 2, Deer = 3, Rabbit = 4, Chicken = 5, Fish = 6,
     Cannibal = 7, Tree = 8, Stone = 9, Iron = 10, Sulfur = 11, Ice = 12,
@@ -1086,14 +1084,14 @@ enum class MineableEntityType : std::int32_t {
     Deployable = 18, Human = 19, Player = 20, Vehicle = 21, Hare = 22,
     LootboxBaloon = 23, LootboxBaloonBig = 24, // added by this game update
     Rat = 25,                                  // added by this game update
-    Wolf = 26,                                 // added in 11978
+    Wolf = 26,                                 // added in 11985
 };
 
 // ---- Team / clan membership (Oxide.PlayerManager, dump.cs) ------------------
 // All three are Mirror SyncVars (they have _Mirror_SyncVarHookDelegate_* twins
-// at 0x388/0x3A8 в 11978 — сдвинулись вместе с хвостом; 11966: 0x378/0x390/
+// at 0x388/0x3A8 в 11985 — сдвинулись вместе с хвостом; 11966: 0x378/0x390/
 // 0x398), so every client sees them for every player.
-// 11978: хвост PlayerManager сдвинут ровно +0x10 относительно 11966 —
+// 11985: хвост PlayerManager сдвинут ровно +0x10 относительно 11966 —
 // вставлены GameObject KSu (0x270) и Ye KSj (0x278), как в бете 11977 (cnN/cFH).
 // Всё до вставки (displayName 0x240, aim assist 0x258, wrapper 0x260) на месте.
 inline constexpr std::uint64_t PLAYER_USER_ID   = 0x2A8; // string userID; 11966: 0x298
@@ -1138,7 +1136,7 @@ inline constexpr std::uint64_t FPOBJECT_DRAW_EVENT              = 0x20; // Oxide
 inline constexpr std::uint64_t FPDRAW_ACTION                    = 0x10; // kAP_Fields.Kgi (11966: eDt.BXi)
 inline constexpr std::uint64_t DELEGATE_TARGET                  = 0x20; // System_Delegate_Fields.m_target
 inline constexpr std::uint64_t MULTICAST_DELEGATES              = 0x78; // System_MulticastDelegate_Fields.delegates
-// 11978: FPMotion перестроен ТОЧНО как в бете 11977 — вставлен
+// 11985: FPMotion перестроен ТОЧНО как в бете 11977 — вставлен
 // WeaponAimMotionProfile aimMotion (0x38), позы переехали в начало класса
 // (Idle 0x40, Run 0x48, RunReload 0x50, Attack 0x58, Aim 0x60, Look 0x68,
 // TooClose 0x70), m_OnLadderOffset и m_JumpOffset ИСЧЕЗЛИ (их роль уехала в
@@ -1152,7 +1150,7 @@ inline constexpr std::uint64_t FPMOTION_RUN_OFFSET              = 0x48; // m_Run
 inline constexpr std::uint64_t FPMOTION_RUN_RELOAD_OFFSET       = 0x50; // runReloadOffset (11966: 0x88)
 inline constexpr std::uint64_t FPMOTION_ATTACK_OFFSET           = 0x58; // m_AttackOffset (11966: 0x90)
 inline constexpr std::uint64_t FPMOTION_AIM_OFFSET              = 0x60; // m_AimOffset (11966: 0x98)
-// m_OnLadderOffset и m_JumpOffset в 11978 не существуют (как и в бете 11977).
+// m_OnLadderOffset и m_JumpOffset в 11985 не существуют (как и в бете 11977).
 // Слоты намеренно указывают на профиль прицеливания: контроллер рук умеет
 // отличать такую ситуацию («префаб может делить TransformOffset между позами»)
 // и просто пропускает слот, сняв с него владение, вместо чтения мусора.

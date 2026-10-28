@@ -245,7 +245,7 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
 struct CfgExt2Trailer {
     uint32_t magic;          // "CFX2"
     uint32_t version;        // v1 layout compatible; v2 adds local weapon-skin settings
-    uint32_t flags;          // bits 17: weapon skin; 18–19: old duration; 20–21: bitrate
+    uint32_t flags;          // bit 17: capture visibility; 18–19: old duration; 20–21: bitrate; bit 22: skin
     float    esp_arrow_ring;
     float    esp_radar_size;
     float    esp_radar_range;
@@ -270,6 +270,7 @@ struct CfgExt2Trailer {
     int32_t   weapon_skin_index = -1;
 };
 static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
+static constexpr uint32_t kCfgExt2WeaponSkinEnabled = 1u << 22;
 
 static void ApplyCaptureConfig(uint32_t flags) {
     g_state.streamer_mode = overlay_capture::visible_from_config(flags);
@@ -297,7 +298,7 @@ static void WriteExt2Trailer(std::ostream& f) {
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
               (g_state.esp_armor      ? (1u << 16) : 0u) |
-              (g_state.viewmodel.weapon_skin_enabled ? (1u << 17) : 0u) |
+              (g_state.viewmodel.weapon_skin_enabled ? kCfgExt2WeaponSkinEnabled : 0u) |
               overlay_capture::config_flag(g_state.streamer_mode) |
               screen_capture::video_config_flags(g_state.capture_video);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
@@ -805,7 +806,7 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
             g_state.esp_armor      = (ext2.flags & (1u << 16)) != 0;
-            g_state.viewmodel.weapon_skin_enabled = ext2.version >= 2 && (ext2.flags & (1u << 17)) != 0;
+            g_state.viewmodel.weapon_skin_enabled = ext2.version >= 2 && (ext2.flags & kCfgExt2WeaponSkinEnabled) != 0;
             g_state.viewmodel.weapon_skin_index = ext2.version >= 2 &&
                 ext2.weapon_skin_index >= -1 && ext2.weapon_skin_index <= 32767
                 ? ext2.weapon_skin_index : -1;

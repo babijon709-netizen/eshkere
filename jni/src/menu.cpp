@@ -811,8 +811,10 @@ float TabContent(int tab, float dt, float cW) {
                 const int fps = vm.fps_limit;
                 const bool recoilButton = vm.no_recoil_button, ns = vm.no_spread;
                 const bool fl = vm.fast_loot;
+                const bool skinEnabled = vm.weapon_skin_enabled;
+                const int skinIndex = vm.weapon_skin_index;
                 vm = {}; vm.fps_limit = fps; vm.no_recoil_button = recoilButton; vm.no_spread = ns;
-                vm.fast_loot = fl;
+                vm.fast_loot = fl; vm.weapon_skin_enabled = skinEnabled; vm.weapon_skin_index = skinIndex;
                 g_state.sl_custom_fov = {}; g_state.sl_hands_x = {};
                 g_state.sl_hands_y = {}; g_state.sl_hands_z = {};
                 esp_viewmodel_tick(vm);
@@ -828,6 +830,40 @@ float TabContent(int tab, float dt, float cW) {
                         C::U(C::Dim()), XS("Сброс"));
         }
 
+        const auto skinInfo = esp_viewmodel_weapon_skin_ui();
+        char skinSummary[96];
+        if (skinInfo.weapon_found && skinInfo.weapon_name[0])
+            snprintf(skinSummary, sizeof(skinSummary), "%s · %d", skinInfo.weapon_name, skinInfo.skin_count);
+        else if (skinInfo.weapon_found)
+            snprintf(skinSummary, sizeof(skinSummary), "%s · %d", XS("Оружие в руках"), skinInfo.skin_count);
+        else
+            snprintf(skinSummary, sizeof(skinSummary), "%s", XS("Возьмите оружие"));
+        if (SettingsHeader("##misc_weapon_skin", XS("Скин оружия"), skinSummary,
+                           false, &vm.weapon_skin_enabled)) {
+            const int count = skinInfo.skin_count > 0 ? skinInfo.skin_count : 0;
+            CardBg(Layout::RowH * (count + 1));
+            int selected = vm.weapon_skin_index + 1;
+            if (selected < 0 || selected > count) selected = -1;
+            const bool defaultCurrent = skinInfo.weapon_found && skinInfo.current_skin < 0;
+            if (SelectRow("##weapon_skin_default", XS("Стандартный"),
+                          defaultCurrent ? XS("Текущий") : "", selected == 0, count == 0)) {
+                vm.weapon_skin_index = -1;
+                esp_viewmodel_tick(vm);
+            }
+            for (int i = 0; i < count; ++i) {
+                char id[32]; snprintf(id, sizeof(id), "##weapon_skin_%d", i);
+                const char* tag = skinInfo.weapon_found && skinInfo.current_skin == i ? XS("Текущий") : "";
+                if (SelectRow(id, skinInfo.skin_ids[i], tag, selected == i + 1, i + 1 == count)) {
+                    vm.weapon_skin_index = i;
+                    esp_viewmodel_tick(vm);
+                }
+            }
+            if (!skinInfo.weapon_found)
+                ImGui::TextDisabled("%s", XS("Возьмите оружие, чтобы увидеть его скины"));
+            else if (count == 0)
+                ImGui::TextDisabled("%s", XS("Для этого оружия нет скинов"));
+            ImGui::TextDisabled("%s", XS("Для обновления модели может понадобиться сменить оружие"));
+        }
 
         if (SettingsHeader("##misc_freecam", XS("Фрикам"), XS("Скорость, зоны и кнопка"),
                            false, &g_state.freecam_on, g_state.a_freecam_on)) {

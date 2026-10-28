@@ -221,8 +221,17 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = game_offsets::INV_P
 // ---- HyperHug...Weapons.PlayerWeapon (third person) ------------------------
 // New fields ahead of animator move view/piece/player by +0x20 vs 11978.
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW = 0x120; // playerWeaponViewReference
+inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW = 0x128; // PlayerFPWeaponView
+inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER = 0x130; // fPManager
+inline constexpr std::uint64_t PLAYERWEAPON_ITEM = 0x140; // RDN: current Item
+inline constexpr std::uint64_t PLAYERWEAPON_CACHED_PIECE = 0xD8; // RDX: worker copy
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE = 0x150; // RAt: SyncVar WeaponPiece
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x180; // <player>k__BackingField
+inline constexpr std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
+inline constexpr std::uint64_t ITEMDATA_SKIN_DATA = game_offsets::ITEMDATA_SKIN_DATA;
+inline constexpr std::uint64_t SKINDATA_ID = game_offsets::SKINDATA_ID;
+inline constexpr std::uint64_t WEAPONPIECE_SKIN = game_offsets::WEAPONPIECE_SKIN;
+inline constexpr std::uint64_t PLAYERFPWEAPONVIEW_PIECE = game_offsets::PLAYERFPWEAPONVIEW_PIECE;
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = game_offsets::WEAPONPIECE_ENABLED;
 inline constexpr std::uint64_t WEAPONPIECE_NUMBER = game_offsets::WEAPONPIECE_NUMBER;
 // Qj : QC (third-person weapon view) retains WeaponBase @0x50 and root

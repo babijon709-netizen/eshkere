@@ -56,7 +56,15 @@ void expect_release() {
     assert(go_active::PLAYER_WEAPON_REFERENCE == 0xF0);
     assert(go_active::PLAYER_WEAPONS_ARRAY == 0x1B8);
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
+    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
+    assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x110);
+    assert(go_active::PLAYERWEAPON_ITEM == 0x120);
+    assert(go_active::PLAYERWEAPON_CACHED_PIECE == 0xD0);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::ITEM_SKIN == 0x38);
+    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
+    assert(go_active::WEAPONPIECE_SKIN == 0x04);
+    assert(go_active::PLAYERFPWEAPONVIEW_PIECE == 0x28);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
     assert(go_active::PLAYER_FP_MANAGER == 0x90);
     assert(go_active::PLAYER_MOUSE_LOOK == 0x70);
@@ -160,7 +168,15 @@ void expect_beta() {
 
     // PlayerWeapon has a separate +0x20 insertion, not the player shift.
     assert(go_active::PLAYERWEAPON_VIEW == 0x120);
+    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x128);
+    assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x130);
+    assert(go_active::PLAYERWEAPON_ITEM == 0x140);
+    assert(go_active::PLAYERWEAPON_CACHED_PIECE == 0xD8);
     assert(go_active::PLAYERWEAPON_PIECE == 0x150);
+    assert(go_active::ITEM_SKIN == 0x38);
+    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
+    assert(go_active::WEAPONPIECE_SKIN == 0x04);
+    assert(go_active::PLAYERFPWEAPONVIEW_PIECE == 0x28);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x180);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
     assert(go_active::WEAPONVIEW_ROOT_TRANSFORM == 0x70);

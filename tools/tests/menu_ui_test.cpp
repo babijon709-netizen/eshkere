@@ -48,6 +48,7 @@ void ConfigSave() { ++saves; }
 void ConfigLoad(int index, bool) { ++loads; g_cfgLoadedIdx = index; }
 void ConfigUpdate(int) { ++updates; }
 void esp_viewmodel_tick(const ViewmodelSettings&) { ++applies; }
+viewmodel::WeaponSkinUiInfo esp_viewmodel_weapon_skin_ui() { return {}; }
 float AimTouchFracX() { return g_state.aim_tx < 0.f ? 0.72f : g_state.aim_tx; }
 float AimTouchFracY() { return g_state.aim_ty < 0.f ? 0.48f : g_state.aim_ty; }
 namespace Blur { void Freeze(int, int, int, int, int, int) {} }

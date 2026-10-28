@@ -244,8 +244,8 @@ static bool ReadUiTrailer(std::istream& f, CfgUiTrailer& t) {
 
 struct CfgExt2Trailer {
     uint32_t magic;          // "CFX2"
-    uint32_t version;        // 1
-    uint32_t flags;          // bits 18–19: old duration (ignored); 20–21: bitrate
+    uint32_t version;        // v1 layout compatible; v2 adds local weapon-skin settings
+    uint32_t flags;          // bits 17: weapon skin; 18–19: old duration; 20–21: bitrate
     float    esp_arrow_ring;
     float    esp_radar_size;
     float    esp_radar_range;
@@ -265,8 +265,9 @@ struct CfgExt2Trailer {
     ImVec4   esp_ore_stone_col;
     ImVec4   esp_ore_metal_col;
     ImVec4   esp_ore_sulfur_col;
-    ImVec4   esp_arrow_col;
-    ImVec4   esp_pumpkin_col;
+    ImVec4    esp_arrow_col;
+    ImVec4    esp_pumpkin_col;
+    int32_t   weapon_skin_index = -1;
 };
 static constexpr uint32_t kCfgExt2Magic = 0x32584643u;
 
@@ -278,7 +279,7 @@ static void ApplyCaptureConfig(uint32_t flags) {
 static void WriteExt2Trailer(std::ostream& f) {
     CfgExt2Trailer t{};
     t.magic = kCfgExt2Magic;
-    t.version = 1;
+    t.version = 2;
     t.flags = (g_state.esp_ore_stone ? (1u << 0) : 0u) |
               (g_state.esp_ore_iron  ? (1u << 1) : 0u) |
               (g_state.esp_ore_sulfur ? (1u << 2) : 0u) |
@@ -295,7 +296,8 @@ static void WriteExt2Trailer(std::ostream& f) {
               (cfg::esp::fill        ? (1u << 13) : 0u) |
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
-              (g_state.esp_armor     ? (1u << 16) : 0u) |
+              (g_state.esp_armor      ? (1u << 16) : 0u) |
+              (g_state.viewmodel.weapon_skin_enabled ? (1u << 17) : 0u) |
               overlay_capture::config_flag(g_state.streamer_mode) |
               screen_capture::video_config_flags(g_state.capture_video);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
@@ -319,6 +321,7 @@ static void WriteExt2Trailer(std::ostream& f) {
     t.esp_ore_sulfur_col = cfg::esp::ore_sulfur_col;
     t.esp_arrow_col      = cfg::esp::arrow_col;
     t.esp_pumpkin_col    = cfg::esp::pumpkin_col;
+    t.weapon_skin_index = g_state.viewmodel.weapon_skin_index;
     uint8_t buf[sizeof(t)];
     memcpy(buf, &t, sizeof(t));
     XorBuf(buf, sizeof(buf));
@@ -331,11 +334,14 @@ static bool ReadExt2Trailer(std::istream& f, CfgExt2Trailer& t) {
     uint8_t buf[sizeof(CfgExt2Trailer)];
     f.read((char*)buf, sizeof(buf));
     size_t got = (size_t)f.gcount();
-    constexpr size_t kPrePumpkinSize = sizeof(CfgExt2Trailer) - sizeof(ImVec4);
-    if (got != sizeof(buf) && got != kPrePumpkinSize) return false;
+    constexpr size_t kV1Size = sizeof(CfgExt2Trailer) - sizeof(int32_t);
+    constexpr size_t kPrePumpkinV1Size = kV1Size - sizeof(ImVec4);
+    if (got != sizeof(buf) && got != kV1Size && got != kPrePumpkinV1Size) return false;
     XorBuf(buf, got);
     memcpy(&t, buf, got);
-    return t.magic == kCfgExt2Magic && t.version == 1;
+    if (t.magic != kCfgExt2Magic) return false;
+    if (t.version == 1) return got == kV1Size || got == kPrePumpkinV1Size;
+    return t.version == 2 && got == sizeof(buf);
 }
 
 // Единственный источник «текущего» конфига: тот же селектор, что у ConfigLoadLast().
@@ -799,6 +805,10 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
             g_state.esp_armor      = (ext2.flags & (1u << 16)) != 0;
+            g_state.viewmodel.weapon_skin_enabled = ext2.version >= 2 && (ext2.flags & (1u << 17)) != 0;
+            g_state.viewmodel.weapon_skin_index = ext2.version >= 2 &&
+                ext2.weapon_skin_index >= -1 && ext2.weapon_skin_index <= 32767
+                ? ext2.weapon_skin_index : -1;
 
             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);

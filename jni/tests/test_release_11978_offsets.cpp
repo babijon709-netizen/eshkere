@@ -403,7 +403,16 @@ int main() {
 
     // --- PlayerWeapon: сдвиг +0x10/+0x20 от вставленных полей ---
     assert(go_active::PLAYERWEAPON_VIEW == 0x100);
+    assert(go_active::PLAYERWEAPON_FP_VIEW == 0x108);
+    assert(go_active::PLAYERWEAPON_FP_MANAGER == 0x110);
+    assert(go_active::PLAYERWEAPON_ITEM == 0x120);
+    assert(go_active::PLAYERWEAPON_CACHED_PIECE == 0xD0);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::ITEM_SKIN == 0x38);
+    assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
+    assert(go_active::SKINDATA_ID == 0x18);
+    assert(go_active::WEAPONPIECE_SKIN == 0x04);
+    assert(go_active::PLAYERFPWEAPONVIEW_PIECE == 0x28);
     assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
     assert(go_active::WEAPONVIEW_ROOT_TRANSFORM == 0x70);

@@ -5,6 +5,7 @@
 #include "fast_loot_memory.h"
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
+#include "weapon_skin_memory.h"
 #include "object_data_memory.h"
 #include "app_state.h"
 #include "farm.h"
@@ -39,6 +40,9 @@ struct Memory {
         if (!name || sz < 0x10 || sz > 0x4000) return false;
         if (std::strcmp(name, "FPHitscan") == 0) return sz >= 0x280 && sz <= 0x380;
         if (std::strcmp(name, "FPWeaponBase") == 0) return sz >= 0x128 && sz <= 0x380;
+        if (std::strcmp(name, "PlayerWeapon") == 0) return sz >= 0x180 && sz <= 0x200;
+        if (std::strcmp(name, "Item") == 0) return sz >= 0x50 && sz <= 0x68;
+        if (std::strcmp(name, "ItemData") == 0) return sz >= 0xE0 && sz <= 0x110;
         if (std::strcmp(name, "HitscanWeaponConfig") == 0) return sz >= 0x70 && sz <= 0xC0;
         if (std::strcmp(name, "DispersionConfig") == 0) return sz >= 0x3C && sz <= 0x68;
         if (std::strcmp(name, "RecoilConfig") == 0) return sz >= 0x40 && sz <= 0x68;
@@ -213,6 +217,7 @@ viewmodel::FpsController<Memory> fps_controller(memory);
 // through the fresh anonymous-heap mapping gate.
 struct HeapMemory {
     template<class T> bool read(uint64_t address, T& value) { return memory.read(address,value); }
+    uint64_t ptr(uint64_t address) { return memory.ptr(address); }
     // Диапазонное чтение (пакетные обходы плеер-лупа быстрого подбора):
     // один запрос на непрерывный кусок вместо чтения по элементу.
     bool read_range(uint64_t address, void* out, std::size_t size) {
@@ -331,6 +336,8 @@ struct HeapMemory {
     }
 };
 HeapMemory heap_memory;
+weapon_skin::Controller<HeapMemory> weapon_skins(heap_memory);
+std::atomic<bool> weapon_skin_ui_requested{false};
 weapon_tuning::Controller<HeapMemory> weapons(heap_memory);
 fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
@@ -552,6 +559,8 @@ void esp_viewmodel_reset(bool restore) {
     std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
     controller.reset(restore && g_mem.bound());
     fps_controller.reset(restore && g_mem.bound());
+    weapon_skins.reset(restore && g_mem.bound());
+    weapon_skin_ui_requested.store(false, std::memory_order_relaxed);
     if (!weapons.reset(restore && g_mem.bound()))
         ;
     if (!rapid_fire.reset(restore && g_mem.bound()))
@@ -571,11 +580,16 @@ void esp_viewmodel_reset(bool restore) {
 void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
     ViewmodelSettings settings = raw_settings;
     settings.no_ballistics = false;
+    if (settings.weapon_skin_index < -1 || settings.weapon_skin_index > 32767)
+        settings.weapon_skin_index = -1;
     using namespace go_active;
     std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    const bool skin_ui_requested = weapon_skin_ui_requested.exchange(false, std::memory_order_relaxed);
+    const bool want_skin_scan = settings.weapon_skin_enabled || skin_ui_requested || weapon_skins.has_state();
     const bool want_fast_fire = g_state.fast_fire;
     if (!g_mem.bound() || !g_il2cpp_base || g_pid <= 0) {
         controller.reset(false); fps_controller.reset(false); weapons.reset(false);
+        weapon_skins.reset(false);
         rapid_fire.reset(false);
         rapid_fire.status = want_fast_fire ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_recoil_ctl.reset(false);
@@ -616,7 +630,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         want_fast_fire || rapid_fire.has_state() ||
         settings.no_recoil_button || no_recoil_ctl.has_state() ||
         settings.no_ballistics || no_ballistics_ctl.has_state() ||
-        g_farmActive) {
+        want_skin_scan || g_farmActive) {
         auto local_player_ok = [&](uint64_t candidate) {
             uint64_t net=0; uint8_t local=0;
             return candidate>=0x10000 && memory.is(candidate,"PlayerManager") &&
@@ -647,10 +661,16 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
+            if (want_skin_scan)
+                weapon_skins.tick(epoch, 0, settings.weapon_skin_enabled,
+                                  settings.weapon_skin_index, true);
             return;
         }
         local_source_failed=false;
     }
+    if (want_skin_scan)
+        weapon_skins.tick(epoch, player, settings.weapon_skin_enabled,
+                          settings.weapon_skin_index, skin_ui_requested);
     // Weapon chains are expensive (class names, backlinks and readbacks for
     // every scalar). They only need a watchdog cadence, not the uncapped
     // overlay rate. Setting/player changes bypass the limiter immediately.
@@ -721,4 +741,10 @@ viewmodel::FpsUiInfo esp_viewmodel_fps_ui() {
     info.pace_kind = fps_controller.pace_seen();
     info.build_id = fps_unknown_build_id;
     return info;
+}
+
+viewmodel::WeaponSkinUiInfo esp_viewmodel_weapon_skin_ui() {
+    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
+    weapon_skin_ui_requested.store(true, std::memory_order_relaxed);
+    return weapon_skins.snapshot();
 }

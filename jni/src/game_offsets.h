@@ -515,8 +515,20 @@ inline constexpr std::uint64_t INV_PLAYER_INVENTORY_CLIENT = 0x28; // _playerInv
 // пишет только серверный RPC ceC (на устройстве не наблюдался). Для подписей
 // оружия читается SyncVar.
 inline constexpr std::uint64_t PLAYERWEAPON_VIEW           = 0x100; // 11978: Yp playerWeaponViewReference (тип-интерфейс; реализация YU, декоратор kun); 11966: 0xE8
+inline constexpr std::uint64_t PLAYERWEAPON_FP_VIEW        = 0x108; // PlayerFPWeaponView
+inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER     = 0x110; // fPManager
+inline constexpr std::uint64_t PLAYERWEAPON_ITEM           = 0x120; // wDp: current Item
+inline constexpr std::uint64_t PLAYERWEAPON_CACHED_PIECE   = 0xD0;  // wDT: worker copy
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar wDN; 11966: 0x110 (QVW)
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160; // 11966: 0x138
+// 11978/11982 dump.cs + release native constructor: Item skin is a zero-based
+// SkinData[] index (-1 = default), ItemData.skinData @0xD0, SkinData.Id @0x18,
+// and WeaponPiece.Skin @0x4. The beta aliases this stable Item/ItemData layout.
+inline constexpr std::uint64_t ITEM_SKIN                 = 0x38;  // Item.KrS, short; -1 = default
+inline constexpr std::uint64_t ITEMDATA_SKIN_DATA        = 0xD0;  // ItemData.skinData[]
+inline constexpr std::uint64_t SKINDATA_ID               = 0x18;  // SkinData.Id
+inline constexpr std::uint64_t WEAPONPIECE_SKIN          = 0x04;  // short Skin
+inline constexpr std::uint64_t PLAYERFPWEAPONVIEW_PIECE  = 0x28;  // cached WeaponPiece
 // Oxide.WeaponPiece (value type): Enabled 0x0, Number 0x2. Размер 0x18 — piece ВСЕГДА передаётся по ссылке
 // (q0 = [0x00..0x10), x8 = [0x10..0x18)), а не одним регистром.
 inline constexpr std::uint64_t WEAPONPIECE_ENABLED = 0x00;

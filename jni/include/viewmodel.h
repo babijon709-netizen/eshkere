@@ -19,9 +19,24 @@ struct ViewmodelSettings {
     // DelayPromise, на которых игра ждёт между предметами при сборе лута.
     // Реализация: fast_loot_memory.h, тик из esp_viewmodel_tick.
     bool fast_loot = false;
+    // Local first-person weapon skin override. SkinData[] entries are zero-based;
+    // -1 restores the item's default skin. The value is never sent to the server.
+    bool weapon_skin_enabled = false;
+    int32_t weapon_skin_index = -1;
 };
 
 namespace viewmodel {
+constexpr int kMaxWeaponSkinEntries = 64;
+struct WeaponSkinUiInfo {
+    bool player_found = false;
+    bool weapon_found = false;
+    bool data_found = false;
+    bool patch_applied = false;
+    int skin_count = 0;
+    int16_t current_skin = -1;
+    char weapon_name[48] = {};
+    char skin_ids[kMaxWeaponSkinEntries][48] = {};
+};
 // The Android build uses -ffast-math; do not rely on isfinite under that flag.
 inline bool finite(float v) {
     uint32_t bits; std::memcpy(&bits, &v, sizeof(bits));
@@ -35,6 +50,7 @@ inline int sanitize_fps_limit(int fps) {
 }
 inline ViewmodelSettings sanitize(ViewmodelSettings s) {
     s.fps_limit = sanitize_fps_limit(s.fps_limit);
+    if (s.weapon_skin_index < -1 || s.weapon_skin_index > 32767) s.weapon_skin_index = -1;
     s.fov = bounded(s.fov, 50.f, 120.f, 90.f);
     s.x = bounded(s.x, -50.f, 50.f, 0.f);
     s.y = bounded(s.y, -50.f, 50.f, 0.f);
@@ -122,6 +138,8 @@ void esp_viewmodel_tick(const ViewmodelSettings& settings);
 viewmodel::Diagnostics esp_viewmodel_diagnostics();
 // Снимок состояния разблокировки FPS для меню (выбран режим / применён / поле).
 viewmodel::FpsUiInfo esp_viewmodel_fps_ui();
+// Cached local weapon and its ItemData.skinData catalog for the skin menu.
+viewmodel::WeaponSkinUiInfo esp_viewmodel_weapon_skin_ui();
 // restore=true only for a live connection (exit/build switch).
 // restore=false on lost process/session: forget old addresses without writes.
 void esp_viewmodel_reset(bool restore);

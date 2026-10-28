@@ -10,6 +10,23 @@ struct FakeIO {
     std::map<uint64_t, uint8_t> bytes;
     std::map<uint64_t, std::pair<std::string, std::string>> types;
     int writes = 0;
+    int refresh_calls = 0;
+    uint64_t refreshed_manager = 0;
+    uint64_t refreshed_piece = 0;
+    int32_t refreshed_slot = -1;
+    uint64_t refreshed_rva = 0;
+    int16_t refreshed_skin = -1;
+
+    bool reload_weapon_visual(uint64_t manager, uint64_t piece, int32_t slot,
+                              uint64_t rva, int16_t skin) {
+        ++refresh_calls;
+        refreshed_manager = manager;
+        refreshed_piece = piece;
+        refreshed_slot = slot;
+        refreshed_rva = rva;
+        refreshed_skin = skin;
+        return true;
+    }
 
     template<class T> void put(uint64_t address, const T& value) {
         const auto* src = reinterpret_cast<const uint8_t*>(&value);
@@ -58,6 +75,7 @@ int main() {
     io.put(player + PLAYER_WEAPON_REFERENCE, weapon);
     io.put(weapon + PLAYERWEAPON_PLAYER_BACKREF, player);
     io.put(weapon + PLAYERWEAPON_ITEM, item);
+    io.put(weapon + PLAYERWEAPON_SKIN_REFRESH_SLOT, int32_t(1));
     io.put(weapon + PLAYERWEAPON_FP_MANAGER, manager);
     io.put(weapon + PLAYERWEAPON_FP_VIEW, fp_view);
     io.put(item + ITEM_DATA, data);
@@ -85,6 +103,10 @@ int main() {
     const auto& info = ctl.snapshot();
     assert(info.player_found && info.weapon_found && info.data_found);
     assert(info.skin_count == 2 && info.patch_applied);
+    assert(info.visual_refresh_invoked && !info.visual_refresh_failed);
+    assert(io.refresh_calls == 1 && io.refreshed_manager == manager);
+    assert(io.refreshed_piece == manager + FPMANAGER_UZL && io.refreshed_slot == 1);
+    assert(io.refreshed_rva == FP_MANAGER_SKIN_REFRESH_RVA && io.refreshed_skin == 1);
     int16_t value = -1;
     const uint64_t fields[] = {
         item + ITEM_SKIN,
@@ -101,11 +123,13 @@ int main() {
     // Repeated ticks do not spam writes; turning the feature off conditionally
     // restores only fields that still contain our override.
     ctl.tick(1, player, true, 1, false);
-    assert(io.writes == 5);
+    assert(io.writes == 5 && io.refresh_calls == 1);
     ctl.tick(1, player, false, 1, false);
     for (uint64_t field : fields) assert(io.read(field, value) && value == -1);
-    assert(io.writes == 10);
+    assert(io.writes == 10 && io.refresh_calls == 2);
     assert(!ctl.snapshot().patch_applied);
+    assert(ctl.snapshot().visual_refresh_invoked && !ctl.snapshot().visual_refresh_failed);
+    assert(io.refreshed_skin == -1);
 
     // If the game replaced a patched field, do not overwrite it during restore.
     weapon_skin::SkinFieldPatch<FakeIO> patch;

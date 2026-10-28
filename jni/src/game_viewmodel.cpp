@@ -6,6 +6,7 @@
 #include "no_recoil_memory.h"
 #include "no_ballistics_memory.h"
 #include "weapon_skin_memory.h"
+#include "weapon_skin_refresh.h"
 #include "object_data_memory.h"
 #include "app_state.h"
 #include "farm.h"
@@ -23,6 +24,16 @@
 #include <unistd.h>
 #include "game_viewmodel_internal.h"
 #include "game_internal.h"
+#if defined(__aarch64__)
+#include <asm/ptrace.h>
+#include <elf.h>
+#include <sys/ptrace.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <dirent.h>
+#endif
 
 namespace {
 struct Memory {
@@ -31,6 +42,17 @@ struct Memory {
     }
     template<class T> bool write(uint64_t address, const T& value) {
         return address >= 0x10000 && g_mem.write(address, &value, sizeof(value));
+    }
+    bool read_bytes(uint64_t address, void* out, size_t size) {
+        return address >= 0x10000 && out && size && g_mem.read_quiet(address, out, size);
+    }
+    bool write_bytes(uint64_t address, const void* in, size_t size) {
+        return address >= 0x10000 && in && size && g_mem.write(address, in, size);
+    }
+    bool reload_weapon_visual(uint64_t manager, uint64_t piece, int32_t slot,
+                             uint64_t function_rva, int16_t skin) {
+        return weapon_skin_refresh::invoke_fp_manager_reload(
+            *this, g_pid, g_il2cpp_base, function_rva, manager, piece, slot, skin);
     }
     uint64_t ptr(uint64_t address) {
         uint64_t p = 0;
@@ -213,8 +235,10 @@ bool heap_gate_allows(uint64_t address, size_t size) {
 
 viewmodel::Controller<Memory> controller(memory);
 viewmodel::FpsController<Memory> fps_controller(memory);
-// Deliberately do not inherit Memory::write: these controllers can only write
-// through the fresh anonymous-heap mapping gate.
+// Deliberately do not inherit Memory::write: field overrides from these
+// controllers must pass the fresh anonymous-heap mapping gate. The skin refresh
+// is a separately validated UnityMain call; its only raw write is a 24-byte
+// WeaponPiece scratch copy on the stopped thread's verified writable stack.
 struct HeapMemory {
     template<class T> bool read(uint64_t address, T& value) { return memory.read(address,value); }
     uint64_t ptr(uint64_t address) { return memory.ptr(address); }
@@ -280,6 +304,18 @@ struct HeapMemory {
     }
     bool named(uint64_t object, const char* name, const char* namespaze) {
         return object>=0x10000 && named_klass(memory.ptr(object),name,namespaze);
+    }
+    bool read_bytes(uint64_t address, void* out, size_t size) {
+        return memory.read_bytes(address, out, size);
+    }
+    bool write_bytes(uint64_t address, const void* in, size_t size) {
+        return memory.write_bytes(address, in, size);
+    }
+    bool reload_weapon_visual(uint64_t manager, uint64_t piece, int32_t slot,
+                             uint64_t function_rva, int16_t skin) {
+        // This is the one validated main-thread call used by the skin controller;
+        // ordinary controller writes still pass through heap_gate_allows().
+        return memory.reload_weapon_visual(manager, piece, slot, function_rva, skin);
     }
     bool describe(uint64_t object, char* name, size_t name_size,
                   char* namespaze, size_t namespace_size) {

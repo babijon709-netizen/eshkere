@@ -408,6 +408,8 @@ int main() {
     assert(go_active::PLAYERWEAPON_ITEM == 0x120);
     assert(go_active::PLAYERWEAPON_CACHED_PIECE == 0xD0);
     assert(go_active::PLAYERWEAPON_PIECE == 0x130);
+    assert(go_active::PLAYERWEAPON_SKIN_REFRESH_SLOT == 0xF0);
+    assert(go_active::FP_MANAGER_SKIN_REFRESH_RVA == 0x6D59828);
     assert(go_active::ITEM_SKIN == 0x38);
     assert(go_active::ITEMDATA_SKIN_DATA == 0xD0);
     assert(go_active::SKINDATA_ID == 0x18);

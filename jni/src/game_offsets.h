@@ -520,6 +520,8 @@ inline constexpr std::uint64_t PLAYERWEAPON_FP_MANAGER     = 0x110; // fPManager
 inline constexpr std::uint64_t PLAYERWEAPON_ITEM           = 0x120; // wDp: current Item
 inline constexpr std::uint64_t PLAYERWEAPON_CACHED_PIECE   = 0xD0;  // wDT: worker copy
 inline constexpr std::uint64_t PLAYERWEAPON_PIECE          = 0x130; // SyncVar wDN; 11966: 0x110 (QVW)
+inline constexpr std::uint64_t PLAYERWEAPON_SKIN_REFRESH_SLOT = 0xF0; // wDr passed into FPManager.LTI
+inline constexpr std::uint64_t FP_MANAGER_SKIN_REFRESH_RVA = 0x6D59828; // FPManager.LTI(WeaponPiece,int), 11978 dump/disasm
 inline constexpr std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = 0x160; // 11966: 0x138
 // 11978/11982 dump.cs + release native constructor: Item skin is a zero-based
 // SkinData[] index (-1 = default), ItemData.skinData @0xD0, SkinData.Id @0x18,

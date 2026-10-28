@@ -32,6 +32,8 @@ struct WeaponSkinUiInfo {
     bool weapon_found = false;
     bool data_found = false;
     bool patch_applied = false;
+    bool visual_refresh_invoked = false;
+    bool visual_refresh_failed = false;
     int skin_count = 0;
     int16_t current_skin = -1;
     char weapon_name[48] = {};

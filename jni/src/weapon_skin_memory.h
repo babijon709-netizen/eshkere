@@ -10,11 +10,11 @@
 
 namespace weapon_skin {
 
-// The confirmed model reload is asynchronous (PlayerWeapon -> FPManager.LTI).
-// This external read/write backend cannot invoke managed game methods, so the
-// controller patches the validated local Item/WeaponPiece copies and lets the
-// game refresh through its normal weapon-draw path rather than poking CTS or
-// AssetReference internals.
+// The first-person model reload is asynchronous (PlayerWeapon -> FPManager.LTI).
+// A memory-field override alone is insufficient because the loader takes a
+// WeaponPiece value copy. After the guarded field writes, IO may invoke the
+// build-specific FPManager reload entry on UnityMain; the invoker changes only
+// thread registers/stack data and never patches libil2cpp RX pages.
 //
 // A short skin value is an index into ItemData.skinData. -1 is the game's
 // default (confirmed by Item's constructor and setter in the 11978 libil2cpp).
@@ -112,6 +112,12 @@ class Controller {
     int selection_ = -1;
     std::chrono::steady_clock::time_point last_scan_{};
     std::array<SkinFieldPatch<IO>, 5> patches_{};
+    uint64_t last_refresh_weapon_ = 0;
+    uint64_t last_refresh_manager_ = 0;
+    int last_refresh_selection_ = std::numeric_limits<int>::min();
+    bool last_refresh_enabled_ = false;
+    bool refresh_invoked_ = false;
+    bool refresh_failed_ = false;
     viewmodel::WeaponSkinUiInfo info_{};
 
     bool is_weapon(uint64_t candidate, uint64_t player) {
@@ -187,16 +193,20 @@ class Controller {
         const bool selected_is_valid = selection == -1 ||
             (next.data_found && selection >= 0 && selection < skin_count &&
              selection < std::numeric_limits<int16_t>::max());
-        if (!enabled || !weapon || !item_ok || !data_ok || !selected_is_valid) {
+        const uint64_t manager_candidate = weapon ? io_.ptr(weapon + PLAYERWEAPON_FP_MANAGER) : 0;
+        const uint64_t view_candidate = weapon ? io_.ptr(weapon + PLAYERWEAPON_FP_VIEW) : 0;
+        const uint64_t manager = manager_candidate >= 0x10000 &&
+            io_.named(manager_candidate, "FPManager", "") ? manager_candidate : 0;
+        const uint64_t fp_view = view_candidate >= 0x10000 &&
+            io_.named(view_candidate, "PlayerFPWeaponView", "") ? view_candidate : 0;
+        int16_t manager_skin_before = -1;
+        const bool manager_skin_was_read = manager &&
+            io_.read(manager + FPMANAGER_UZL + WEAPONPIECE_SKIN, manager_skin_before);
+        const bool override_active = enabled && weapon && item_ok && data_ok && selected_is_valid;
+        if (!override_active) {
             restore_all();
         } else {
             const int16_t value = static_cast<int16_t>(selection);
-            const uint64_t manager_candidate = io_.ptr(weapon + PLAYERWEAPON_FP_MANAGER);
-            const uint64_t view_candidate = io_.ptr(weapon + PLAYERWEAPON_FP_VIEW);
-            const uint64_t manager = manager_candidate >= 0x10000 &&
-                io_.named(manager_candidate, "FPManager", "") ? manager_candidate : 0;
-            const uint64_t fp_view = view_candidate >= 0x10000 &&
-                io_.named(view_candidate, "PlayerFPWeaponView", "") ? view_candidate : 0;
             const uint64_t addresses[5] = {
                 item + ITEM_SKIN,
                 weapon + PLAYERWEAPON_PIECE + WEAPONPIECE_SKIN,
@@ -209,6 +219,36 @@ class Controller {
                 applied = patches_[i].apply(io_, addresses[i], value) || applied;
             next.patch_applied = applied;
         }
+
+        int16_t manager_skin_after = -1;
+        const bool manager_skin_is_read = manager &&
+            io_.read(manager + FPMANAGER_UZL + WEAPONPIECE_SKIN, manager_skin_after);
+        const int effective_selection = override_active ? selection : manager_skin_after;
+        const bool refresh_key_changed =
+            weapon != last_refresh_weapon_ || manager != last_refresh_manager_ ||
+            override_active != last_refresh_enabled_ ||
+            effective_selection != last_refresh_selection_;
+        const bool manager_piece_changed = manager_skin_was_read && manager_skin_is_read &&
+            manager_skin_before != manager_skin_after;
+        if (manager && manager_skin_is_read && (refresh_key_changed || manager_piece_changed)) {
+            int32_t slot = -1;
+            if (weapon && io_.read(weapon + PLAYERWEAPON_SKIN_REFRESH_SLOT, slot) &&
+                slot >= -1 && slot <= 255 &&
+                io_.reload_weapon_visual(manager, manager + FPMANAGER_UZL, slot,
+                                         FP_MANAGER_SKIN_REFRESH_RVA, manager_skin_after)) {
+                last_refresh_weapon_ = weapon;
+                last_refresh_manager_ = manager;
+                last_refresh_selection_ = effective_selection;
+                last_refresh_enabled_ = override_active;
+                refresh_invoked_ = true;
+                refresh_failed_ = false;
+            } else {
+                refresh_invoked_ = false;
+                refresh_failed_ = true;
+            }
+        }
+        next.visual_refresh_invoked = refresh_invoked_;
+        next.visual_refresh_failed = refresh_failed_;
         info_ = next;
         player_ = player;
         enabled_ = enabled;
@@ -228,6 +268,10 @@ public:
         for (auto& patch : patches_) patch = {};
         session_ = player_ = 0;
         enabled_ = false; selection_ = -1; last_scan_ = {};
+        last_refresh_weapon_ = last_refresh_manager_ = 0;
+        last_refresh_selection_ = std::numeric_limits<int>::min();
+        last_refresh_enabled_ = false;
+        refresh_invoked_ = refresh_failed_ = false;
         info_ = {};
     }
     void tick(uint64_t session, uint64_t player, bool enabled, int selection, bool force_scan = false) {

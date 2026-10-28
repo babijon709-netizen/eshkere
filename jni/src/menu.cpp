@@ -862,7 +862,12 @@ float TabContent(int tab, float dt, float cW) {
                 ImGui::TextDisabled("%s", XS("Возьмите оружие, чтобы увидеть его скины"));
             else if (count == 0)
                 ImGui::TextDisabled("%s", XS("Для этого оружия нет скинов"));
-            ImGui::TextDisabled("%s", XS("Для обновления модели может понадобиться сменить оружие"));
+            if (skinInfo.visual_refresh_failed)
+                ImGui::TextDisabled("%s", XS("Не удалось запустить обновление модели"));
+            else if (skinInfo.visual_refresh_invoked)
+                ImGui::TextDisabled("%s", XS("Перезагрузка модели запрошена"));
+            else
+                ImGui::TextDisabled("%s", XS("Перезагрузка модели ожидается"));
         }
 
         if (SettingsHeader("##misc_freecam", XS("Фрикам"), XS("Скорость, зоны и кнопка"),

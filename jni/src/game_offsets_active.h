@@ -189,6 +189,8 @@ inline std::uint64_t PLAYERWEAPON_FP_MANAGER = game_offsets::PLAYERWEAPON_FP_MAN
 inline std::uint64_t PLAYERWEAPON_ITEM = game_offsets::PLAYERWEAPON_ITEM;
 inline std::uint64_t PLAYERWEAPON_CACHED_PIECE = game_offsets::PLAYERWEAPON_CACHED_PIECE;
 inline std::uint64_t PLAYERWEAPON_PIECE = game_offsets::PLAYERWEAPON_PIECE;
+inline std::uint64_t PLAYERWEAPON_SKIN_REFRESH_SLOT = game_offsets::PLAYERWEAPON_SKIN_REFRESH_SLOT;
+inline std::uint64_t FP_MANAGER_SKIN_REFRESH_RVA = game_offsets::FP_MANAGER_SKIN_REFRESH_RVA;
 inline std::uint64_t PLAYERWEAPON_PLAYER_BACKREF = game_offsets::PLAYERWEAPON_PLAYER_BACKREF;
 inline std::uint64_t ITEM_SKIN = game_offsets::ITEM_SKIN;
 inline std::uint64_t ITEMDATA_SKIN_DATA = game_offsets::ITEMDATA_SKIN_DATA;
@@ -659,6 +661,8 @@ inline void Select(GameVersion version) {
         PLAYERWEAPON_ITEM = game_offsets_beta::PLAYERWEAPON_ITEM;
         PLAYERWEAPON_CACHED_PIECE = game_offsets_beta::PLAYERWEAPON_CACHED_PIECE;
         PLAYERWEAPON_PIECE = game_offsets_beta::PLAYERWEAPON_PIECE;
+        PLAYERWEAPON_SKIN_REFRESH_SLOT = game_offsets_beta::PLAYERWEAPON_SKIN_REFRESH_SLOT;
+        FP_MANAGER_SKIN_REFRESH_RVA = game_offsets_beta::FP_MANAGER_SKIN_REFRESH_RVA;
         PLAYERWEAPON_PLAYER_BACKREF = game_offsets_beta::PLAYERWEAPON_PLAYER_BACKREF;
         ITEM_SKIN = game_offsets_beta::ITEM_SKIN;
         ITEMDATA_SKIN_DATA = game_offsets_beta::ITEMDATA_SKIN_DATA;
@@ -1130,6 +1134,8 @@ inline void Select(GameVersion version) {
         PLAYERWEAPON_ITEM = game_offsets::PLAYERWEAPON_ITEM;
         PLAYERWEAPON_CACHED_PIECE = game_offsets::PLAYERWEAPON_CACHED_PIECE;
         PLAYERWEAPON_PIECE = game_offsets::PLAYERWEAPON_PIECE;
+        PLAYERWEAPON_SKIN_REFRESH_SLOT = game_offsets::PLAYERWEAPON_SKIN_REFRESH_SLOT;
+        FP_MANAGER_SKIN_REFRESH_RVA = game_offsets::FP_MANAGER_SKIN_REFRESH_RVA;
         PLAYERWEAPON_PLAYER_BACKREF = game_offsets::PLAYERWEAPON_PLAYER_BACKREF;
         ITEM_SKIN = game_offsets::ITEM_SKIN;
         ITEMDATA_SKIN_DATA = game_offsets::ITEMDATA_SKIN_DATA;

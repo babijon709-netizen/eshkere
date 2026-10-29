@@ -6,7 +6,7 @@ int main() {
     using go_active::GameVersion;
 
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
     assert(go_active::WORLD_STREAMING_GRASS_ENABLED_FIELD == 0x18);
     assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
 
@@ -16,7 +16,7 @@ int main() {
     assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
 
     go_active::Select(GameVersion::Release);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
     assert(go_active::WORLD_STREAMING_GRASS_ENABLED_FIELD == 0x18);
     assert(go_active::WORLD_STREAMING_TREES_ENABLED_FIELD == 0x19);
     return 0;

@@ -97,10 +97,11 @@ int main() {
         // Without any initialized TypeInfo, bind must fail cleanly.
         assert(!reader.bind(4242, kFakeBase));
 
-        // Initialize only Release 11985 PlayerLoopHelper_TypeInfo (0xE651850)
+        // Initialize only the Release-profile PlayerLoopHelper_TypeInfo slot
+        // (game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, 11991 = 0xE60B780)
         // and its Il2CppClass::image (+0x0), while NetworkClient/PlayerManager
         // remain 0 (as in the main menu).
-        tp.set_u64(kFakeBase + 0xE651850ULL, kFakeKlass);
+        tp.set_u64(kFakeBase + game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, kFakeKlass);
         tp.set_u64(kFakeKlass, kFakeImage);
 
         assert(reader.bind(4242, kFakeBase));

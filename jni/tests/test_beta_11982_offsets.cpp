@@ -26,19 +26,19 @@ T get(const std::array<unsigned char, N>& data, std::size_t offset) {
 
 void expect_release() {
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE651850);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE64CB80);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE650AF8);
-    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE650BC0);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE60B7B8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE60B780);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE606888);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE60AA70);
+    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE60AB38);
     assert(go_active::NETWORK_CLIENT_STATICS_RVA == 0);
-    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE650BD8);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE660FE8);
+    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE60AB50);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE61AB58);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE657F00);
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE640000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE670000);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE612F58);
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE600000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE630000);
     assert(go_active::PLAYER_TRANSFORM == 0x68);
     assert(go_active::PLAYER_POSITION == 0x1F4);
     assert(go_active::PLAYER_CHARACTER_MODEL == 0x150);

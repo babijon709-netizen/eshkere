@@ -9,8 +9,9 @@
 namespace aim_ballistics {
 
 constexpr float kIntegratorStep = 0.03125f;
-// BallisticIntegrator.Step (11989: RVA 0xCA4F06C; 11985 был 0xCA6AFA4, не проверен) and
-// ShaftedProjectile.Move (11989: RVA 0x6DE9E94, file offset 0x6DE5E94) multiply
+// BallisticIntegrator.Step (11991: RVA 0xCA0A970; 11989 был 0xCA4F06C,
+// 11985 — 0xCA6AFA4) and
+// ShaftedProjectile.Move (11991: RVA 0x6D844A4, file offset 0x6D804A4) multiply
 // Vector3.downVector (0, -1, 0) directly by p.Gravity * dt.
 constexpr float kGravityY = -1.0f;
 // ShaftedProjectile's game-side simulation limit is 400 integrator ticks.
@@ -85,8 +86,8 @@ inline float motion_confidence(float age_seconds) {
     return (kStaleSeconds - age_seconds) / (kStaleSeconds - kFreshSeconds);
 }
 
-// BallisticProfile.cQi (11985: RVA 0x7BF07D8; в 11989 не найден по имени — класс переименован)
-// and ShaftedProjectile.GetBallisticParams (11985: RVA 0x6DCD320; в 11989 не найден)
+// BallisticProfile.cQi (11985: RVA 0x7BF07D8; имя ротируется — в 11989/11991 по имени не находится)
+// and ShaftedProjectile.GetBallisticParams (11985: RVA 0x6DCD320; в 11991 по имени не найден)
 // pass their gravity field (5.0 for firearms, 2.5 for signal flare, 1.0..3.5
 // for arrows/bolts/spears/rockets) directly into BallisticParams.Gravity.
 inline float gravity_multiplier(float field_value) {
@@ -196,8 +197,8 @@ inline bool solve_with_medium_path(const Vec3& origin, const Vec3& target,
         const float drag = above_surface ? params.air_drag : params.underwater_drag;
         const float damping = drag_scale(drag, dt);
 
-        // BallisticIntegrator.Step (11989: RVA 0xCA4F06C) and
-        // ShaftedProjectile.Move (11989: RVA 0x6DE9E94, file offset 0x6DE5E94) save
+        // BallisticIntegrator.Step (11991: RVA 0xCA0A970) and
+        // ShaftedProjectile.Move (11991: RVA 0x6D844A4, file offset 0x6D804A4) save
         // old_v BEFORE adding Vector3.downVector * (gravity * dt), compute
         // damped = (old_v + g_delta) * damping, set state.velocity = 0.5f *
         // (old_v + damped), and advance state.position += state.velocity * dt.

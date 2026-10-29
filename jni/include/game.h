@@ -583,7 +583,8 @@ bool        esp_local_eye_position(float& x, float& y, float& z);
 //     уходит только выстрел.
 //
 // Единицы ввода MouseLook: игра умножает значение поля на m_Sensitivity и
-// получает ГРАДУСЫ. Видно в MouseLook.ZJo (libil2cpp.so, RVA 0x64e312c):
+// получает ГРАДУСЫ. Видно в MouseLook.ZJo (libil2cpp.so, RVA 0x64e312c — 11989,
+// в 11991 RVA съехал, смещения полей те же):
 // прочитанное по +0x88 множится на m_Sensitivity (+0x34) и складывается с
 // углами взгляда (+0x4C тангаж, +0x50 рысканье), которые тут же зажимаются
 // пределами m_DefaultLookLimits (+0x38, Vector2 min/max) и оборачиваются по

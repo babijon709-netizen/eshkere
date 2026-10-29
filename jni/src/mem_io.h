@@ -556,11 +556,10 @@ private:
         // driver and NetworkClient/PlayerManager are still null, verify any single
         // live TypeInfo slot by dereferencing Il2CppClass::image at +0x0.
         static constexpr uint64_t kHotTypeInfoSingles[] = {
-            game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Release 11978: PlayerLoopHelper
-            0xE66A8B8ULL, // Release 11978: legacy single-slot fallback
-            game_offsets::NETWORK_CLIENT_TYPEINFO_RVA, // Release 11978: NetworkClient
-            game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, // Release 11978: PlayerManager
-            game_offsets::GAME_CONTROLLER_TYPEINFO_RVA, // Release 11978: GameControllerBase
+            game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Release profile: PlayerLoopHelper
+            game_offsets::NETWORK_CLIENT_TYPEINFO_RVA, // Release profile: NetworkClient
+            game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, // Release profile: PlayerManager
+            game_offsets::GAME_CONTROLLER_TYPEINFO_RVA, // Release profile: GameControllerBase
             game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Beta 11982: PlayerLoopHelper
             game_offsets_beta::UNITY_CAMERA_TYPEINFO_RVA, // Beta 11982: UnityEngine.Camera
             game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA, // Beta 11982: NetworkClient

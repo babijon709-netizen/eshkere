@@ -344,7 +344,8 @@ static void always_day_tick() {
     // g_day_tod здесь — объект TOD_Sky (небесный менеджер ассета Time of
     // Day). Имя его класса обфусцировано и РОТИРУЕТ каждый билд: в дампе
     // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq"),
-    // в dump11966 — "lE", в dump11978 — "QA" (слот QA_TypeInfo 0xE66E548).
+    // в dump11966 — "lE", в dump11978 — "QA" (слот QA_TypeInfo 0xE66E548),
+    // в dump11991 — "lI" (TDI 706, слот lI_TypeInfo 0xE611560).
     // Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
     // метадата-слоты так и не инициализированы (лог day_log: нечётные токены)
     // — Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его
@@ -3134,7 +3135,7 @@ static void recheck_direct_player_position(const std::vector<uint64_t>& players)
 //
 // Oxide.MouseLook.m_Sensitivity — единственный множитель, которым игра
 // превращает накопленный сдвиг касания в поворот камеры: в MouseLook.ZJo
-// (RVA 0x64e312c) накопленное значение читается с +0x88, умножается на +0x34 и
+// (RVA 0x64e312c, сборка 11989 — исторический) накопленное значение читается с +0x88, умножается на +0x34 и
 // уходит в применение поворота; больше ничего на путь «касание -> угол» не
 // влияет. Значит град/px строго пропорционален m_Sensitivity, и аиму нужен
 // именно он, а не зашитое число.
@@ -3176,7 +3177,8 @@ bool esp_read_look_sensitivity(float& out) {
 // Остальные поля Oxide.MouseLook, которыми аим вертит камерой, сверены по
 // release dump (класс Oxide.MouseLook, строка 205611).
 //
-// Семантика — из дизассемблера MouseLook.ZJo (libil2cpp.so, RVA 0x64e312c,
+// Семантика — из дизассемблера MouseLook.ZJo (libil2cpp.so, RVA 0x64e312c —
+// 11989, в 11991 RVA съехал, семантика полей та же;
 // вызывается из MouseLook.Update каждый кадр):
 //
 //   0x64e31d0  ldr  s2, [x19, #0x34]        ; m_Sensitivity
@@ -3193,7 +3195,7 @@ bool esp_read_look_sensitivity(float& out) {
 //   0x64e3470  fmul s1, s9, s0              ; s0 = 0,01745 — градусы в радианы
 //
 // Поле ввода (+0x88) игра ПЕРЕЗАПИСЫВАЕТ каждый кадр в MouseLook.ZJX
-// (RVA 0x64e412c) — туда она кладёт сдвиг касания; с гироскопом (объект +0x78)
+// (RVA 0x64e412c — 11989, в 11991 съехал) — туда она кладёт сдвиг касания; с гироскопом (объект +0x78)
 // ZJo вместо перезаписи прибавляет к полю показания гироскопа. Поэтому наша
 // запись — это «ввод одного кадра»: сыграет она или нет, зависит от того, кто
 // последним коснулся поля перед чтением. Контроллер в aim.cpp это учитывает:
@@ -3710,9 +3712,10 @@ bool esp_mem_aim_write_angles(float x_deg, float y_deg) {
     return ok;
 }
 
-// Ось выстрела: PlayerManager.playerEventHandler (+0x78, класс Gum) ->
+// Ось выстрела: PlayerManager.playerEventHandler (+0x78, класс rIf, бывш. Gum/kAu) ->
 // LookDirection (+0x140) -> значение Vector3 (+0x20, обёртка синхронизации).
-// MouseLook.Update каждый кадр пишет сюда forward камеры (ZJo, RVA 0x64e35a4:
+// MouseLook.Update каждый кадр пишет сюда forward камеры (ZJo, RVA 0x64e35a4 —
+// 11989, в 11991 съехал:
 // приёмник — [this+0x20][0x140], значение — s0/s1/s2 от Transform.get_forward),
 // а FPHitscan пускает луч попадания ровно вдоль этого вектора.
 static bool resolve_event_handler(uint64_t& out_handler) {
@@ -9984,7 +9987,9 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 // Поиск статического класса 25 LayerMask-масок: Release 11966 — hMj
 // (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11982 —
 // tzc; Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
-// сигнатура 25 int32 сверена с dump.cs). Во всех сборках поля проверяются
+// сигнатура 25 int32 сверена с dump.cs); Release 11991 — ryl
+// (TypeInfo-слот 0xE612F58, 25 статиков 0x00..0x60 шаг 4, dump.cs).
+// Во всех сборках поля проверяются
 // одной сигнатурой.
 // Извлечение маски твёрдых стен/рельефа
 // ("Default" | "Construction" | "Terrain") и маски исключаемых буферных/триггерных слоёв

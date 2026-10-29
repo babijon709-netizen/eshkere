@@ -73,7 +73,7 @@ void test_offsets_consistency() {
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
-    assert(game_offsets::HMJ_TYPEINFO_RVA == 0xE657F00);
+    assert(game_offsets::HMJ_TYPEINFO_RVA == 0xE612F58);
 
     assert(game_offsets_beta::PLAYER_MOUSE_LOOK == 0xB0);
     assert(game_offsets_beta::MOUSELOOK_PITCH_YAW == game_offsets::MOUSELOOK_PITCH_YAW);

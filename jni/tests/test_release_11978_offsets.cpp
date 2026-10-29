@@ -1,10 +1,11 @@
-// Пин release-профиля сборки 11985 (dump11985.7z).
+// Пин release-профиля сборки 11991 (dump11991.7z).
 //
-// Закрепляет TypeInfo-слоты (script.json 11985) и структурные offsets,
-// сверенные с dump.cs 11985 трёхсторонне (11966 -> beta 11977 -> 11985) и
-// свежим RE дроу-пути (FPManager.LTI 0x6D59828, вызывающий 0x7BB70B4,
-// обёртка 0x7BB7088). Релиз 11985 сошёлся с бетой 11977 по спорным
-// раскладкам; актуальная бета и переключение профилей — test_beta_11982_offsets.cpp.
+// Закрепляет TypeInfo-слоты (script.json 11991) и структурные offsets,
+// сверенные с dump.cs 11991: managed-раскладки сошлись с профилем 11989
+// побайтово (verify_release_11991.py), съехали только TypeInfo-слоты и
+// обфусцированные имена (TOD lI, LayerMask ryl, обработчик rIf).
+// Инварианты: PLH -> PM = 0x38, промисы через 8 байт, TDI 706/21933/21935.
+// Актуальная бета и переключение профилей — test_beta_11982_offsets.cpp.
 #include "game_offsets_active.h"
 
 #include <cassert>
@@ -17,16 +18,17 @@ int main() {
     assert(go_active::selected_version == GameVersion::Release);
 
     // --- TypeInfo-слоты (внутренние .data, одно разыменование) ---
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE651850);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE64CB80);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE650AF8);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
-    // Инвариант PLH -> PM = 0x38 пережил уже пять ротаций имён.
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE60B7B8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE60B780);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE606888);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE60AA70);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
+    // Инвариант PLH -> PM = 0x38 пережил уже шесть ротаций имён.
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA ==
+           go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA + 0x38);
     // Промисы UniTask: пара классов через 8 байт, вложенный <>c в релизе не нужен.
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE660FE8);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE660FE0);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE61AB58);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE61AB50);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA -
                go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
@@ -39,16 +41,19 @@ int main() {
     assert(go_active::DELAYPROMISE_SCALED_TIMESPAN == 0x1C);
     assert(go_active::DELAYPROMISE_SCALED_ELAPSED == 0x20);
 
-    // --- Окно структурного скана .data (11985: .data 0xE310C98..0xE972AD0) ---
-    // Должно накрывать Hi_TypeInfo (TOD_Sky, 0xE64D108) и Pee_TypeInfo
-    // (25 LayerMask-статик, 0xE657F00); остальные рабочие слоты тоже внутри.
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE640000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE670000);
+    // --- Окно структурного скана .data (11991: .data 0xE376A48..0xE9D9CA8) ---
+    // Должно накрывать lI_TypeInfo (TOD_Sky, TDI 706, 0xE611560) и
+    // ryl_TypeInfo (25 LayerMask-статик, 0xE612F58); остальные рабочие
+    // слоты (PM/GC/NC/WSC/промисы) тоже внутри.
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE600000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE630000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
-    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE64D108;  // Hi (TOD_Sky) TypeInfo from script.json
+    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE611560;  // lI (TOD_Sky, TDI 706) TypeInfo from script.json
     assert(kTodSkyTypeInfoSlot > go_active::TOD_SCAN_RVA_BEGIN);
     assert(kTodSkyTypeInfoSlot < go_active::TOD_SCAN_RVA_END);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE657F00);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE612F58);
+    assert(go_active::HMJ_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
+    assert(go_active::HMJ_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
@@ -459,7 +464,7 @@ int main() {
     assert(go_active::ITEMPICKUP_SHORTNAME == 0xD8);
     assert(go_active::ITEMPICKUP_AMOUNT == 0xE0);
 
-    std::printf("release 11985 offsets pinned: TypeInfo slots, PM tail +0x10,\n"
+    std::printf("release 11991 offsets pinned: TypeInfo slots, PM tail +0x10,\n"
                 "FPManager +0x10, PlayerWeapon/view +0x10..0x20, gate 0xF0,\n"
                 "WeaponPiece 0x18, KCC/FPMotion/ragdoll like beta 11977\n");
     return 0;

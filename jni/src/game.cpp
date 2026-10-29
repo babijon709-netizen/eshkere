@@ -945,25 +945,32 @@ static bool base_resolves_game(uint64_t base) {
     };
     if (resolves_current()) return true;
 
-    // Auto-switch между сборками ТОЛЬКО когда слоты целевого набора позитивно
-    // подтверждают два известных класса точным именем (== 1), никогда по
-    // нечитаемой метадате (== 2): указатели из .data.rel.ro чужого билда в
-    // этом слоте не должны давать ложное переключение.
-    // Порядок для Release: свой набор (выше) -> другой релиз (11989 <-> 11991,
-    // managed-поля общие, см. game_offsets_11989) -> бета. Для Beta: релиз
-    // 11991 -> релиз 11989. Без этого устройства с необновлённой (или уже
-    // обновившейся) игрой висят в pass-3 зомби-привязкой без единого класса —
-    // «чит не коннектится».
-    auto exact_release = [&](uint64_t pm_rva, uint64_t gc_rva, uint64_t plh_rva) -> int {
-        const uint64_t pm  = pm_rva  ? rd_ptr(base + pm_rva)  : 0;
-        const uint64_t gc  = gc_rva  ? rd_ptr(base + gc_rva)  : 0;
-        const uint64_t plh = plh_rva ? rd_ptr(base + plh_rva) : 0;
-        const int pm_id  = class_identity(pm,  "PlayerManager",      "Oxide");
-        const int gc_id  = class_identity(gc,  "GameControllerBase", "Oxide");
-        const int plh_id = class_identity(plh, "PlayerLoopHelper",   "Cysharp.Threading.Tasks");
-        return (pm_id == 1 ? 1 : 0) + (gc_id == 1 ? 1 : 0) + (plh_id == 1 ? 1 : 0);
-    };
-    auto reset_resolved = [&]() {
+    // Auto-switch Release <-> Beta ONLY when the alternate build's TypeInfo
+    // slots positively confirm two known classes by exact string name (== 1),
+    // never on unreadable-metadata fallback (== 2), so .data.rel.ro pointers at
+    // Release RVAs inside Beta's libil2cpp.so can never trigger a false switch.
+    const go_active::GameVersion cur_ver = go_active::selected_version;
+    const go_active::GameVersion alt_ver =
+        (cur_ver == go_active::GameVersion::Beta) ? go_active::GameVersion::Release
+                                                  : go_active::GameVersion::Beta;
+    const uint64_t alt_pm_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA
+        : game_offsets::PLAYER_MANAGER_TYPEINFO_RVA;
+    const uint64_t alt_gc_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA
+        : game_offsets::GAME_CONTROLLER_TYPEINFO_RVA;
+    const uint64_t alt_plh_rva = (alt_ver == go_active::GameVersion::Beta)
+        ? game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA
+        : game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA;
+    const uint64_t alt_pm  = alt_pm_rva  ? rd_ptr(base + alt_pm_rva)  : 0;
+    const uint64_t alt_gc  = alt_gc_rva  ? rd_ptr(base + alt_gc_rva)  : 0;
+    const uint64_t alt_plh = alt_plh_rva ? rd_ptr(base + alt_plh_rva) : 0;
+    const int pm_id  = class_identity(alt_pm,  "PlayerManager",      "Oxide");
+    const int gc_id  = class_identity(alt_gc,  "GameControllerBase", "Oxide");
+    const int plh_id = class_identity(alt_plh, "PlayerLoopHelper",   "Cysharp.Threading.Tasks");
+    const int exact_matches = (pm_id == 1 ? 1 : 0) + (gc_id == 1 ? 1 : 0) + (plh_id == 1 ? 1 : 0);
+    if (exact_matches >= 2) {
+        go_active::Select(alt_ver);
         g_player_manager_class = 0;
         g_player_manager_static_fields = 0;
         g_game_controller_class = 0;
@@ -972,48 +979,7 @@ static bool base_resolves_game(uint64_t base) {
         g_transform_hierarchy_layout = {};
         g_transform_hierarchy_layout_valid = false;
         reset_marker_caches();
-    };
-    auto exact_current = [&]() {
-        return exact_release(game_offsets::PLAYER_MANAGER_TYPEINFO_RVA,
-                             game_offsets::GAME_CONTROLLER_TYPEINFO_RVA,
-                             game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA);
-    };
-    auto exact_legacy = [&]() {
-        return exact_release(game_offsets_11989::PLAYER_MANAGER_TYPEINFO_RVA,
-                             game_offsets_11989::GAME_CONTROLLER_TYPEINFO_RVA,
-                             game_offsets_11989::PLAYER_LOOP_HELPER_TYPEINFO_RVA);
-    };
-
-    using Ver = go_active::GameVersion;
-    if (go_active::selected_version == Ver::Release) {
-        const bool legacy_active = go_active::release_build == 11989;
-        const int other_exact = legacy_active ? exact_current() : exact_legacy();
-        if (other_exact >= 2) {
-            if (legacy_active) go_active::Select(Ver::Release);
-            else go_active::SelectReleaseLegacy();
-            reset_resolved();
-            return true;
-        }
-        if (exact_release(game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA,
-                          game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA,
-                          game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA) >= 2) {
-            go_active::Select(Ver::Beta);
-            reset_resolved();
-            return true;
-        }
-    } else {
-        // Выбрана бета, а на устройстве релизная игра — любого из двух
-        // поддерживаемых билдов.
-        if (exact_current() >= 2) {
-            go_active::Select(Ver::Release);
-            reset_resolved();
-            return true;
-        }
-        if (exact_legacy() >= 2) {
-            go_active::SelectReleaseLegacy();
-            reset_resolved();
-            return true;
-        }
+        return true;
     }
     return false;
 }
@@ -12507,13 +12473,12 @@ int esp_skeleton_diag(char* out, size_t cap, int max_players) {
         g_mem.reads_total(), g_mem.read_fails_total());
     say("меток TBI / мусора : %llu / %llu    обрывов: %llu\n",
         g_mem.tagged_total(), g_mem.junk_total(), g_mem.cut_total());
-    // Номер билда в логе — по нему видно и версию самого бинаря чита
-    // (старые APK печатают просто "Release" без номера), и сработал ли
-    // legacy-фоллбэк на устройстве с ещё не обновившейся игрой.
+    // Номер билда в логе — по нему видно версию самого бинаря чита:
+    // старые APK печатают просто "Release" без номера.
     if (selected_version == GameVersion::Beta) {
         say("профиль оффсетов   : Beta\n");
     } else {
-        say("профиль оффсетов   : Release/%d\n", release_build);
+        say("профиль оффсетов   : Release/%d\n", game_offsets::RELEASE_BUILD);
     }
 
     const TransformHierarchyLayout& gl = g_transform_hierarchy_layout;

@@ -8,11 +8,6 @@ enum class GameVersion { Release, Beta };
 using ToolPurpose = game_offsets::ToolPurpose;
 using MineableEntityType = game_offsets::MineableEntityType;
 inline GameVersion selected_version = GameVersion::Release;
-// Какой набор TypeInfo-слотов релиза сейчас активен в go_active:
-// 11991 (текущий, game_offsets) или 11989 (legacy-фоллбэк
-// game_offsets_11989 — для устройств, чья игра ещё не обновилась;
-// managed-поля у обоих билдов общие). Beta-слоты отдельно, через selected_version.
-inline int release_build = 11991;
 
 inline std::uint64_t CAMERA_PROJECTION_MATRIX = game_offsets::CAMERA_PROJECTION_MATRIX;
 inline std::uint64_t CAMERA_VIEW_MATRIX = game_offsets::CAMERA_VIEW_MATRIX;
@@ -480,7 +475,6 @@ inline std::uint64_t TRANSFORMOFFSET_LERP_SPEED = game_offsets::TRANSFORMOFFSET_
 
 inline void Select(GameVersion version) {
     selected_version = version;
-    release_build = 11991;  // и Release, и Beta всегда начинают со свежего набора слотов
     if (version == GameVersion::Beta) {
         CAMERA_PROJECTION_MATRIX = game_offsets_beta::CAMERA_PROJECTION_MATRIX;
         CAMERA_VIEW_MATRIX = game_offsets_beta::CAMERA_VIEW_MATRIX;
@@ -1410,30 +1404,6 @@ inline void Select(GameVersion version) {
 
 inline const char* VersionName() {
     return selected_version == GameVersion::Beta ? "Beta" : "Release";
-}
-
-// Переключает ТОЛЬКО TypeInfo-слоты и TOD-окно релиза на предыдущий билд
-// (11989). Managed-поля не трогаем — раскладки 11989 и 11991 совпадают
-// побайтово. Вызывается из base_resolves_game, когда слоты активного набора
-// не резолвят классы игры (игра на устройстве ещё прошлого билда);
-// обратно возвращает Select(Release) тот же base_resolves_game, если игра
-// уже обновилась. Выбор версии на экране старта сбрасывает набор заново.
-inline void SelectReleaseLegacy() {
-    release_build = 11989;
-    PLAYER_MANAGER_TYPEINFO_RVA = game_offsets_11989::PLAYER_MANAGER_TYPEINFO_RVA;
-    PLAYER_LOOP_HELPER_TYPEINFO_RVA = game_offsets_11989::PLAYER_LOOP_HELPER_TYPEINFO_RVA;
-    GAME_CONTROLLER_TYPEINFO_RVA = game_offsets_11989::GAME_CONTROLLER_TYPEINFO_RVA;
-    WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = game_offsets_11989::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA;
-    NETWORK_CLIENT_TYPEINFO_RVA = game_offsets_11989::NETWORK_CLIENT_TYPEINFO_RVA;
-    NETWORK_SERVER_TYPEINFO_RVA = game_offsets_11989::NETWORK_SERVER_TYPEINFO_RVA;
-    NETWORK_TIME_TYPEINFO_RVA = game_offsets_11989::NETWORK_TIME_TYPEINFO_RVA;
-    FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = game_offsets_11989::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA;
-    FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = game_offsets_11989::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT;
-    FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = game_offsets_11989::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA;
-    FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = game_offsets_11989::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT;
-    HMJ_TYPEINFO_RVA = game_offsets_11989::HMJ_TYPEINFO_RVA;
-    TOD_SCAN_RVA_BEGIN = game_offsets_11989::TOD_SCAN_RVA_BEGIN;
-    TOD_SCAN_RVA_END = game_offsets_11989::TOD_SCAN_RVA_END;
 }
 
 } // namespace go_active

@@ -97,10 +97,10 @@ int main() {
         // Without any initialized TypeInfo, bind must fail cleanly.
         assert(!reader.bind(4242, kFakeBase));
 
-        // Initialize only Release 11985 PlayerLoopHelper_TypeInfo (0xE5A58D0)
+        // Initialize only Release 11985 PlayerLoopHelper_TypeInfo (0xE651850)
         // and its Il2CppClass::image (+0x0), while NetworkClient/PlayerManager
         // remain 0 (as in the main menu).
-        tp.set_u64(kFakeBase + 0xE5A58D0ULL, kFakeKlass);
+        tp.set_u64(kFakeBase + 0xE651850ULL, kFakeKlass);
         tp.set_u64(kFakeKlass, kFakeImage);
 
         assert(reader.bind(4242, kFakeBase));

@@ -17,16 +17,16 @@ int main() {
     assert(go_active::selected_version == GameVersion::Release);
 
     // --- TypeInfo-слоты (внутренние .data, одно разыменование) ---
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE5A5908);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE5A58D0);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE59F970);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE5A3980);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE5AAA28);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE651850);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE64CB80);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE650AF8);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
     // Инвариант PLH -> PM = 0x38 пережил уже пять ротаций имён.
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE5A5908);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
     // Промисы UniTask: пара классов через 8 байт, вложенный <>c в релизе не нужен.
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE5B4CD0);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE5B4CC8);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE660FE8);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE660FE0);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA -
                go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
@@ -40,15 +40,15 @@ int main() {
     assert(go_active::DELAYPROMISE_SCALED_ELAPSED == 0x20);
 
     // --- Окно структурного скана .data (11985: .data 0xE310C98..0xE972AD0) ---
-    // Должно накрывать Hi_TypeInfo (TOD_Sky, 0xE59FF08) и Pee_TypeInfo
-    // (25 LayerMask-статик, 0xE5A5260); остальные рабочие слоты тоже внутри.
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE590000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE5C0000);
+    // Должно накрывать Hi_TypeInfo (TOD_Sky, 0xE64D108) и Pee_TypeInfo
+    // (25 LayerMask-статик, 0xE657F00); остальные рабочие слоты тоже внутри.
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE640000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE670000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
-    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE59FF08;  // Hi (TOD_Sky) TypeInfo from script.json
+    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE64D108;  // Hi (TOD_Sky) TypeInfo from script.json
     assert(kTodSkyTypeInfoSlot > go_active::TOD_SCAN_RVA_BEGIN);
     assert(kTodSkyTypeInfoSlot < go_active::TOD_SCAN_RVA_END);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE5A5260);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE657F00);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);

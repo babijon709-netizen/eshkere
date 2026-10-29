@@ -1,7 +1,8 @@
 #pragma once
 #include <cstdint>
 
-// Release profile, build 11985.
+// Release profile, build 11989 (проверка: tools/offsets/verify_release_11989.py).
+// Предыдущий релиз 11985 — ниже в комментариях.
 // Source: dump11985.7z (dump.cs + il2cpp.h + libil2cpp.so + script.json),
 // 32402 типа. Managed fields are resolved from dump.cs; TypeInfo RVAs are the
 // inner Il2CppClass* slots listed by script.json's TypeInfoPointers
@@ -124,9 +125,9 @@ inline constexpr float MAX_PLAYER_DISTANCE    = 300.0F;
 // мусор 0xa000b409/0xa000b3fd (это «таблица типов v2» протектора S16 из
 // малых целых, НЕ слоты классов). Перекрёстное подтверждение: PM-PLH = 0x30,
 // как и в прошлом рабочем билде (0xD9C5310/0xD9C52E0).
-inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE5A5908; // release 11985: Oxide.PlayerManager TypeInfo slot
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE651888; // release 11989: Oxide.PlayerManager TypeInfo slot
 // Cysharp.Threading.Tasks.PlayerLoopHelper.
-inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE5A58D0; // release 11985 TypeInfo slot; слот найден напрямую в script.json
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE651850; // release 11989 TypeInfo slot; слот найден напрямую в script.json
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST = 0x08; // activePlayerList
 inline constexpr std::uint64_t PLAYER_MANAGER_STATIC_FIELDS_LIST = 0x10; // clientPlayerList
 
@@ -151,9 +152,9 @@ inline constexpr std::uint64_t DELAYPROMISE_SCALED_INITIAL_FRAME = 0x18; // Dela
 // (Δ8 между двумя классами промисов сохранён: 0xE5B4CD0/0xE5B4CC8).
 // _ALT — запасной слот: в бете пара классов опознаётся по имени в рантайме
 // из двух кандидатов (см. game_offsets_beta.h), в релизе запасной не нужен.
-inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE5B4CD0;     // Cysharp...UniTask.DelayPromise (TDI 21933)
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE660FE8;     // Cysharp...UniTask.DelayPromise (TDI 21933)
 inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0;
-inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE5B4CC8;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise (TDI 21935)
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE660FE0;      // Cysharp...UniTask.DelayIgnoreTimeScalePromise (TDI 21935)
 inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0;
 inline constexpr std::uint64_t FPHITSCAN_CONFIG = 0x130;
 // Projectile/config offsets rechecked against release 11985. The beta profile
@@ -221,9 +222,9 @@ inline constexpr std::uint64_t RECOILCONFIG_MAX_RECOIL = 0x20;   // Vector2
 inline constexpr std::uint64_t RECOILCONFIG_MIN_SIDE = 0x28;
 inline constexpr std::uint64_t RECOILCONFIG_MAX_SIDE = 0x2C;
 
-inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE59F970; // release 11985: Oxide.GameControllerBase TypeInfo slot
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE64CB80; // release 11989: Oxide.GameControllerBase TypeInfo slot
 // Build 11966 TypeInfoPointers gives the inner slot directly.
-inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE5AAA28; // release 11985
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE6564B8; // release 11989
 inline constexpr std::uint64_t WORLD_STREAMING_GRASS_ENABLED_FIELD = 0x18; // static bool GrassEnabled
 inline constexpr std::uint64_t WORLD_STREAMING_TREES_ENABLED_FIELD = 0x19; // static bool TreesEnabled
 // CreateVegetationRenderer checks +0x18; StartStreaming checks +0x19 before
@@ -743,7 +744,7 @@ inline constexpr std::uint64_t OCCLUSION_MOD_INTERVAL        = 0x2C;  // Occlusi
 inline constexpr std::uint64_t OCCLUSION_MOD_NEXT_TIME       = 0x38;  // OcclusionModule.PKO (float)
 inline constexpr std::uint64_t OCCLUSION_MOD_HAS_VAL         = 0x3C;  // OcclusionModule.PKT.hasValue (uint8)
 inline constexpr std::uint64_t OCCLUSION_MOD_IS_OCCLUDED     = 0x3D;  // OcclusionModule.PKT.value (uint8, 0=виден, 1=за стеной)
-inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xE5A5260; // release 11985: Pee TypeInfo slot (25 LayerMask-статик 0x00..0x60, как hMj в 11966 / IWt в бете)
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA              = 0xE657F00; // release 11989: yCC (бывш. Pee в 11985) TypeInfo slot (25 LayerMask-статик 0x00..0x60, как hMj в 11966 / IWt в бете)
 inline constexpr std::int32_t  MARKER_TYPE_NEARBY_PLAYER     = 10;    // MarkerType.NearbyPlayer
 // Тот же struct UnityEngine.RaycastHit (dump.cs 62a8534, строка 642061):
 //   m_Point 0x0 (Vector3), m_Normal 0xC (Vector3), m_FaceID 0x18,
@@ -855,7 +856,7 @@ inline constexpr std::uint64_t IL2CPP_ARRAY_FIRST_ELEMENT = 0x20;
 // TypeInfoPointers; its static-field access pattern is also checked against the
 // owning class's methods:
 //   ldr x0,[x19] ; ldr x8,[x0,#0xb8] (static_fields) ; ldr x0,[x8,#0x28] (spawned)
-inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE5A3980; // release 11985: Mirror.NetworkClient TypeInfo slot
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE650AF8; // release 11989: Mirror.NetworkClient TypeInfo slot
 inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionary<uint, NetworkIdentity>; 0x28 handlers
 
 // ---- Mirror: сетевые таймнги (release 11985) --------------------------------
@@ -874,9 +875,9 @@ inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionar
 // [слот] — Il2CppClass*. Резолвер в game.cpp берёт класс только по точному
 // имени и namespace, поэтому сдвиг слота в чужом билде даёт откат к
 // константам, а не чтение мусора.
-inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE5A3A48;
+inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE650BC0;
 inline constexpr std::uint64_t NETWORK_CLIENT_STATICS_RVA  = 0;
-inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA   = 0xE5A3A60;
+inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA   = 0xE650BD8;
 inline constexpr std::uint64_t NETWORK_CLIENT_BUFFER_MULTIPLIER = 0x108; // double
 inline constexpr std::uint64_t NETWORK_SERVER_TICK_RATE         = 0x8;   // int
 inline constexpr std::uint64_t NETWORK_TIME_RTT                 = 0x20;  // double, _rtt.Value
@@ -951,16 +952,16 @@ inline constexpr std::uint64_t VITALS_MAX_HEALTH     = 0x88; // GenericVitals.m_
 // In dump11985 TOD_Sky is the obfuscated class `Hi` (TypeDefIndex 706): its
 // static List<Hi> is at 0x0 and Cycle is at 0x40. The nested
 // TOD_CycleParameters fields are Hour 0x10, Day 0x14, Month 0x18, Year 0x1C.
-// script.json TypeInfoPointers lists Hi_TypeInfo at 0xE59FF08; the field layout
+// script.json TypeInfoPointers lists Hi_TypeInfo at 0xE64D108 (11989); the field layout
 // is confirmed by dump.cs. GameControllerBase.TODSky remains at 0x178.
-// libil2cpp.so 11985 .data is RVA 0xE310C98..0xE972AD0; the scan window below
-// contains Hi_TypeInfo (day_tod_scan) and Pee_TypeInfo 0xE5A5260
-// (resolve_solid_wall_masks, 25 LayerMask statics).
+// 11989: TOD_Sky = gF (TDI 706, бывш. Hi), Hi_TypeInfo 0xE64D108 (day_tod_scan);
+// LayerMask-статики (бывш. Pee, 11989 = yCC, TypeInfo 0xE657F00, 25 статиков 0x00..0x60)
+// для resolve_solid_wall_masks. Окно сканирования покрывает оба слота.
 // day_tod_scan() checks 1 KiB per frame and validates candidates against the
 // list/Cycle/date signature; re-check the range against the next dump's ELF
 // before changing the profile.
-inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE590000;
-inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xE5C0000; // 11985 release metadata window
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE640000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END   = 0xE670000; // 11989 release metadata window
 inline constexpr std::uint64_t TOD_SKY_CYCLE      = 0x40; // TOD_Sky.Cycle
 inline constexpr std::uint64_t TOD_CYCLE_HOUR     = 0x10; // TOD_CycleParameters.Hour
 inline constexpr std::uint64_t TOD_CYCLE_DAY      = 0x14;

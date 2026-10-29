@@ -12507,7 +12507,14 @@ int esp_skeleton_diag(char* out, size_t cap, int max_players) {
         g_mem.reads_total(), g_mem.read_fails_total());
     say("меток TBI / мусора : %llu / %llu    обрывов: %llu\n",
         g_mem.tagged_total(), g_mem.junk_total(), g_mem.cut_total());
-    say("профиль оффсетов   : %s\n", VersionName());
+    // Номер билда в логе — по нему видно и версию самого бинаря чита
+    // (старые APK печатают просто "Release" без номера), и сработал ли
+    // legacy-фоллбэк на устройстве с ещё не обновившейся игрой.
+    if (selected_version == GameVersion::Beta) {
+        say("профиль оффсетов   : Beta\n");
+    } else {
+        say("профиль оффсетов   : Release/%d\n", release_build);
+    }
 
     const TransformHierarchyLayout& gl = g_transform_hierarchy_layout;
     say("раскладка общая    : найдена=%d перебор_идёт=%d (данные +0x%llx индекс +0x%llx)\n",

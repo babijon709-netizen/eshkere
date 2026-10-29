@@ -865,12 +865,13 @@ inline constexpr std::uint64_t NETWORK_CLIENT_SPAWNED      = 0x30;  // Dictionar
 // через rtt/2. Попадание сервер считает в своём «сейчас», то есть через rtt/2
 // после нашей записи. Итого цель надо вести на flight + bufferTime + rtt.
 //   bufferTime = sendInterval * bufferTimeMultiplier
-//     NetworkClient.get_bufferTime, RVA 0xC8E89E0: ldr d1,[static+0x108];
-//     fmul на sendInterval (get_sendInterval, RVA 0xC8DBEDC).
+//     NetworkClient.get_bufferTime, RVA 0xC8CCAA8 (11989): ldr d1,[x8,#0x108];
+//     fmul на sendInterval (get_sendInterval, RVA 0xC8BFFA4, 11989).
 //   sendRate = NetworkServer.tickRate
-//     NetworkClient.get_sendRate, RVA 0xC8DBE54: ldr w0,[static_fields,#8].
+//     NetworkClient.get_sendRate, RVA 0xC8BFF1C (11989): ldr w0,[x8,#8].
 //   rtt = NetworkTime._rtt.Value
-//     NetworkTime.get_rtt, RVA 0xC8FD6F4: ldr d0,[static_fields,#0x20].
+//     NetworkTime.get_rtt, RVA 0xC8E57BC (11989): ldr d0,[x8,#0x20].
+//     RVA сверены по script.json и дизассемблеру libil2cpp.so 11989 (capstone).
 // Слоты ниже — metadata usage, а не TypeInfo-кэш: [base+rva] даёт адрес слота,
 // [слот] — Il2CppClass*. Резолвер в game.cpp берёт класс только по точному
 // имени и namespace, поэтому сдвиг слота в чужом билде даёт откат к

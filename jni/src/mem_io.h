@@ -541,6 +541,11 @@ private:
         static constexpr uint64_t kHotTypeInfoPairs[][2] = {
             {game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets::GAME_CONTROLLER_TYPEINFO_RVA},
             {game_offsets::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets::NETWORK_CLIENT_TYPEINFO_RVA},
+            // Legacy release build 11989: same managed layout, moved TypeInfo
+            // slots (go_active::SelectReleaseLegacy) — a device whose game has
+            // not rolled to 11991 resolves classes through these RVAs.
+            {game_offsets_11989::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets_11989::GAME_CONTROLLER_TYPEINFO_RVA},
+            {game_offsets_11989::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets_11989::NETWORK_CLIENT_TYPEINFO_RVA},
             {game_offsets_beta::PLAYER_MANAGER_TYPEINFO_RVA, game_offsets_beta::GAME_CONTROLLER_TYPEINFO_RVA},
             {game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA},
         };
@@ -560,6 +565,10 @@ private:
             game_offsets::NETWORK_CLIENT_TYPEINFO_RVA, // Release profile: NetworkClient
             game_offsets::PLAYER_MANAGER_TYPEINFO_RVA, // Release profile: PlayerManager
             game_offsets::GAME_CONTROLLER_TYPEINFO_RVA, // Release profile: GameControllerBase
+            game_offsets_11989::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Release 11989 (legacy): PlayerLoopHelper
+            game_offsets_11989::NETWORK_CLIENT_TYPEINFO_RVA, // Release 11989 (legacy): NetworkClient
+            game_offsets_11989::PLAYER_MANAGER_TYPEINFO_RVA, // Release 11989 (legacy): PlayerManager
+            game_offsets_11989::GAME_CONTROLLER_TYPEINFO_RVA, // Release 11989 (legacy): GameControllerBase
             game_offsets_beta::PLAYER_LOOP_HELPER_TYPEINFO_RVA, // Beta 11982: PlayerLoopHelper
             game_offsets_beta::UNITY_CAMERA_TYPEINFO_RVA, // Beta 11982: UnityEngine.Camera
             game_offsets_beta::NETWORK_CLIENT_TYPEINFO_RVA, // Beta 11982: NetworkClient

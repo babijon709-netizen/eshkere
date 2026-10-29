@@ -1189,3 +1189,29 @@ inline constexpr std::uint64_t FPMOTION_ACTIVE_OFFSET           = 0xE8;
 inline constexpr std::uint64_t TRANSFORMOFFSET_LERP_SPEED = 0x20; // Oxide.TransformOffset.m_LerpSpeed
 
 }
+
+// ---- Предыдущий релиз (build 11989): только TypeInfo-слоты и TOD-окно -------
+// Игра у пользователей обновляется стадиями: чит уже переведён на 11991, а у
+// части устройств пакет ещё прошлого билда — и по одному набору слотов они
+// не коннектятся (base_resolves_game не резолвит классы, всё молчит).
+// Managed-раскладки 11989 и 11991 совпадают побайтово (verify_release_11991.py
+// сверяет ту же таблицу полей, что гонялась на 11989), поэтому старый билд
+// отличается ТОЛЬКО этими значениями — остальной профиль общий.
+// Переключение: go_active::SelectReleaseLegacy() из base_resolves_game
+// (game.cpp); обратно — go_active::Select(Release). Поля НЕ меняются.
+namespace game_offsets_11989 {
+inline constexpr std::uint64_t PLAYER_MANAGER_TYPEINFO_RVA = 0xE651888;
+inline constexpr std::uint64_t PLAYER_LOOP_HELPER_TYPEINFO_RVA = 0xE651850;
+inline constexpr std::uint64_t GAME_CONTROLLER_TYPEINFO_RVA = 0xE64CB80;
+inline constexpr std::uint64_t WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA = 0xE6564B8;
+inline constexpr std::uint64_t NETWORK_CLIENT_TYPEINFO_RVA = 0xE650AF8;
+inline constexpr std::uint64_t NETWORK_SERVER_TYPEINFO_RVA = 0xE650BC0;
+inline constexpr std::uint64_t NETWORK_TIME_TYPEINFO_RVA = 0xE650BD8;
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA = 0xE660FE8;
+inline constexpr std::uint64_t FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT = 0;
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA = 0xE660FE0;
+inline constexpr std::uint64_t FASTLOOT_IGNOREDELAY_TYPEINFO_RVA_ALT = 0;
+inline constexpr std::uint64_t HMJ_TYPEINFO_RVA = 0xE657F00; // yCC (25 LayerMask-статик 0x00..0x60)
+inline constexpr std::uint64_t TOD_SCAN_RVA_BEGIN = 0xE640000;
+inline constexpr std::uint64_t TOD_SCAN_RVA_END = 0xE670000;
+}  // namespace game_offsets_11989

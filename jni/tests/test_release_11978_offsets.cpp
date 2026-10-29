@@ -464,6 +464,41 @@ int main() {
     assert(go_active::ITEMPICKUP_SHORTNAME == 0xD8);
     assert(go_active::ITEMPICKUP_AMOUNT == 0xE0);
 
+    // --- Legacy release build 11989 (game_offsets_11989): только TypeInfo-слоты
+    // и TOD-окно; managed-поля обязаны остаться нетронутыми (раскладки 11989 и
+    // 11991 совпадают побайтово). Цикл SelectReleaseLegacy() -> Select(Release)
+    // обязан вернуть свежий профиль целиком.
+    go_active::SelectReleaseLegacy();
+    assert(go_active::release_build == 11989);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE651888);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE651850);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE64CB80);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE6564B8);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE650AF8);
+    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE650BC0);
+    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE650BD8);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE660FE8);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE660FE0);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE657F00);
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE640000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE670000);
+    // Managed-поля при legacy-переключении не двигаются:
+    assert(go_active::PLAYER_POSITION == 0x1F4);
+    assert(go_active::TREEHS_MARKER == 0x50);
+    assert(go_active::LOOTOBJECT_INVENTORY == 0xA0);
+    // Обратно на свежий профиль:
+    go_active::Select(GameVersion::Release);
+    assert(go_active::release_build == 11991);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE60B7B8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE60B780);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE606888);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE60AA70);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE61AB58);
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE600000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE630000);
+    assert(go_active::PLAYER_POSITION == 0x1F4);
+
     std::printf("release 11991 offsets pinned: TypeInfo slots, PM tail +0x10,\n"
                 "FPManager +0x10, PlayerWeapon/view +0x10..0x20, gate 0xF0,\n"
                 "WeaponPiece 0x18, KCC/FPMotion/ragdoll like beta 11977\n");

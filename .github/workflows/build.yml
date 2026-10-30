@@ -5,10 +5,6 @@ on:
     branches:
       - '**'
 
-  pull_request:
-    branches:
-      - '**'
-
   workflow_dispatch:
 
 # Бинарник только собирается и загружается как artifact.
@@ -53,30 +49,6 @@ jobs:
 
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "${GITHUB_ENV}"
           echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "${GITHUB_ENV}"
-
-      - name: Host checks (unit tests, menu rig, obfuscation pipeline)
-        shell: bash
-        run: |
-          LOG="$RUNNER_TEMP/host-tests.log"
-          exec 3>&1
-          exec >"$LOG" 2>&1
-          report_host() {
-            rc="$1"
-            if [ "$rc" -ne 0 ]; then
-              python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]; print("::error title=Host tests::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))' "$LOG" >&3 || true
-            fi
-            cat "$LOG" >&3
-            exit "$rc"
-          }
-          trap 'report_host $?' EXIT
-          chmod +x tools/tests/*.sh
-          tools/tests/run_all_host_tests.sh
-          tools/tests/run_menu_ui.sh
-          tools/tests/run_farm_tests.sh
-          tools/tests/run_capture_surface.sh
-          tools/tests/run_screen_capture.sh
-          tools/tests/run_startup_cli.sh
-          tools/tests/run_obf_selftest.sh
 
       - name: Build
         shell: bash

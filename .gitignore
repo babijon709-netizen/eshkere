@@ -20,6 +20,8 @@ jni/src/magic_farm_blob.inc.tmp
 # Скачанные с диска дампы игры (сотни МБ): распаковывать во временный каталог,
 # в git не класть. Схема распаковки: dump.cs / il2cpp.h / script.json.
 dumps/
+.dumps/
+google_drive/
 *.7z
 
 # python bytecode

@@ -2,6 +2,13 @@
 #include <cstdint>
 namespace magicfarm::profile {
 // Release 11991 only. Regenerate with the matching dump; no Beta fallback.
+// AArch64 BRK inside libil2cpp's executable segment. Remote calls return here
+// instead of address 0: android_dlopen_ext uses __builtin_return_address(0) to
+// pick the caller's linker namespace, so LR=0 lands in the anonymous namespace
+// and the load fails. Verified against dump11991/libil2cpp.so.
+inline constexpr std::uint64_t ReturnTrap = 0x5C4F1C4;
+inline constexpr std::uint32_t ReturnTrapInsn = 0xD4200020;
+
 inline constexpr std::uint64_t CompactTypeInfo = 0xE60A3B0;
 inline constexpr std::uint64_t NetworkClientTypeInfo = 0xE60AA70;
 inline constexpr std::uint64_t HitMarkersTypeInfo = 0xE60A3A0;

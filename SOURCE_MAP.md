@@ -1,15 +1,16 @@
 # SOURCE_MAP.md — карта чита по распакованному `jni/`
 
-Ревизия: `magic-purpose-mask-fix-v1` (BUILD_INFO.json), NDK r26d, arm64-v8a, API 24+.
+Ревизия: NDK r26d, arm64-v8a, API 24+. Профиль оффсетов — релиз **11993**
+(`tools/offsets/verify_release_11993.py`), бета — **11982**.
 Источник: `eshkere-magic-source.zip`, sha256 `f2e30c354289d0896dc4f101b7bc9da08ff7159f471109d5a178010327e83c9b`.
-Распаковано в `jni/` (194 файла, 14 МБ). Копии служебных файлов архива — `docs/magic/`.
+Распаковано в `jni/` (191 файл, 14 МБ). Копии служебных файлов архива — `docs/magic/`
+(исторический архив исходной ревизии, в сборке не участвует).
 
 Отличие от `SOURCE_REVIEW.md`: тот документ описывает ревизию с **инъекцией**
-`magic_farm_*` (ptrace + memfd + dlopen + inline-hook). В этой ревизии инъекции
-нет: `magic_farm_loader/module/profile/hook.cpp` отсутствуют, вместо них
-`jni/src/magic_tools_memory.h` — правка полей объектов через тот же `g_mem`.
-Всё, что в старых документах написано про Appdome fail-closed, тоже устарело
-(см. §9).
+`magic_farm_*` (ptrace + memfd + dlopen + inline-hook). Инъекции нет и не было
+в этой ветке, а с 11993-ревизии удалены и сами фичи Magic Tools / Magic Farm
+(см. §9). Всё, что в старых документах написано про Appdome fail-closed, тоже
+устарело (см. §9).
 
 ---
 
@@ -17,9 +18,9 @@
 
 | Группа | Файлов | Строк | Где |
 |---|---:|---:|---|
-| Пользовательский код | 111 `.h` + 78 `.cpp` | 54 477 | `jni/src`, `jni/include` |
-| Профили оффсетов | 3 | 3 177 | `game_offsets.h` (release 11993), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
-| Хост-тесты | 41 | — | `jni/tests/` |
+| Пользовательский код | 91 `.h` + 30 `.cpp` + 1 `.inc` | 48 954 | `jni/src`, `jni/include` |
+| Профили оффсетов | 3 | 3 196 | `game_offsets.h` (release 11993), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
+| Хост-тесты | 40 | — | `jni/tests/` |
 | Вендор | ImGui, stb_image, TJpgDec | — | `jni/src/ImGui`, `jni/include/ImGui`, `third_party/tjpgd` |
 | Медиа/шрифты | аватарка (JPEG-кадры), атлас брони, иконки вкладок, шрифт, WAV | — | `jni/src/media`, `jni/include/media`, `include/ImGui/Font` |
 
@@ -151,22 +152,20 @@ W2S: Unity **column-major**, камера смотрит в −Z, положит
 | Выбор цели, тач/память/сайлент | `aim.cpp` (863), `aim_control.h`, `aim_learn.h`, `aim_lead_learn.h`, `aim_predict.h`, `aim_ballistics.h`, `aim_trace.h`, `bot_lead.h`, `manes_aim_source.h` |
 | Сайлент-писатель (свой поток) | `silent_aim.cpp` + `silent_aim_core.h` |
 | Проверка видимости | `vis_check.h` (642) |
-| Автофарм (тач/джойстик) | `farm.cpp` (1068), `farm_joy.cpp`, `farm_control_core.h`, `farm_joy_core.h`, `game_farm.cpp` |
+| Автофарм (тач/джойстик) | `farm.cpp` (1047), `farm_joy.cpp`, `farm_control_core.h`, `farm_joy_core.h`, `game_farm.cpp` |
 | Маркеры мира | `game_markers.cpp` (4 500+) |
 | Правки оружия/рук/FPS | `game_viewmodel.cpp` + `weapon_tuning_memory.h`, `viewmodel_memory.h`, `fast_fire_memory.h`, `fast_loot_memory.h`, `no_recoil_memory.h`, `no_ballistics_memory.h`, `fps_memory.h`, `object_data_memory.h` |
-| Magic Tools / Magic Farm | `magic_tools_memory.h` (194) + `tool_purpose.h`, интеграция в `game_viewmodel.cpp`, `farm.cpp`, `menu.cpp`, `config.cpp` |
+| Назначения инструмента | `tool_purpose.h` — `ToolPurpose` + `farm_tool::valid/effective_purposes` (используется автофармом и `game.cpp`) |
 | FakeLag | `FakeLag.cpp` — `iptables -I INPUT … -p udp -m length --length 80:65535 -j DROP`, снятие по сигналам/дедлайну |
 | Захват экрана | `screen_capture.cpp`, `record_capture.cpp` (fresh-exec helper), `record_display.cpp` (virtual display + MediaCodec), `record_mp4.cpp` (фрагментный MP4), `capture_merge.cpp` |
 | Ввод | `Android_touch/TouchHelperA.cpp` (1058) — uinput-палец, identity клонируется с реального тачскрина, слот 9 у аима, 6–8 у фарма |
-| UI | `menu.cpp` (2424, 6 вкладок: Меню/Аим/ESP/Разное/Конфиги/Опции; «Меню» скрыта), `widgets.cpp`, `theme.cpp`, `lang.cpp` + `lang_tables.inc`, `VidAvatar.cpp` (tjpgd-аватарка) |
-| Конфиги | `config.cpp` (926): `CfgBlob` ровно 260 байт (`static_assert`), XOR 0xA7, трейлеры `CUI1` (UI/layout/backend) и `CFX2` (Ext2, `farm_magic`/магия — биты сверх 24). Путь `/data/local/benzware/*.cfg`, `.mode` → `/storage/emulated/0/benzware/` |
+| UI | `menu.cpp` (2404, 6 вкладок: Меню/Аим/ESP/Разное/Конфиги/Опции; «Меню» скрыта), `widgets.cpp`, `theme.cpp`, `lang.cpp` + `lang_tables.inc`, `VidAvatar.cpp` (tjpgd-аватарка) |
+| Конфиги | `config.cpp` (917): `CfgBlob` ровно 260 байт (`static_assert`), XOR 0xA7, трейлеры `CUI1` (UI/layout/backend) и `CFX2` (Ext2; биты 24–27 бывшей магии больше не пишутся и не читаются). Путь `/data/local/benzware/*.cfg`, `.mode` → `/storage/emulated/0/benzware/` |
 | Стелс/обфускация | `stealth.h`, `process_hardening.h`, `bw_obf.h/.cpp`, `scoped_text.h`, `str.h` (`XS()`), `attach_log.cpp`, `feature_log_gate.h` |
 
-Magic Tools по факту: подтверждённая цепочка `PlayerManager → FPManager → _currentWeapon(FPTool)
-→ RaycastManager` (сверка класса, имени, identity, backref), затем `m_MaxReach` (0x130) и
-`m_RayLength/m_AimRayLength` (0x38/0x3C) поднимаются до ≥7.5 м и `alwaysCrit` (0x170) := 1;
-восстановление только своего значения (`Saved<T>` + `last`), `valid_purposes()` принимает
-только `-1` (Everything) или биты 1|2|4, нормализуя первый в 1|2|4 для матчинга.
+`tool_purpose.h` остаётся, потому что им пользуется автофарм: `valid_purposes()` принимает
+`-1` (Everything) или биты 1|2|4, нормализуя первый в 1|2|4 для матчинга; `game.cpp` читает
+`m_ToolPurposes` живого инструмента, чтобы понимать, что фарм вообще может рубить/ломать.
 
 ---
 
@@ -198,11 +197,11 @@ ANDROID_NDK_HOME=<ndk-r26d> ./build.sh      # ndk-build → libs/arm64-v8a/benzw
 - `jni/Application.mk`: arm64-v8a, android-24, `c++_static`, `--strip-all`.
 - **Не хватает в репозитории:** `tools/obf/elf_crypt.py` — последний шаг корневого
   `build.sh` (шифрование `.rodata` + `--check`). Без него сборка падает на постобработке;
-  сам `ndk-build` при этом проходит. Также нет `magic_farm_blob.inc`-пасса — он не нужен,
-  инъекции в этой ревизии нет.
+  сам `ndk-build` при этом проходит. Блоба `magic_farm_blob.inc` нет — инъекции в этой
+  ревизии нет.
 
 Проверено локально (g++ 12, `-std=c++17 -O2 -ffast-math -I src -I include`):
-**38 из 41** хост-теста проходят. Падают три — `test_manes_aim_source`,
+**37 из 40** хост-тестов проходят. Падают три — `test_manes_aim_source`,
 `test_player_motion_prediction`, `test_target_predictor`: все три ассертят `isfinite`-гварды,
 которые `-ffast-math` выбрасывает. Без `-ffast-math` — зелёные. То есть это рассогласование
 флагов теста и сборки, а не баг кода; но на устройстве NaN-проверки в aim/фильтрах
@@ -212,16 +211,17 @@ ANDROID_NDK_HOME=<ndk-r26d> ./build.sh      # ndk-build → libs/arm64-v8a/benzw
 
 ## 9. Что изменилось против старых документов
 
-- **Инъекция Magic Farm удалена.** Нет `magic_farm_*`, нет ptrace/memfd/dlopen, нет
-  inline-hook и vtable-CAS. `Magic Tools` = правка полей живого `FPTool`/`RaycastManager`
-  через транспорт; `Magic Farm` = тот же контроллер + существующий автофарм.
+- **Magic Tools и Magic Farm удалены из кода.** Нет `magic_tools_memory.h`,
+  `magic_tools.h`, полей `g_state.magic_*`, секции меню, ветки фарма без ходьбы,
+  битов 24–27 конфига и хост-теста `test_magic_tools_memory.cpp`. Автофарм работает
+  как раньше — через тач/память-джойстик, без правки `m_MaxReach`/`alwaysCrit`.
 - **Fail-closed по `libloader.so` снят.** `runtime_guard::writes_allowed()` теперь требует
   только полный снапшот `/proc/<pid>/maps`; наличие Appdome-загрузчика
   (`Policy::Protected`) — диагностика, запись разрешена (`snapshot_allows_writes`).
   `farm.h`: `g_farmProtected` → `g_farmWriteBlocked` (пишется только при Unknown).
 - `runtime_guard` переехал в `jni/src/`, `maps_lookup.h` остался.
-- Конфиг: биты 24–26 — выбор руды для Magic, 27 — признак наличия (см. `tool_purpose.h`,
-  `config.cpp`). Бит 128 (`fast_reload`) — мёртвая функция, исполнителя нет.
+- Конфиг: биты 24–27 больше не используются (оставлены свободными, старые конфиги
+  читаются). Бит 128 (`fast_reload`) — мёртвая функция, исполнителя нет.
 
 ---
 
@@ -230,8 +230,8 @@ ANDROID_NDK_HOME=<ndk-r26d> ./build.sh      # ndk-build → libs/arm64-v8a/benzw
 - Запись в память игры на клиенте с Appdome RASP (**libloader.so**, key-injection и
   click-bot сканер в DEX — см. `LOADER_AUDIT.md`) больше ничем не блокируется, кроме
   полноты maps. Это ровно то, что защита ищет: heap-правки полей живых объектов.
-- Бета 11982: Magic Farm/инструменты на неё не рассчитаны (смещения `PlayerManager`
-  другие); `PlayerManager.fpManager` 0x90/0xD0.
+- Бета 11982: managed-раскладка совпадает с релизом 11993 (все смещения полей равны),
+  отличаются только TypeInfo-слоты; профиль переключается `go_active::Select`.
 - FakeLag — глобальное правило на весь входной UDP; `SIGKILL` оставляет DROP до перезапуска.
 - Захват экрана — приватные display-API, зависят от прошивки; на устройстве не проверялось
   (`device_tested: false` в `docs/magic/BUILD_INFO.json`).

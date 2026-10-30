@@ -296,10 +296,6 @@ static void WriteExt2Trailer(std::ostream& f) {
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
               (g_state.esp_armor     ? (1u << 16) : 0u) |
-              (1u << 27) | // Magic resource-selection extension is present.
-              (g_state.magic_stone ? (1u << 24) : 0u) |
-              (g_state.magic_metal ? (1u << 25) : 0u) |
-              (g_state.magic_sulfur ? (1u << 26) : 0u) |
               overlay_capture::config_flag(g_state.streamer_mode) |
               screen_capture::video_config_flags(g_state.capture_video);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
@@ -803,13 +799,8 @@ static void LoadCfgByName(const char* name, bool announce) {
             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
             g_state.esp_armor      = (ext2.flags & (1u << 16)) != 0;
-            if(ext2.flags & (1u << 27)) {
-                g_state.magic_stone=(ext2.flags & (1u << 24))!=0;
-                g_state.magic_metal=(ext2.flags & (1u << 25))!=0;
-                g_state.magic_sulfur=(ext2.flags & (1u << 26))!=0;
-            }
-            // Loading a profile must not enable automatic input or tool patches.
-            g_state.magic_tools=false;g_state.magic_farm=false;
+            // Bits 24..27 (MagicTools/MagicFarm resource selection) are gone;
+            // they stay unused so configs written by older builds still load.
 
             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);

@@ -1,8 +1,6 @@
 #include "farm.h"
-#include "magic_tools.h"
 #include "attach_log.h"
 #include "feature_log_gate.h"
-#include "magic_tools_memory.h"
 #include "farm_joy.h"          // память-джойстик: движение без тача
 #include "farm_control_core.h"
 #include "cfg.h"
@@ -239,24 +237,21 @@ struct FarmTrace {
 const char* farm_event_name(int event) {
     switch(event) {
     case 1:return "off/no-resources";case 2:return "maps-not-ready";
-    case 3:return "not-attached";case 4:return "magic-tools-not-ready";
-    case 5:return "no-target";case 6:return "outside-magic-radius";
+    case 3:return "not-attached";case 4:return "no-target";
     default:return "controller";
     }
 }
 struct FarmLogOnExit {
     ~FarmLogOnExit() {
         static feature_log::Gate gate;
-        const uint64_t mask=uint64_t(g_state.magic_stone) | (uint64_t(g_state.magic_metal)<<1) |
-            (uint64_t(g_state.magic_sulfur)<<2);
         const uint64_t key=(uint64_t(farm_trace.event) | (uint64_t(g_farmPhase)<<8) |
-            (uint64_t(g_farmPaused)<<12) | (uint64_t(g_state.magic_farm)<<13) |
-            (uint64_t(g_state.farm_on)<<14) | (mask<<16)) ^ (farm_trace.target<<20);
-        if(!gate.accept(key,std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(),g_state.magic_farm || g_state.farm_on)) return;
-        attachlog::say("[farm] magic=%d normal=%d mask=0x%llx event=%s active=%d phase=%d paused=%d nodes=%d idle_reason=%d write_blocked=%d",
-            int(g_state.magic_farm),int(g_state.farm_on),(unsigned long long)mask,farm_event_name(farm_trace.event),
+            (uint64_t(g_farmPaused)<<12) |
+            (uint64_t(g_state.farm_on)<<14)) ^ (farm_trace.target<<20);
+        if(!gate.accept(key,std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(),g_state.farm_on)) return;
+        attachlog::say("[farm] on=%d event=%s active=%d phase=%d paused=%d nodes=%d idle_reason=%d write_blocked=%d",
+            int(g_state.farm_on),farm_event_name(farm_trace.event),
             int(g_farmActive),g_farmPhase,int(g_farmPaused),g_farmNodes,g_farmReason,int(g_farmWriteBlocked));
-        if(g_state.magic_farm || g_state.farm_on)
+        if(g_state.farm_on)
             attachlog::say("[farm.target] valid=%d id=0x%llx kind=%d distance=%.3f reach=%.3f ray_self=%d ray_foreign=%d period=%.3f hp=%.1f attack_ok=%llu attempts=%llu last_attack_on=%d last_attack_ok=%d aim_owns=%d calibration=%d",
                 int(farm_trace.have),(unsigned long long)farm_trace.target,g_farmTgtKind,
                 double(farm_trace.distance),double(farm_trace.reach),int(farm_trace.ray_self),int(farm_trace.ray_foreign),
@@ -286,10 +281,10 @@ void UpdateFarm(float dt) {
     if (!runtime_guard::writes_allowed(g_target_pid)) {
         if (!g_farmWriteBlocked) {
             // Release the normal controller's cached press/movement state once.
-            const bool enabled = g_state.farm_on, magicEnabled=g_state.magic_farm;
-            g_state.farm_on = false;g_state.magic_farm=false;
+            const bool enabled = g_state.farm_on;
+            g_state.farm_on = false;
             UpdateFarmInner(dt);
-            g_state.farm_on = enabled;g_state.magic_farm=magicEnabled;
+            g_state.farm_on = enabled;
         }
         farmjoy::release();
         g_farmActive = false; g_farmPaused = true; g_farmPhase = 0;
@@ -374,28 +369,18 @@ static void UpdateFarmInner(float dt) {
     // Память-джойстик: кэш цели движения и его периодическая перепроверка.
     farmjoy::tick(dt);
 
-    const bool magic = g_state.magic_farm;
-    static bool lastMagic=false;
-    if(magic!=lastMagic) {
-        releaseAll();resetNode();s_settle=0.f;s_lostTime=0.f;
-        lastMagic=magic;
-    }
     unsigned mask = 0;
-    if(magic) {
-        if(g_state.magic_stone) mask|=2u;
-        if(g_state.magic_metal) mask|=4u;
-        if(g_state.magic_sulfur) mask|=8u;
-    } else if (g_state.farm_on) {
+    if (g_state.farm_on) {
         if (g_state.farm_wood)   mask |= 1u;
         if (g_state.farm_stone)  mask |= 2u;
         if (g_state.farm_metal)  mask |= 4u;
         if (g_state.farm_sulfur) mask |= 8u;
     }
     esp_farm_set_resources(mask);
-    esp_farm_set_range(magic ? magic_tools::kFarmRadius : g_state.farm_range);
+    esp_farm_set_range(g_state.farm_range);
 
-    if (mask == 0 || !g_esp_attached || (magic && !esp_magic_tools_ready())) {
-        farm_trace.event=mask==0?1:(!g_esp_attached?3:4);
+    if (mask == 0 || !g_esp_attached) {
+        farm_trace.event=mask==0?1:3;
         releaseAll();
         g_farmActive = false; g_farmPhase = 0; g_farmPaused = false;
         g_farmHpPct = -1.f; g_farmSpotLife = -1.f; g_farmBlocked = false;
@@ -434,11 +419,8 @@ static void UpdateFarmInner(float dt) {
     farm_trace.have=haveTgt;farm_trace.target=tgt.id;
     farm_trace.distance=tgt.aim_3d;farm_trace.reach=tgt.melee_reach;
     farm_trace.period=tgt.attack_period;farm_trace.ray_self=tgt.ray_self;farm_trace.ray_foreign=tgt.ray_foreign;
-    const bool beyondMagic = haveTgt && magic &&
-        (!viewmodel::finite(tgt.aim_3d) || tgt.aim_3d > magic_tools::kFarmRadius);
-    if(beyondMagic) esp_farm_blacklist(tgt.id,1.f);
-    if (!haveTgt || beyondMagic) {
-        farm_trace.event=beyondMagic?6:5;
+    if (!haveTgt) {
+        farm_trace.event=4;
         // Рабочая цель может исчезнуть на пару кадров (рескан реестра, сбой
         // чтения посреди апдейта) и тут же вернуться. Мгновенный сброс всего
         // давал топтание «стоп-шаг-стоп»: на короткое время просто замораживаем
@@ -824,9 +806,6 @@ static void UpdateFarmInner(float dt) {
             (phase == 3 && noRay &&
              distNow > kNoRayCloseTo);
         if (s_evadeTime > 0.f) wantWalk = true;  // манёвр ведёт стик сам
-        if(magic) { wantWalk=false;s_evadeTime=0.f;s_walkOffTime=0.f;
-            if(s_moveDown) { farmjoy::release();s_joyX=s_joyY=0.f;s_moveDown=false; }
-        }
 
         // Гистерезис отпускания: фаза мигает на кадр-другой вокруг порогов
         // (шум дистанции/угла), и каждое мигание раньше поднимало и снова

@@ -1,6 +1,5 @@
 #include "menu.h"
 #include "farm.h"
-#include "magic_tools.h"
 #include "main.h"
 #include "Android_touch/TouchHelperA.h"   // Touch_GetActive/BlockRect (фрикам)
 #include "game.h"
@@ -868,20 +867,6 @@ float TabContent(int tab, float dt, float cW) {
             if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
                 esp_viewmodel_tick(vm);
         }
-        SHdr(XS("Magic"));
-        if(SettingsHeader("##misc_magic", XS("Magic Tools / Magic Farm"),
-                          XS("Дальность 7.5 м · Фарм руды в радиусе 6 м"))) {
-            CardBg(Layout::RowH * 5.f + ImGui::GetTextLineHeightWithSpacing()*2.f);
-            ToggleRow("##magic_tools",XS("Magic Tools"),&g_state.magic_tools,g_state.a_magic_tools,false);
-            ToggleRow("##magic_farm",XS("Magic Farm"),&g_state.magic_farm,g_state.a_magic_farm,false);
-            ToggleRow("##magic_stone",XS("Камень"),&g_state.magic_stone,g_state.a_magic_stone,false);
-            ToggleRow("##magic_metal",XS("Металл"),&g_state.magic_metal,g_state.a_magic_metal,false);
-            ToggleRow("##magic_sulfur",XS("Сера"),&g_state.magic_sulfur,g_state.a_magic_sulfur,false);
-            if(g_farmWriteBlocked) ImGui::TextDisabled("%s",XS("Ожидание доступа к памяти процесса"));
-            else if(g_state.magic_tools || g_state.magic_farm)
-                ImGui::TextDisabled("%s",esp_magic_tools_ready()?XS("Инструмент готов"):XS("Ожидание инструмента / доступа к памяти"));
-            ImGui::TextDisabled("%s",XS("Magic Farm: без ходьбы; зона атаки общая с автофармом"));
-        }
         SHdr(XS("Автофарм"));
         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
                            false, &g_state.farm_on, g_state.a_farm_on)) {
@@ -1517,11 +1502,6 @@ void RenderMenu() {
     Tick(g_state.a_esp_skeleton, g_state.esp_skeleton,     dt);
     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
     Tick(g_state.a_streamer_mode, g_state.streamer_mode,   dt);
-    Tick(g_state.a_magic_tools,g_state.magic_tools,dt);
-    Tick(g_state.a_magic_farm,g_state.magic_farm,dt);
-    Tick(g_state.a_magic_stone,g_state.magic_stone,dt);
-    Tick(g_state.a_magic_metal,g_state.magic_metal,dt);
-    Tick(g_state.a_magic_sulfur,g_state.magic_sulfur,dt);
     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);

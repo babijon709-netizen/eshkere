@@ -87,10 +87,6 @@ struct AppState {
     float esp_thick = 1.5f;
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
     // Автофарм: главный выключатель + какие ресурсы добывать.
-    bool magic_tools = false, magic_farm = false;
-    bool magic_stone = true, magic_metal = true, magic_sulfur = true;
-    float a_magic_tools=0.f, a_magic_farm=0.f;
-    float a_magic_stone=1.f, a_magic_metal=1.f, a_magic_sulfur=1.f;
     bool  farm_on = false;
     bool  farm_wood = true, farm_stone = false, farm_metal = false, farm_sulfur = false;
     // Калибровка зон бота (доли экрана 0..1; -1 = не задано, берём дефолт).

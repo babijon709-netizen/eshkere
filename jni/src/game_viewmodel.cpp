@@ -22,10 +22,8 @@
 #include <unistd.h>
 #include "game_viewmodel_internal.h"
 #include "game_internal.h"
-#include "magic_tools.h"
 #include "attach_log.h"
 #include "feature_log_gate.h"
-#include "magic_tools_memory.h"
 
 namespace {
 struct Memory {
@@ -341,7 +339,6 @@ struct HeapMemory {
     }
 };
 HeapMemory heap_memory;
-magic_tools::Controller<HeapMemory> magic_ctl(heap_memory);
 weapon_tuning::Controller<HeapMemory> weapons(heap_memory);
 fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
 fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
@@ -571,7 +568,6 @@ void esp_viewmodel_reset(bool restore) {
         ;
     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
         ;
-    magic_ctl.reset(restore && g_mem.bound());
     loot_speed.reset();
     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
@@ -582,38 +578,8 @@ void esp_viewmodel_reset(bool restore) {
 
 namespace {
 void log_feature_state() {
-    static feature_log::Gate magic_gate, feature_gate;
+    static feature_log::Gate feature_gate;
     const double now=memio::now_seconds();
-    const bool requested=g_state.magic_tools || g_state.magic_farm;
-    const auto& d=magic_ctl.diagnostics();
-    const auto guard=runtime_guard::policy(g_pid);
-    const uint64_t key=(uint64_t(g_state.magic_tools) | (uint64_t(g_state.magic_farm)<<1) |
-        (uint64_t(g_mem.bound())<<2) | (uint64_t(magic_ctl.ready())<<3) |
-        (uint64_t(magic_ctl.has_state())<<4) | (uint64_t(guard)<<5) |
-        (uint64_t(magic_ctl.stage())<<8)) ^ (uint64_t(uint32_t(g_pid))<<32);
-    if(magic_gate.accept(key,now,requested || magic_ctl.has_state())) {
-        const char* reason=!requested && !magic_ctl.has_state()?"off":
-            !g_mem.bound()?"not-bound":guard==runtime_guard::Policy::Unknown?"guard-unknown":
-            !d.player?"local-player-unresolved":magic_tools::stage_name(magic_ctl.stage());
-        attachlog::say("[magic] tools=%d farm=%d pid=%d bound=%d base=0x%llx guard=%u write_allowed=%d ready=%d pending_restore=%d stage=%d (%s)",
-            int(g_state.magic_tools),int(g_state.magic_farm),int(g_pid),int(g_mem.bound()),
-            (unsigned long long)g_il2cpp_base,unsigned(guard),int(runtime_guard::writes_allowed(g_pid)),int(magic_ctl.ready()),
-            int(magic_ctl.has_state()),magic_ctl.stage(),reason);
-        if(requested || magic_ctl.has_state()) {
-            char name[64]{}, ns[64]{};
-            if(!g_mem.bound() || !heap_memory.describe(d.tool,name,sizeof(name),ns,sizeof(ns)))
-                std::snprintf(name,sizeof(name),"unreadable");
-            attachlog::say("[magic.ctx] player=0x%llx fp=0x%llx tool=0x%llx class=%s.%s ray=0x%llx purposes=0x%x",
-                (unsigned long long)d.player,(unsigned long long)d.fp,(unsigned long long)d.tool,
-                ns,name,(unsigned long long)d.ray,unsigned(d.purposes));
-            attachlog::say("[magic.fields] seen_reach=%.3f ray=%.3f aim_ray=%.3f crit=%d desired_reach=%.3f",
-                double(d.reach[0]),double(d.reach[1]),double(d.reach[2]),d.critical,double(magic_tools::kReach));
-            attachlog::say("[magic.io] ctl_reads=%llu read_fail=%llu writes_ok=%llu attempts=%llu restore_attempts=%llu last=%s addr=0x%llx size=%u expected=0x%08x actual=0x%08x",
-                (unsigned long long)d.reads,(unsigned long long)d.read_failures,
-                (unsigned long long)d.write_success,(unsigned long long)d.writes,
-                (unsigned long long)d.restores,d.operation,(unsigned long long)d.address,d.size,d.expected,d.actual);
-        }
-    }
     const auto& v=g_state.viewmodel;
     const unsigned flags=unsigned(v.no_spread) | (unsigned(v.no_recoil_button)<<1) |
         (unsigned(g_state.fast_fire)<<2) | (unsigned(v.fast_loot)<<3) |
@@ -639,11 +605,8 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
     std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
     FeatureLogOnExit feature_log_on_exit;
     const bool want_fast_fire = g_state.fast_fire;
-    const bool want_magic = (g_state.magic_tools || g_state.magic_farm) &&
-                            runtime_guard::writes_allowed(g_pid);
     if (!g_mem.bound() || !g_il2cpp_base || g_pid <= 0) {
         controller.reset(false); fps_controller.reset(false); weapons.reset(false);
-        magic_ctl.reset(false);
         rapid_fire.reset(false);
         rapid_fire.status = want_fast_fire ? viewmodel::Status::Waiting : viewmodel::Status::Off;
         no_recoil_ctl.reset(false);
@@ -684,7 +647,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         want_fast_fire || rapid_fire.has_state() ||
         settings.no_recoil_button || no_recoil_ctl.has_state() ||
         settings.no_ballistics || no_ballistics_ctl.has_state() ||
-        g_farmActive || want_magic || magic_ctl.has_state()) {
+        g_farmActive) {
         auto local_player_ok = [&](uint64_t candidate) {
             uint64_t net=0; uint8_t local=0;
             return candidate>=0x10000 && memory.is(candidate,"PlayerManager") &&
@@ -712,7 +675,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
             auto wait=controller.has_state()?viewmodel::Status::Failed:viewmodel::Status::Waiting;
             controller.status={wait,wait};
             weapons.spread=want_no_spread||weapons.has_state()?viewmodel::Status::Failed:viewmodel::Status::Off;
-            magic_ctl.tick(epoch, g_il2cpp_base, 0, want_magic);
             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
@@ -726,8 +688,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
     const unsigned weapon_flags = (want_no_spread ? 1u : 0u) |
                                   (want_fast_fire ? 2u : 0u) |
                                   (settings.no_recoil_button ? 4u : 0u) |
-                                  (settings.no_ballistics ? 8u : 0u) |
-                                  (want_magic ? 16u : 0u);
+                                  (settings.no_ballistics ? 8u : 0u);
     const auto weapon_now = Clock::now();
     const bool weapon_due = weapon_flags != weapon_last_flags ||
                             player != weapon_last_player ||
@@ -736,7 +697,6 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
         weapon_last_tick = weapon_now;
         weapon_last_player = player;
         weapon_last_flags = weapon_flags;
-        magic_ctl.tick(epoch, g_il2cpp_base, player, want_magic);
         weapons.tick(epoch, g_il2cpp_base, player, want_no_spread);
         rapid_fire.tick(epoch, g_il2cpp_base, player, want_fast_fire);
         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
@@ -794,12 +754,3 @@ viewmodel::FpsUiInfo esp_viewmodel_fps_ui() {
     return info;
 }
 
-// UI/controller access shares the existing session lock.
-bool esp_magic_tools_ready() {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    return magic_ctl.ready();
-}
-int esp_magic_tools_stage() {
-    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
-    return magic_ctl.stage();
-}

@@ -298,7 +298,7 @@ SPEC = {
     "RAYCASTHIT_COLLIDER": ("fixed", 0x28, "UnityEngine.RaycastHit"),
     # --- mouse look / input --------------------------------------------------
     "MOUSELOOK_PITCH_YAW": ("field", "MouseLook", "Oxide", "Ftt"),
-    "LD_SPRINT_ACTION": ("field", "CP", "", "nkp"),  # sprint InputAction in InputActions holder (MagicFarm only)
+    "LD_SPRINT_ACTION": ("field", "CP", "", "nkp"),  # sprint InputAction in InputActions holder (farm sprint)
     "PLAYER_INPUT_HANDLER_OWNER_BACKREF": ("field", "PlayerInputHandler", "Oxide", "<FpE>k__BackingField"),
     "PLAYER_INPUT_HANDLER_EVENT_HANDLER": ("field", "PlayerInputHandler", "Oxide", "<FpF>k__BackingField"),
     "PLAYER_INPUT_STRUCT": ("field", "PlayerInputHandler", "Oxide", "Fpp"),

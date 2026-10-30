@@ -165,6 +165,13 @@ public:
     virtual ssize_t write_once(uint64_t addr, const void* in, size_t len) = 0;
     // Имя способа для лога/диагностики.
     virtual const char* name() const = 0;
+    // Проверяет ли транспорт сам, что адрес принадлежит отображению ЦЕЛИ?
+    // Ядерный драйвер копирует через таблицы страниц цели и на неотображённый
+    // адрес возвращает -EFAULT; process_vm_writev права проверяет, а
+    // отображение — нет (адрес вне карты просто даёт EFAULT, но чужой живой
+    // адрес того же процесса он не отличит). От этого флага зависит, обязан
+    // ли снимок /proc/<pid>/maps быть полным, чтобы разрешить запись.
+    virtual bool validates_writes() const { return false; }
 };
 
 // Экстернал «Прямое чтение», v2 — скрытность: память игры трогают только
@@ -186,6 +193,9 @@ public:
 class ProcfsTransport : public Transport {
 public:
     const char* name() const override { return "process_vm_readv"; }
+    // Единственный транспорт без собственной проверки отображения: здесь
+    // Unknown-политика карты по-прежнему запрещает запись.
+    bool validates_writes() const override { return false; }
 
     bool open(pid_t pid) override { pid_.store(pid, std::memory_order_relaxed); return true; }
 
@@ -400,15 +410,34 @@ public:
         if (!addr || !in || !len) return false;
         const int pid = pid_.load();
         if (!open_.load() || pid <= 0) return false;
-        // Android requires a complete maps snapshot for this PID. Loader
-        // detection is diagnostic; transport errors are checked by raw_write.
-        if (!runtime_guard::writes_allowed(pid)) return false;
+        // Android requires a complete maps snapshot for this PID — но только
+        // там, где проверку отображения не делает сам транспорт. Загрузчик
+        // (libloader.so) — диагностика; отказы транспорта ловит raw_write.
+        const runtime_guard::Policy guard = runtime_guard::policy(pid);
+        if (!runtime_guard::writes_allowed(pid, transport_ && transport_->validates_writes())) {
+            guard_blocks_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        // Счётчик для лога: драйвер сам подтвердил адрес, снимка карты нет.
+        if (!runtime_guard::snapshot_allows_writes(guard))
+            guard_bypassed_.fetch_add(1, std::memory_order_relaxed);
         addr = normalize(addr);
         if (!valid_user_range(addr, len)) return false;
         if (!raw_write(addr, in, len)) return false;
         mark_written(addr, len);
         return true;
     }
+
+    // Разрешена ли запись в память игры прямо сейчас — ТО ЖЕ правило, что в
+    // write(): политика карты либо собственная проверка отображения
+    // транспортом. Фарм спрашивает именно это (esp_writes_permitted), а не
+    // политику напрямую: иначе он вставал бы на паузу там, где запись на
+    // самом деле проходит (ядерный транспорт при закрытом /proc/<pid>/maps).
+    bool writes_permitted() const {
+        return runtime_guard::writes_allowed(pid_.load(), transport_ && transport_->validates_writes());
+    }
+    unsigned long long guard_blocks_total()   const { return guard_blocks_.load(std::memory_order_relaxed); }
+    unsigned long long guard_bypassed_total() const { return guard_bypassed_.load(std::memory_order_relaxed); }
 
     // Проверка «привязка ещё жива»: читаем ELF-заголовок по адресу пробы. Один
     // syscall; нужна, чтобы заметить, что доступ отобрали или процесс перезапустился
@@ -700,6 +729,10 @@ private:
     std::atomic<unsigned long long> tagged_{0};
     std::atomic<unsigned long long> junk_{0};
     std::atomic<unsigned long long> cut_{0};
+    // Ворота записи (runtime_guard): сколько записей отклонено и сколько
+    // прошло без снимка карты — потому что отображение подтвердил драйвер.
+    std::atomic<unsigned long long> guard_blocks_{0};
+    std::atomic<unsigned long long> guard_bypassed_{0};
     std::atomic<uint64_t> junk_addr_{0};      // первый мусорный адрес + 1
     std::atomic<const char*> junk_phase_{nullptr};
     std::atomic<const char*> phase_{"старт"};

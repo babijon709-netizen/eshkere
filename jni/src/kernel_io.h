@@ -240,6 +240,12 @@ enum DriverProto {
 class KernelTransport : public Transport {
 public:
     const char* name() const override { return "kernel (драйвер)"; }
+    // Драйвер копирует в mm цели по таблицам страниц: адрес, которого нет в
+    // отображениях, он отвергает сам (-EFAULT). Поэтому снимок
+    // /proc/<pid>/maps для записи через драйвер не обязателен (см.
+    // runtime_guard::gate_allows_writes): на клиентах с закрытым procfs карта
+    // не читается никогда, а запись при этом полностью проверена ядром.
+    bool validates_writes() const override { return true; }
 
     // Привязка к процессу: поднимаем сокеты и переиспользуем выученное.
     // Протокол и коды команд учит только явный шаг ДО bind: driver_available
@@ -854,6 +860,12 @@ static_assert(sizeof(RtDevCopyMem) == 0x20, "размер запроса RT-Dev 
 class RtDevTransport : public Transport {
 public:
     const char* name() const override { return "rt-dev (драйвер)"; }
+    // Драйвер копирует в mm цели по таблицам страниц: адрес, которого нет в
+    // отображениях, он отвергает сам (-EFAULT). Поэтому снимок
+    // /proc/<pid>/maps для записи через драйвер не обязателен (см.
+    // runtime_guard::gate_allows_writes): на клиентах с закрытым procfs карта
+    // не читается никогда, а запись при этом полностью проверена ядром.
+    bool validates_writes() const override { return true; }
 
     // Устройство открывается один раз и живёт, пока живёт процесс чита:
     // драйвер переживает переподключения к игре.
@@ -1095,6 +1107,12 @@ static_assert(sizeof(RtHookCopyMem) == 0x20, "размер запроса RT-Hoo
 class RtHookTransport : public Transport {
 public:
     const char* name() const override { return "rt-hook (драйвер)"; }
+    // Драйвер копирует в mm цели по таблицам страниц: адрес, которого нет в
+    // отображениях, он отвергает сам (-EFAULT). Поэтому снимок
+    // /proc/<pid>/maps для записи через драйвер не обязателен (см.
+    // runtime_guard::gate_allows_writes): на клиентах с закрытым procfs карта
+    // не читается никогда, а запись при этом полностью проверена ядром.
+    bool validates_writes() const override { return true; }
 
     // «Открытия» нет: fd не нужен вообще (диспетчер его игнорирует).
     // Только подтверждаем, что хук стоит, и запоминаем цель.

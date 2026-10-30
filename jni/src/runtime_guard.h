@@ -2,7 +2,11 @@
 // Map-snapshot readiness and loader detection are separate concerns.
 // libloader.so is recorded for diagnostics. Its presence does not establish
 // whether the selected memory transport accepts a write.
-// Android still requires a complete maps snapshot for the bound PID.
+//
+// Запись разрешает подтверждённый снимок /proc/<pid>/maps ЛИБО транспорт,
+// который сам проверяет отображение адреса (ядерный драйвер; см.
+// gate_allows_writes). Экстернал (process_vm_writev) такой проверки не имеет,
+// поэтому на нём неполная карта по-прежнему запрещает запись.
 
 #include "maps_lookup.h"
 
@@ -68,16 +72,38 @@ inline bool snapshot_allows_writes(Policy p) {
     return p == Policy::Clear || p == Policy::Protected;
 }
 
-inline bool writes_allowed(int pid) {
-    if(pid <= 0) return false;
+// Решение ворот записи без pid: подтверждённый снимок карты ИЛИ транспорт,
+// который сам проверяет отображение адреса в таблицах страниц цели.
+//
+// Второе — не ослабление защиты, а её граница. Смысл правила: не писать туда,
+// где мы не знаем, что за отображение. У process_vm_writev такой проверки нет
+// вовсе, поэтому там Unknown обязан останавливать запись. Ядерный драйвер
+// (KernelTransport/RtDev/RtHook) копирует в mm цели и на неотображённый адрес
+// возвращает -EFAULT, то есть проверяет ровно то же самое, только точнее.
+//
+// Почему это критично: на клиентах с закрытым /proc/<pid>/maps (RASP/Appdome-
+// прошивки, hidepid, часть политик SELinux) карта не читается НИКОГДА, при
+// этом привязка через драйвер и все чтения работают — process.cpp прямо
+// допускает has_il2cpp < 0 для ditPro. Fail-closed по Unknown у таких
+// клиентов молча убивал каждую запись: ESP рисуется, а автофарм «не добывает».
+inline bool gate_allows_writes(Policy p, bool transport_validates) {
+    return snapshot_allows_writes(p) || transport_validates;
+}
+
+inline bool writes_allowed(int pid, bool transport_validates) {
+    if (pid <= 0) return false;
 #ifdef __ANDROID__
-    return snapshot_allows_writes(policy(pid));
+    return gate_allows_writes(policy(pid), transport_validates);
 #else
     // Host memory rigs have no target procfs; exercise the Android snapshot
-    // rule independently through snapshot_allows_writes().
+    // rule independently through gate_allows_writes().
+    (void)transport_validates;
     return true;
 #endif
 }
+
+// Правило для транспорта без собственной проверки отображения (экстернал).
+inline bool writes_allowed(int pid) { return writes_allowed(pid, false); }
 
 namespace detail {
 // Строка карты: «start-end perms offset dev inode путь». Нужен только последний

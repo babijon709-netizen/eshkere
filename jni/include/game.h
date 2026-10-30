@@ -196,6 +196,18 @@ bool          esp_silent_write(uint64_t addr, const void* in, size_t len);
 bool          esp_alive_check();
 unsigned long long esp_mem_reads_total();
 unsigned long long esp_mem_read_fails_total();
+// Ворота записи в память игры. esp_writes_permitted() — ровно то правило, по
+// которому отказывает/проходит g_mem.write (снимок карты процесса ИЛИ проверка
+// отображения самим транспортом: у ядерного драйвера она своя). Автофарм
+// обязан спрашивать это, а не runtime_guard::policy: иначе он встаёт на паузу
+// там, где запись на самом деле разрешена.
+bool               esp_writes_permitted();
+// Политика карты для привязанного pid: 0 unknown, 1 clear, 2 protected —
+// диагностика для лога (guard=...).
+int                esp_write_guard_state();
+// Отказы ворот и записи, прошедшие без снимка карты (драйвер подтвердил адрес).
+unsigned long long esp_write_guard_blocks();
+unsigned long long esp_write_guard_bypasses();
 void        esp_set_skeleton_enabled(bool enabled);
 // Enable the ore / animal / loot / pickup / vehicle / bot marker scan
 // (all off = no work, unless the bot aim feed below is on).

@@ -9152,6 +9152,16 @@ bool esp_alive_check() {
 unsigned long long esp_mem_reads_total() { return g_mem.reads_total(); }
 unsigned long long esp_mem_read_fails_total() { return g_mem.read_fails_total(); }
 
+// Единственное правило «можно ли сейчас писать в память игры» — то же, что в
+// Reader::write (снимок карты либо проверка отображения самим транспортом).
+// Фарм обязан спрашивать его, а не политику напрямую: на ядерном транспорте
+// запись проходит и при нечитаемом /proc/<pid>/maps, и пауза по политике
+// означала бы «автофарм видит цель, но не бьёт».
+bool esp_writes_permitted() { return g_mem.writes_permitted(); }
+int  esp_write_guard_state() { return (int)runtime_guard::policy(g_mem.pid()); }
+unsigned long long esp_write_guard_blocks()   { return g_mem.guard_blocks_total(); }
+unsigned long long esp_write_guard_bypasses() { return g_mem.guard_bypassed_total(); }
+
 // Server-side network visibility culling (Mirror.Visibility.ForceHidden == 1).
 // When hidden, KCC.OnVisibilityChanged teleports transform.position to
 // Vector3.up * 1000f and KCC stops interpolating remote ObserverMove ticks,

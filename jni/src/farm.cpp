@@ -250,9 +250,15 @@ struct FarmLogOnExit {
             (uint64_t(g_farmPaused)<<12) |
             (uint64_t(g_state.farm_on)<<14)) ^ (farm_trace.target<<20);
         if(!gate.accept(key,std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(),g_state.farm_on)) return;
-        attachlog::say("[farm] on=%d event=%s active=%d phase=%d paused=%d nodes=%d idle_reason=%d write_blocked=%d",
+        // guard: 0 unknown, 1 clear, 2 protected. bypass — записи, которым
+        // снимок карты не нужен: отображение подтвердил сам ядерный транспорт
+        // (на таких клиентах /proc/<pid>/maps не читается вовсе). По этим двум
+        // числам видно, ворота это или логика фарма.
+        attachlog::say("[farm] on=%d event=%s active=%d phase=%d paused=%d nodes=%d idle_reason=%d write_blocked=%d guard=%d bypass=%llu blocked=%llu backend=%d",
             int(g_state.farm_on),farm_event_name(farm_trace.event),
-            int(g_farmActive),g_farmPhase,int(g_farmPaused),g_farmNodes,g_farmReason,int(g_farmWriteBlocked));
+            int(g_farmActive),g_farmPhase,int(g_farmPaused),g_farmNodes,g_farmReason,int(g_farmWriteBlocked),
+            esp_write_guard_state(),esp_write_guard_bypasses(),esp_write_guard_blocks(),
+            esp_get_mem_backend());
         if(g_state.farm_on)
             attachlog::say("[farm.target] valid=%d id=0x%llx kind=%d distance=%.3f reach=%.3f ray_self=%d ray_foreign=%d period=%.3f hp=%.1f attack_ok=%llu attempts=%llu last_attack_on=%d last_attack_ok=%d aim_owns=%d calibration=%d",
                 int(farm_trace.have),(unsigned long long)farm_trace.target,g_farmTgtKind,
@@ -265,7 +271,8 @@ struct FarmLogOnExit {
 
 static void UpdateFarmInner(float dt);
 
-// Снимок /proc/<pid>/maps (нужен runtime_guard для права записи) читает карту
+// Снимок /proc/<pid>/maps (нужен runtime_guard для права записи там, где
+// транспорт не проверяет отображение сам) читает карту
 // игры ЦЕЛИКОМ: у Unity это тысячи отображений и сотни килобайт. Раньше это
 // делалось прямо здесь, раз в секунду, на потоке кадра оверлея — то есть ровно
 // в тот момент, когда ESP/фрикам/иксрей должны были отдать следующий кадр.
@@ -284,6 +291,27 @@ static void EnsureRuntimeGuardWorker() {
     }).detach();
 }
 
+// Ворота записи: то же правило, что у g_mem.write (esp_writes_permitted), но с
+// починкой на месте. Снимок /proc/<pid>/maps публикуют ещё attach-путь и
+// воркер кучи, и между публикацией и проверкой мог пройти до секунды; один
+// отказ чтения карты успевал поставить фарм на паузу, сбросить фазу и отпустить
+// стик — снаружи это «автофарм не добывает». Поэтому при отказе снимок
+// перечитывается прямо в этом кадре (не чаще четырёх раз в секунду) и решение
+// принимается по свежим данным.
+static bool FarmWritesAllowed() {
+    if (esp_writes_permitted()) return true;
+    if (g_target_pid <= 0 || !g_esp_attached) return false;
+    static pid_t  s_pid  = -1;
+    static double s_next = 0.0;
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (g_target_pid == s_pid && now < s_next) return false;
+    s_pid  = g_target_pid;
+    s_next = now + 0.25;
+    runtime_guard::refresh_proc(g_target_pid);
+    return esp_writes_permitted();
+}
+
 void UpdateFarm(float dt) {
     FarmLogOnExit farm_log_on_exit;
     farm_trace.event=0;farm_trace.target=0;farm_trace.have=false;
@@ -292,7 +320,7 @@ void UpdateFarm(float dt) {
 #ifdef __ANDROID__
     EnsureRuntimeGuardWorker();
 #endif
-    if (!runtime_guard::writes_allowed(g_target_pid)) {
+    if (!FarmWritesAllowed()) {
         if (!g_farmWriteBlocked) {
             // Release the normal controller's cached press/movement state once.
             const bool enabled = g_state.farm_on;

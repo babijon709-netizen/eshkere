@@ -319,7 +319,7 @@ inline std::uint64_t OCCLUSION_MOD_NEXT_TIME = BW_OFFSET(game_offsets::OCCLUSION
 inline std::uint64_t OCCLUSION_MOD_HAS_VAL = BW_OFFSET(game_offsets::OCCLUSION_MOD_HAS_VAL);
 inline std::uint64_t OCCLUSION_MOD_IS_OCCLUDED = BW_OFFSET(game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
 inline std::uint64_t HMJ_TYPEINFO_RVA = BW_OFFSET(game_offsets::HMJ_TYPEINFO_RVA);
-// Только-11993 константы: в профиле беты 11982 их нет (раскладка та же,
+// Только-релизные (11995) константы: в профиле беты 11982 их нет (раскладка та же,
 // поэтому в Beta-секции остаётся релизное значение).
 inline std::uint64_t TOD_SKY_TYPEINFO_RVA = BW_OFFSET(game_offsets::TOD_SKY_TYPEINFO_RVA);
 inline std::uint64_t PLAYER_INPUT_STRUCT = BW_OFFSET(game_offsets::PLAYER_INPUT_STRUCT);

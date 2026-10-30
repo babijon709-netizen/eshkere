@@ -1,7 +1,7 @@
 # SOURCE_MAP.md — карта чита по распакованному `jni/`
 
-Ревизия: NDK r26d, arm64-v8a, API 24+. Профиль оффсетов — релиз **11993**
-(`tools/offsets/verify_release_11993.py`), бета — **11982**.
+Ревизия: NDK r26d, arm64-v8a, API 24+. Профиль оффсетов — релиз **11995**
+(`tools/offsets/verify_release_11995.py`), бета — **11982**.
 Источник: `eshkere-magic-source.zip`, sha256 `f2e30c354289d0896dc4f101b7bc9da08ff7159f471109d5a178010327e83c9b`.
 Распаковано в `jni/` (191 файл, 14 МБ). Копии служебных файлов архива — `docs/magic/`
 (исторический архив исходной ревизии, в сборке не участвует).
@@ -19,12 +19,12 @@
 | Группа | Файлов | Строк | Где |
 |---|---:|---:|---|
 | Пользовательский код | 91 `.h` + 30 `.cpp` + 1 `.inc` | 48 954 | `jni/src`, `jni/include` |
-| Профили оффсетов | 3 | 3 196 | `game_offsets.h` (release 11993), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
+| Профили оффсетов | 3 | 3 196 | `game_offsets.h` (release 11995), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
 | Хост-тесты | 40 | — | `jni/tests/` |
 | Вендор | ImGui, stb_image, TJpgDec | — | `jni/src/ImGui`, `jni/include/ImGui`, `third_party/tjpgd` |
 | Медиа/шрифты | аватарка (JPEG-кадры), атлас брони, иконки вкладок, шрифт, WAV | — | `jni/src/media`, `jni/include/media`, `include/ImGui/Font` |
 
-Цель: `com.catsbit.oxidesurvivalisland`, Unity **IL2CPP**, релиз **11993**, бета **11982**.
+Цель: `com.catsbit.oxidesurvivalisland`, Unity **IL2CPP**, релиз **11995**, бета **11982**.
 Инъекции, хуков, правок кода игры нет: только чтение памяти и точечные записи в
 managed-поля/нативные структуры.
 
@@ -86,17 +86,17 @@ managed-поля/нативные структуры.
 
 ## 4. Профили оффсетов
 
-- `game_offsets.h` — release **11993** (31195 классов, 22904 TypeInfo-слота). TypeInfo —
+- `game_offsets.h` — release **11995** (31195 классов, 22904 TypeInfo-слота). TypeInfo —
   внутренний `.data`-слот (одно разыменование до `Il2CppClass*`), `.text` file_off = RVA−0x4000,
-  `.data` file_off = RVA−0xC000. В шапке — сдвиги 11991→11993 (PM +0x40, PlayerWeapon +0x20,
-  хвост KCC +0x8) и историческая карта ротации обфусцированных имён 11966→11991
-  (в 11993 дамп уже расшифрован).
+  `.data` file_off = RVA−0xC000. В шапке — сдвиги 11993→11995 (слоты TypeInfo и окно
+  структурного скана .data) и историческая карта ротации обфусцированных имён 11966→11995
+  (в 11995 имена снова ротированы: UlV→Caz, Zf→HL и т. д.).
 - `game_offsets_beta.h` — beta **11982**; смещения части полей другие
   (`PlayerManager.fpManager` 0x90 release / 0xD0 beta).
 - `game_offsets_active.h` — `go_active::` алиасы, каждый через `BW_OFFSET`, выбирается
   `selected_version`. Все фичи читают только `go_active::`.
-- Проверки: `tools/offsets/verify_release_11993.py` (все 481 константа профиля),
-  `verify_release_11991/11989/11985.py` (история), `verify_beta_11982.py`, `offsets_diff.py`; тесты профиля `test_release_11978_offsets.cpp`,
+- Проверки: `tools/offsets/verify_release_11995.py` (все 481 константа профиля),
+  `verify_release_11993/11991/11989/11985.py` (история), `verify_beta_11982.py`, `offsets_diff.py`; тесты профиля `test_release_11978_offsets.cpp`,
   `test_beta_11982_offsets.cpp`, `test_world_streaming_offsets.cpp`.
 - TypeInfo-слот — одноразовый якорь: обязателен позиционно-независимый резерв по имени
   класса с самого объекта (`class_identity`, побайтовое сравнение с NUL).
@@ -230,7 +230,7 @@ ANDROID_NDK_HOME=<ndk-r26d> ./build.sh      # ndk-build → libs/arm64-v8a/benzw
 - Запись в память игры на клиенте с Appdome RASP (**libloader.so**, key-injection и
   click-bot сканер в DEX — см. `LOADER_AUDIT.md`) больше ничем не блокируется, кроме
   полноты maps. Это ровно то, что защита ищет: heap-правки полей живых объектов.
-- Бета 11982: managed-раскладка совпадает с релизом 11993 (все смещения полей равны),
+- Бета 11982: managed-раскладка совпадает с релизом 11995 (все смещения полей равны),
   отличаются только TypeInfo-слоты; профиль переключается `go_active::Select`.
 - FakeLag — глобальное правило на весь входной UDP; `SIGKILL` оставляет DROP до перезапуска.
 - Захват экрана — приватные display-API, зависят от прошивки; на устройстве не проверялось

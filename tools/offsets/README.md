@@ -1,13 +1,13 @@
 # Offset checks
 
-The game dumps are not included in the repository. Extract `dump11993.7z`
+The game dumps are not included in the repository. Extract `dump11995.7z`
 (or `dumpbeta11982.7z` for the beta profile) locally and run:
 
 ```sh
-python3 tools/offsets/verify_release_11993.py /path/to/dump.cs /path/to/script.json
+python3 tools/offsets/verify_release_11995.py /path/to/dump.cs /path/to/script.json
 ```
 
-`verify_release_11993.py` re-derives every constant of the release profile from
+`verify_release_11995.py` re-derives every constant of the release profile from
 the dump: 397 managed fields (base-class walk), 12 TypeInfo slots from
 `script.json`, 74 pinned literals (native layouts / enum values) and 4 aliases.
 It also asserts the invariants (PlayerLoopHelper slot = PM slot − 0x38, the

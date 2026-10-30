@@ -350,7 +350,7 @@ static void always_day_tick() {
     // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq"),
     // в dump11966 — "lE", в dump11978 — "QA" (слот QA_TypeInfo 0xE66E548),
     // в dump11991 — "lI" (TDI 706, слот 0xE611560), в dump11993 — "Zf"
-    // (TDI 708, слот 0xE919750).
+    // (TDI 708, 0xE919750), в dump11995 — "HL" (TDI 708, 0xE8F8850).
     // Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
     // метадата-слоты так и не инициализированы (лог day_log: нечётные токены)
     // — Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его
@@ -10016,7 +10016,8 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 // (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11982 —
 // tzc; Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
 // сигнатура 25 int32 сверена с dump.cs); Release 11991 — ryl
-// (0xE612F58), Release 11993 — UlV (0xE917638); 25 статиков 0x00..0x60 шаг 4.
+// (0xE612F58), Release 11993 — UlV (0xE917638), Release 11995 — Caz
+// (0xE8F4B60); 25 статиков 0x00..0x60 шаг 4.
 // Во всех сборках поля проверяются
 // одной сигнатурой.
 // Извлечение маски твёрдых стен/рельефа

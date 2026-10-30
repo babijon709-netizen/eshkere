@@ -17,20 +17,20 @@ int main() {
 
     // --- Профиль по умолчанию ---
     assert(go_active::selected_version == GameVersion::Release);
-    assert(game_offsets::RELEASE_BUILD == 11993);
+    assert(game_offsets::RELEASE_BUILD == 11995);
 
     // --- TypeInfo-слоты (внутренние .data, одно разыменование) ---
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE9126C8);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE912690);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE90D9A8);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE9119D8);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE918AC0);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE8FD130);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE8FD0F8);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE8F8398);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE8FC388);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE901D50);
     // Инвариант PLH -> PM = 0x38 пережил уже шесть ротаций имён.
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA ==
            go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA + 0x38);
     // Промисы UniTask: пара классов через 8 байт, вложенный <>c в релизе не нужен.
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE922C70);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE922C68);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE90C158);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE90C150);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA -
                go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
@@ -43,23 +43,24 @@ int main() {
     assert(go_active::DELAYPROMISE_SCALED_TIMESPAN == 0x1C);
     assert(go_active::DELAYPROMISE_SCALED_ELAPSED == 0x20);
 
-    // --- Окно структурного скана .data (11993: .data 0xE90D9A8..0xE922C70) ---
-    // Скан ищет ровно два статических блока: Zf_TypeInfo (TOD_Sky, TDI 708,
-    // 0xE919750) и UlV_TypeInfo (25 LayerMask-статик, 0xE917638). Оба обязаны
-    // попадать в окно; PM/GC/NC/WSC лежат НИЖЕ окна (0xE90D9A8..0xE9126C8) и
-    // находятся по script.json, поэтому window-ассертов для них нет.
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE910000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE924000);
+    // --- Окно структурного скана .data (11995: .data 0xE8F8398..0xE90C158) ---
+    // Скан ищет ровно два статических блока: HL_TypeInfo (TOD_Sky, TDI 708,
+    // 0xE8F8850) и Caz_TypeInfo (25 LayerMask-статик, 0xE8F4B60). Оба обязаны
+    // попадать в окно; прочие слоты (PM/GC/NC/WSC/промисы) находятся по
+    // script.json, поэтому window-ассертов для них нет.
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE8F0000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE910000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
-    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE919750;  // Zf (TOD_Sky, TDI 708) TypeInfo from script.json
+    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE8F8850;  // HL (TOD_Sky, TDI 708) TypeInfo from script.json
     assert(kTodSkyTypeInfoSlot > go_active::TOD_SCAN_RVA_BEGIN);
     assert(kTodSkyTypeInfoSlot < go_active::TOD_SCAN_RVA_END);
     assert(kTodSkyTypeInfoSlot == go_active::TOD_SKY_TYPEINFO_RVA);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE917638);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE8F4B60);
     assert(go_active::HMJ_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::HMJ_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
-    // GC лежит ниже окна (0xE90D9A8 < 0xE910000), PM/NC/WSC/промисы — внутри.
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_BEGIN);
+    // В 11995 все слоты (включая GC) лежат внутри окна.
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);

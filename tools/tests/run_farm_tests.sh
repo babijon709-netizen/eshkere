@@ -10,6 +10,6 @@ flags=(-std=c++17 -O1 -ffast-math -fsanitize=address,undefined -fno-omit-frame-p
     -Wl,--gc-sections -lpthread -o "$tmp/farm_scan"
 "$tmp/farm_scan"
 "${CXX:-g++}" -Itools/tests/ui_host "${flags[@]}" \
-    tools/tests/farm_controller_test.cpp jni/src/farm.cpp \
+    tools/tests/farm_controller_test.cpp jni/src/farm.cpp jni/src/magic_farm.cpp \
     -Wl,--gc-sections -o "$tmp/farm_controller"
 "$tmp/farm_controller"

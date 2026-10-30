@@ -1,0 +1,89 @@
+#include "aim_control.h"
+
+#include <cassert>
+#include <cmath>
+#include <limits>
+
+int main() {
+    using namespace aim_control;
+
+    const bool all_bones[] = {true, true, true};
+    assert(configured_bone_slot(0, all_bones) == 0);
+    assert(configured_bone_slot(1, all_bones) == 1);
+    assert(configured_bone_slot(2, all_bones) == 2);
+    const bool head_unavailable[] = {false, true, true};
+    assert(configured_bone_slot(0, head_unavailable) == -1);
+    assert(configured_bone_slot(1, head_unavailable) == 1);
+    assert(configured_bone_slot(-1, all_bones) == -1);
+    assert(configured_bone_slot(3, all_bones) == -1);
+
+    assert(target_within_range_window(15.0f, 10.0f));
+    assert(!target_within_range_window(20.0f, 10.0f));
+    assert(!target_within_range_window(80.0f, 10.0f));
+    assert(!target_within_range_window(std::numeric_limits<float>::infinity(), 10.0f));
+    const float smart_close = target_priority_score(0, 0.95f, 10.0f, true, false);
+    const float smart_far = target_priority_score(0, 0.05f, 80.0f, true, true);
+    assert(smart_close < smart_far);
+    const float nearest_close = target_priority_score(2, 0.95f, 10.0f, true, false);
+    const float nearest_far = target_priority_score(2, 0.05f, 80.0f, true, true);
+    assert(nearest_close < nearest_far);
+    assert(target_priority_score(2, 0.95f, 100.0f, true, false) <
+           target_priority_score(2, 0.05f, 101.0f, true, false));
+    const float crosshair_center = target_priority_score(1, 0.05f, 15.0f, true, false);
+    const float crosshair_edge = target_priority_score(1, 0.80f, 10.0f, true, false);
+    assert(crosshair_center < crosshair_edge);
+    assert(target_priority_score(0, 0.50f, 20.0f, true, true) <
+           target_priority_score(0, 0.48f, 20.0f, true, false));
+
+    AngleFilter filter;
+    float yaw = 179.0f, pitch = 0.0f;
+    filter.update(yaw, pitch, 1.0f / 60.0f, 0.02f);
+    assert(yaw == 179.0f);
+    yaw = -179.0f;
+    filter.update(yaw, pitch, 1.0f / 60.0f, 0.02f);
+    assert(std::fabs(wrap_degrees(yaw - 179.0f)) < 2.0f);
+    assert(wrap_degrees(std::numeric_limits<float>::infinity()) == 0.0f);
+    assert(wrap_degrees(1.0e30f) == 0.0f);
+
+    filter.reset();
+    yaw = 0.0f; pitch = 0.0f;
+    filter.update(yaw, pitch, 1.0f / 60.0f, 0.03f);
+    float total_noise = 0.0f;
+    for (int i = 0; i < 8; ++i) {
+        yaw = (i & 1) ? -0.2f : 0.2f;
+        pitch = (i & 1) ? 0.15f : -0.15f;
+        filter.update(yaw, pitch, 1.0f / 60.0f, 0.03f);
+        total_noise += std::fabs(yaw) + std::fabs(pitch);
+    }
+    assert(total_noise < 2.0f);
+
+    float command_yaw = 0.0f, command_pitch = 0.0f;
+    memory_command_angles(10.0f, 20.0f, true, 30.0f, 4.0f, 1.0f, 2.0f,
+                          command_yaw, command_pitch);
+    assert(command_yaw == 31.0f && command_pitch == -6.0f);
+    const float first_command_yaw = command_yaw;
+    const float first_command_pitch = command_pitch;
+    memory_command_angles(-100.0f, 80.0f, true, 30.0f, 4.0f, 1.0f, 2.0f,
+                          command_yaw, command_pitch);
+    assert(command_yaw == first_command_yaw && command_pitch == first_command_pitch);
+    memory_command_angles(10.0f, 20.0f, false, 0.0f, 0.0f, 1.0f, 2.0f,
+                          command_yaw, command_pitch);
+    assert(command_yaw == 11.0f && command_pitch == 18.0f);
+    assert(memory_step(0.02f, 1.0f / 60.0f, 10.0f, 5.0f) == 0.0f);
+    assert(memory_step(0.04f, 1.0f / 60.0f, 10.0f, 5.0f) == 0.0f);
+    assert(memory_step(0.08f, 1.0f / 60.0f, 10.0f, 5.0f) > 0.0f);
+
+    const float gentle = memory_step(30.0f, 1.0f / 60.0f, 1.0f, 30.0f);
+    const float fast = memory_step(30.0f, 1.0f / 60.0f, 10.0f, 30.0f);
+    const float close = memory_step(30.0f, 1.0f / 60.0f, 10.0f, 5.0f);
+    assert(gentle > 0.0f && fast > gentle && close >= fast);
+    assert(close <= 12.0f);
+    assert(memory_step(-30.0f, 1.0f / 60.0f, 10.0f, 5.0f) < 0.0f);
+
+    assert(memory_step(std::numeric_limits<float>::infinity(), 1.0f / 60.0f, 10.0f, 5.0f) == 0.0f);
+    float invalid_yaw = std::numeric_limits<float>::quiet_NaN();
+    float invalid_pitch = 0.0f;
+    filter.update(invalid_yaw, invalid_pitch, 1.0f / 60.0f, 0.02f);
+    assert(!filter.ready);
+    return 0;
+}

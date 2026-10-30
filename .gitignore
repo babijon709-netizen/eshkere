@@ -13,6 +13,10 @@ global-metadata.dat
 # generated per-build obfuscation key (build.sh recreates it every run)
 jni/include/bw_build_key.h
 
+# generated from the freshly built arm64 Magic Farm companion
+jni/src/magic_farm_blob.inc
+jni/src/magic_farm_blob.inc.tmp
+
 # Скачанные с диска дампы игры (сотни МБ): распаковывать во временный каталог,
 # в git не класть. Схема распаковки: dump.cs / il2cpp.h / script.json.
 dumps/

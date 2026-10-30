@@ -1,0 +1,340 @@
+#pragma once
+// mode_select.h — экран выбора способа чтения ПЕРЕД запуском чита.
+//
+// Экран выбора транспорта: прямое чтение, FT, DitPro, RT-Dev и RT-Hook.
+// Без фона, подписей и строк состояния: причины отказа приходят тостом по
+// тапу, повторный тап по кнопке драйвера перепроверяет драйвер (прошить
+// .sh можно и после запуска).
+//
+// Выбор сразу пишется в /storage/emulated/0/benzware/.mode (для one-shot
+// CLI dump/skel) и дублируется в трейлер конфига при его сохранении, но
+// экран всё равно показывается на каждом запуске — драйвер живёт до
+// перезагрузки, и «нашёл/не нашёл» нужно видеть каждый раз.
+//
+// Пока экран на виду, весь ввод забирает оверлей (Touch_BlockRect на весь
+// экран) — в игру не уходит ни одного пальца, тап мимо кнопок не «нажмёт»
+// что-то в игре под оверлеем.
+
+#include <sys/stat.h>
+#include <unistd.h>                 // geteuid — статус root на экране
+
+#include <fstream>
+#include <string>
+
+#include "imgui.h"
+#include "imgui_internal.h"          // ImMin
+
+#include "app_state.h"               // main_thread_flag
+#include "main.h"                    // drawBegin/drawEnd
+#include "mem_io.h"                  // procfs_transport (дефолт)
+#include "kernel_io.h"               // ditpro_available, kernel_transport
+#include "game.h"                    // esp_set_mem_backend
+#include "game_offsets_active.h"     // runtime Release/Beta profile
+#include "config.h"                  // RestoreLang(), RestoreAccent()
+#include "theme.h"                   // C::/R::, ApplyTheme
+#include "hud.h"                     // VisibleScreen
+#include "audio.h"                   // PlaySound
+#include "str.h"                     // XS()
+#include "ui_util.h"                 // WasTappedHere
+#include "bw_obf.h"                  // BW_GUARD на экранах выбора
+
+namespace modesel {
+
+enum Mode {
+    MODE_EXTERNAL = 0,   // process_vm — «Прямое чтение»
+    MODE_DITPRO   = 1,   // ditPro 131 KPM syscall
+    MODE_RT_DEV   = 2,   // /dev/[A-GNY]{1,6} RT-Dev
+    MODE_FT       = 3,   // legacy socket-backed kernel transport
+    MODE_RT_HOOK  = 4,   // syscall ioctl hook transport
+};
+
+// ---- кнопка режима (только текст, без подписи) -----------------------------
+//
+// style_on=false — драйвер не отвечает: корпус приглушён, но тап всё равно
+// возвращается вызывающему (тот покажет причину тостом и перепроверит).
+static bool ModeButton(const char* id, float w, float h, const char* title,
+                       bool style_on, bool accent, float fs) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(id, {w, h});
+
+    const bool tapped = WasTappedHere();
+    const bool held   = ImGui::IsItemActive() && ImGui::IsItemHovered();
+    const bool hov    = ImGui::IsItemHovered();
+
+    auto*  dl = ImGui::GetWindowDrawList();
+    ImFont* fn = ImGui::GetFont();
+
+    // Корпус: обычная карточка; у драйверов — рамка акцентом. Нажатие —
+    // затемнение корпуса.
+    ImVec4 body = style_on ? (accent ? C::Card() : C::LeftBg()) : C::TrkOff();
+    if (held) body.w *= 0.82f;
+    else if (hov) body.w *= 0.94f;
+    dl->AddRectFilled(p, {p.x + w, p.y + h}, C::U(body), R::Btn);
+    if (style_on && accent) {
+        ImVec4 ring = C::Acc();
+        ring.w *= held ? 0.85f : 1.f;
+        dl->AddRect(p, {p.x + w, p.y + h}, C::U(ring), R::Btn, 0.f, 3.f);
+    }
+
+    const float tfs = fs * 1.25f;
+    const ImVec2 ts = fn->CalcTextSizeA(tfs, FLT_MAX, 0.f, title);
+    dl->AddText(fn, tfs, {p.x + (w - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f},
+                C::U(style_on ? C::Txt() : C::Dim()), title);
+    return tapped;
+}
+
+// ---- выбор версии игры ---------------------------------------------------
+
+static bool RunVersionSelect() {
+    BW_GUARD();
+    RestoreLang();
+    RestoreAccent();
+    ApplyTheme();
+
+    int picked = -1;
+
+    while (main_thread_flag.load() && picked < 0) {
+        drawBegin();
+
+        float vw = 0.f, vh = 0.f;
+        VisibleScreen(vw, vh);
+        Touch_BlockRect(true, 0.f, 0.f, vw, vh);
+
+        const ImGuiWindowFlags wf = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse
+                                  | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar
+                                  | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground
+                                  | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav
+                                  | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGui::SetNextWindowPos({0.f, 0.f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({vw, vh}, ImGuiCond_Always);
+        ImGui::Begin("##version_select", nullptr, wf);
+        {
+            auto* dl = ImGui::GetWindowDrawList();
+            ImFont* fn = ImGui::GetFont();
+            const float fs = ImGui::GetFontSize();
+            const char* title = XS("Версия игры");
+            const float tfs = fs * 1.55f;
+            const ImVec2 ts = fn->CalcTextSizeA(tfs, FLT_MAX, 0.f, title);
+            const float gap = 14.f;
+            const float btnH = fs * 3.4f;
+            const float btnW = ImMin((vw - 36.f - gap) / 2.f, 300.f);
+            const float titleGap = fs * 1.3f;
+            const float blockH = tfs + titleGap + btnH;
+            const float ty = (vh - blockH) * 0.5f;
+            const float tx = (vw - ts.x) * 0.5f;
+
+            dl->AddText(fn, tfs, {tx + 2.f, ty + 2.f}, IM_COL32(0, 0, 0, 110), title);
+            dl->AddText(fn, tfs, {tx, ty}, C::U(C::Txt()), title);
+
+            const float rowW = btnW * 2.f + gap;
+            const float bx = (vw - rowW) * 0.5f;
+            const float by = ty + tfs + titleGap;
+            ImGui::SetCursorScreenPos({bx, by});
+            if (ModeButton("##version_release", btnW, btnH, "Release", true, false, fs)) {
+                picked = 0;
+                PlaySound(SND_CLICK);
+            }
+            ImGui::SetCursorScreenPos({bx + btnW + gap, by});
+            if (ModeButton("##version_beta", btnW, btnH, "Beta", true, false, fs)) {
+                picked = 1;
+                PlaySound(SND_CLICK);
+            }
+        }
+        ImGui::End();
+        drawEnd();
+    }
+
+    Touch_BlockRect(false, 0.f, 0.f, 0.f, 0.f);
+    if (picked < 0) return false;
+    go_active::Select(picked == 1 ? go_active::GameVersion::Beta
+                                  : go_active::GameVersion::Release);
+    return true;
+}
+
+// ---- экран выбора транспорта ---------------------------------------------
+//
+// Возвращает true, если режим выбран и применён к g_mem. false — приложение
+// закрыли (сигнал/терминал), не дав выбрать: вызывающий выходит тем же
+// порядком teardown, что и обычный выход из main().
+static bool RunModeSelect() {
+    BW_GUARD();
+    // Язык и акцент применяем заранее: в main() это делается позже (после
+    // потока привязки), а на этом экране подписи уже должны быть на месте.
+    RestoreLang();
+    RestoreAccent();
+    ApplyTheme();
+
+    bool ditpro = memio::ditpro_available();     // DitPro доступен
+    bool rt_dev = memio::rt_dev_available();     // RT-Dev найден и отвечает
+    bool ft = memio::ft_available();             // FT socket driver отвечает
+    bool rt_hook = memio::rt_hook_available();   // ioctl hook отвечает
+
+    int   picked = -1;         // -1 — ещё не выбрали
+
+    while (main_thread_flag.load() && picked < 0) {
+        drawBegin();
+
+        float vw = 0.f, vh = 0.f;
+        VisibleScreen(vw, vh);
+        // Экран выбора забирает весь ввод: в игру под оверлеем не уходит
+        // ни одного пальца, пока режим не выбран.
+        Touch_BlockRect(true, 0.f, 0.f, vw, vh);
+
+        // ---- окно на весь видимый экран (как меню, без заголовка) -------
+        ImGuiWindowFlags wf = ImGuiWindowFlags_NoResize    | ImGuiWindowFlags_NoCollapse
+                            | ImGuiWindowFlags_NoTitleBar  | ImGuiWindowFlags_NoScrollbar
+                            | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground
+                            | ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoNav
+                            | ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGui::SetNextWindowPos({0.f, 0.f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({vw, vh}, ImGuiCond_Always);
+        ImGui::Begin("##mode_select", nullptr, wf);
+        {
+            auto*  dl = ImGui::GetWindowDrawList();
+            ImFont* fn = ImGui::GetFont();
+            const float fs = ImGui::GetFontSize();
+
+
+            // Заголовок + кнопки — единый блок ровно по центру экрана
+            // (по горизонтали и по вертикали): без фона, только текст
+            // с тенью для читаемости поверх экрана под оверлеем.
+            // Пять карточек: две колонки в первых рядах, последняя по центру.
+            const char* title = XS("Способ чтения");
+            const float tfs = fs * 1.55f;
+            const ImVec2 ts = fn->CalcTextSizeA(tfs, FLT_MAX, 0.f, title);
+            const float gap  = 14.f;
+            const float btnH = fs * 3.4f;
+            const float btnW = ImMin((vw - 36.f - gap) / 2.f, 300.f);
+            const float tGap = fs * 1.3f;                 // заголовок -> кнопки
+            const float blockH = tfs + tGap + btnH * 3.f + gap * 2.f;
+            const float ty = (vh - blockH) * 0.5f;       // центр по вертикали
+            const float tx = (vw - ts.x) * 0.5f;
+            dl->AddText(fn, tfs, {tx + 2.f, ty + 2.f}, IM_COL32(0, 0, 0, 110), title);
+            dl->AddText(fn, tfs, {tx, ty}, C::U(C::Txt()), title);
+
+            // Сетка: две кнопки в первых двух рядах, последняя по центру.
+            const float rowW = btnW * 2.f + gap;
+            const float by   = ty + tfs + tGap;
+            const float bx   = (vw - rowW) * 0.5f;
+            const float by2  = by + btnH + gap;
+            const float by3  = by2 + btnH + gap;
+
+            ImGui::SetCursorScreenPos({bx, by});
+            if (ModeButton("##mode_ext", btnW, btnH,
+                           XS("Прямое чтение"), true, false, fs)) {
+                picked = MODE_EXTERNAL;
+                PlaySound(SND_CLICK);
+                ShowToast(XS("Прямое чтение"));
+            }
+
+            ImGui::SetCursorScreenPos({bx + btnW + gap, by});
+            if (ModeButton("##mode_ditpro", btnW, btnH,
+                           XS("DitPro"), ditpro, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("DitPro: нет root — запусти чит от su"));
+                } else {
+                    memio::kernel_transport().invalidate();
+                    ditpro = memio::kernel_transport().select_ditpro();
+                    if (ditpro) {
+                        picked = MODE_DITPRO;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("DitPro не найден — проверь модуль 131"));
+                    }
+                }
+            }
+
+            ImGui::SetCursorScreenPos({bx, by2});
+            if (ModeButton("##mode_ft", btnW, btnH,
+                           XS("FT"), ft, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("FT: нет root — запусти чит от su"));
+                } else {
+                    if (!ft) {
+                        memio::kernel_transport().invalidate();
+                        ft = memio::ft_available();
+                    }
+                    if (ft) {
+                        picked = MODE_FT;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("FT-драйвер не найден или не отвечает"));
+                    }
+                }
+            }
+
+            ImGui::SetCursorScreenPos({bx + btnW + gap, by2});
+            if (ModeButton("##mode_rt_hook", btnW, btnH,
+                           XS("RT-Hook"), rt_hook, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("RT-Hook: нет root — запусти чит от su"));
+                } else {
+                    if (!rt_hook) {
+                        memio::rt_hook_transport().invalidate();
+                        rt_hook = memio::rt_hook_available();
+                    }
+                    if (rt_hook) {
+                        picked = MODE_RT_HOOK;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("RT-Hook не найден — проверь модуль hookdd"));
+                    }
+                }
+            }
+
+            ImGui::SetCursorScreenPos({(vw - btnW) * 0.5f, by3});
+            if (ModeButton("##mode_rt_dev", btnW, btnH,
+                           XS("RT-Dev"), rt_dev, true, fs)) {
+                if (geteuid() != 0) {
+                    PlaySound(SND_CLICK);
+                    ShowToast(XS("RT-Dev: нет root — запусти чит от su"));
+                } else if (!rt_dev) {
+                    memio::rt_dev_transport().invalidate();
+                    rt_dev = memio::rt_dev_available();
+                    if (rt_dev) {
+                        picked = MODE_RT_DEV;
+                        PlaySound(SND_SUCCESS);
+                    } else {
+                        PlaySound(SND_CLICK);
+                        ShowToast(XS("RT-Dev не найден — прошей .sh своей версии ядра"));
+                    }
+                } else {
+                    picked = MODE_RT_DEV;
+                    PlaySound(SND_SUCCESS);
+                }
+            }
+
+
+
+        }
+        ImGui::End();
+
+        drawEnd();
+    }
+
+    Touch_BlockRect(false, 0.f, 0.f, 0.f, 0.f);
+
+    // Применяем выбранный (или дефолтный при выходе через сигнал) транспорт.
+    // Достаточно одного вызова до первого bind — весь код чтения выше по
+    // стеку работает через memio::Transport и про режимы не знает (mem_io.h).
+    const Mode mode = picked >= 0 ? static_cast<Mode>(picked) : MODE_EXTERNAL;
+    if (picked >= 0 && mode != MODE_EXTERNAL) ClearToast();
+    const int backend = mode == MODE_DITPRO ? ESP_MEM_DITPRO
+                      : mode == MODE_RT_DEV ? ESP_MEM_RT_DEV
+                      : mode == MODE_FT ? ESP_MEM_FT
+                      : mode == MODE_RT_HOOK ? ESP_MEM_RT_HOOK
+                                             : ESP_MEM_EXTERNAL;
+    esp_set_mem_backend(backend);
+    // Сохранить выбор для one-shot CLI (dump/skel). Только при реальном
+    // выборе: выход без тапа не должен затирать прошлый .mode.
+    if (picked >= 0) CfgWriteMemBackend(backend);
+    return picked >= 0;
+}
+
+}  // namespace modesel

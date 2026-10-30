@@ -5,11 +5,13 @@
 #include "farm_joy.h"
 #include "game.h"
 #include "esp_draw.h"
+#include "magic_farm_loader.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
 
 AppState g_state;
+pid_t g_target_pid = 100;
 HostDisplayInfo displayInfo;
 int native_window_screen_x = 1920, native_window_screen_y = 1080;
 bool g_esp_attached = true, s_fingerDown = false, g_aimActive = false;
@@ -27,6 +29,13 @@ void esp_farm_debug(int& count, int& reason) { count = 1; reason = 0; }
 void esp_farm_tool_info(int& have, int& need) { have = need = 0; }
 bool esp_farm_get_target(FarmTarget& out, unsigned long long preferred) {
     last_preferred = preferred; out = node; return node.valid;
+}
+bool esp_farm_get_magic_target(FarmTarget&, unsigned long long) { return false; }
+bool esp_silent_target(int) { return false; }
+bool esp_silent_read(uint64_t, void*, size_t) { return false; }
+bool esp_silent_write(uint64_t, const void*, size_t) { return false; }
+namespace magicfarm {
+Loaded load_module(int, std::uintptr_t) { return {0, State::LoadFailed}; }
 }
 void esp_farm_blacklist(unsigned long long id, float) { blacklisted.push_back(id); }
 bool esp_mem_aim_look_params(float&, bool&, bool&) { return false; }

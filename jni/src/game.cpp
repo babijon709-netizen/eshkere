@@ -8061,9 +8061,27 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
     uint64_t group_matrices[kMaxGroups] = {};
     uint64_t group_indices[kMaxGroups] = {};
     bool     group_ok[kMaxGroups] = {};
+    // Потолок пакетного чтения одной иерархии за кадр.
+    //
+    // needed — это НЕ число нужных костей, а максимальный индекс кости в
+    // иерархии: игра репарентит кости в рантайме (Ragdoll.m_BonesToReparent,
+    // aim-риги, foot IK), и после такого репарента кость игрока оказывается в
+    // общей иерархии сцены с индексом в тысячи. Пакетное чтение тянет массив
+    // ЦЕЛИКОМ до этого индекса: 8192 × sizeof(Matrix34) ≈ 393 КБ на игрока на
+    // КАЖДОМ кадре, и это ещё и пары int32 родителей. Пара таких игроков
+    // превращает кадр оверлея в мегабайты чтения чужой памяти — а он же рисует
+    // ESP, крутит фрикам и пишет иксрей, отсюда «всё лагает» и случайные
+    // многосекундные залипания на загрузке/GC игры.
+    //
+    // Выше потолка пакетный проход не делаем, а кость идём по родителям
+    // поштучно (ветка remote ниже, там же поднят её бюджет): ограниченное число
+    // чтений вместо массива неизвестного размера.
+    constexpr int32_t kMaxBulkBones = 512;
+    bool oversized_group = false;
     for (int g = 0; g < group_count; ++g) {
         int32_t needed = group_max[g] + 1;
         if (needed <= 0 || needed > 8192) continue;
+        if (needed > kMaxBulkBones) { oversized_group = true; continue; }
         uint64_t matrices = rd_ptr(group_data[g] + g_skeleton_layout.matrices_offset);
         uint64_t indices = rd_ptr(group_data[g] + g_skeleton_layout.indices_offset);
         // Раскладка, у которой matrices/indices лежат не в самом слоте, а по
@@ -8087,6 +8105,12 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
     int projected = 0;
     int bones_world = 0;      // костей с мировой позицией, прочитанных сейчас
     int remote_fallbacks = 0;
+    // Бюджет поштучных обходов родителей. Обычно он крошечный (8): пакетное
+    // чтение закрывает почти всё, и обход — только аварийный выход за границу
+    // буфера. Если же иерархия ушла за kMaxBulkBones, пакетного чтения нет
+    // вовсе, и обход становится ОСНОВНЫМ путём — тогда бюджет равен числу
+    // костей, иначе скелет просто не собрался бы.
+    const int remote_walk_budget = oversized_group ? ESP_BONE_COUNT : 8;
     // Мировые кости этого кадра — отдельно для аима и для рисования. Возраст
     // годности у них разный: аиму важна ТОЧКА (и он сам держит упреждение), а
     // на экране переиспользованная кость отстаёт от тела, и скелет «плывёт»
@@ -8116,13 +8140,13 @@ static bool fill_skeleton_box(uint64_t player, const Mat4& view_projection, floa
             if (group_ok[g]) {
                 walked = skeleton_local_walk(local_matrices[g].data(), local_parents[g].data(),
                                              (int32_t)local_matrices[g].size(), bone_index[bone], world);
-                if (walked < 0 && remote_fallbacks < 8) {
+                if (walked < 0 && remote_fallbacks < remote_walk_budget) {
                     // Parent chain leaves the buffered range (rare): remote walk.
                     ++remote_fallbacks;
                     walked = read_transform_hierarchy_arrays(group_matrices[g], group_indices[g],
                                                              bone_index[bone], world) ? 1 : 0;
                 }
-            } else if (remote_fallbacks < 8) {
+            } else if (remote_fallbacks < remote_walk_budget) {
                 ++remote_fallbacks;
                 walked = read_transform_hierarchy_layout(skeleton.bone_transform[bone],
                                                          g_skeleton_layout, world) ? 1 : 0;

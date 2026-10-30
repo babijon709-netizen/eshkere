@@ -61,6 +61,13 @@ static double g_prev_swap = 0.0;
 static double g_pace_sleep_ms = 0.0;  // сколько последний кадр проспал до своего темпа
 static double g_pace_tick_ms = 0.0;   // из них — ожидание начала кадра игры
 static int g_refresh_tick = 0;
+// Часы монотонного времени: нужны и темпу кадра (drawEnd), и опросу дисплея.
+static double NowSeconds() {
+    struct timespec t{};
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
 
 static float SnapHz(float h) {
     const float c[] = {60.f, 90.f, 120.f, 144.f, 165.f, 180.f, 240.f};
@@ -130,20 +137,27 @@ static float DetectPeakRefresh() {
     return SnapHz(best);
 }
 
-// Tempo, по которому идёт оверлей прямо сейчас: частота кадра игры (тик
-// Move.Tick), а пока тик не читается — запасные 60 Гц. Единая точка, чтобы
-// подсказка композитору (ApplyOverlayRefresh) и лог не расходились с тем, чем
-// реально paced цикл в drawEnd.
+// Tempo, по которому идёт оверлей: 60 Гц, и это ЖЁСТКИЙ потолок.
+//
+// Раньше темп равнялся частоте кадра игры (тик Move.Tick), то есть на панели
+// 90/120 Гц цикл крутился 90/120 раз в секунду. Каждый такой виток — это полный
+// съём мира (позиции, кости, маркеры: тысячи syscall'ов в чужую память), полная
+// перерисовка ESP и ещё один кадр в очередь композитора. Игра при этом рисует
+// свои кадры тем же GPU и тем же окном вывода: на 120 Гц оверлей забирал у неё
+// вдвое больше, а очередь буферов (setBufferCount 4) упиралась в
+// eglSwapBuffers — кадр ждал композитор, и всё это время на экране висел
+// предыдущий кадр оверлея. С устройства это и читается как «ESP залип на
+// несколько секунд», «фрикам/иксрей лагают»: и то, и другое живёт в этом же
+// цикле и обновляется только вместе с кадром оверлея.
+//
+// Почему именно 60, а не «частота игры»: снимать чаще, чем игра перерисовывает
+// камеру, незачем (между двумя кадрами игры позиции не меняются), а пол/потолок
+// 60 ещё и снимает старую беду с оценкой частоты игры — она мерится по переходам
+// тика в наших же отсчётах, поэтому длинная пауза занижала её, оверлей
+// замедлялся под неё и уже не поднимался («визуалы ползли на 24-30 к/с»).
+// Фаза кадра при этом остаётся привязанной к тику игры (OverlayWaitForGameTick).
 static float OverlayPaceHz() {
-    const float hz = esp_game_frame_hz();
-    if (!(hz >= 24.0F && hz <= 240.0F)) return kOverlayFallbackPaceHz;
-    // Пол — 60 Гц. Частоту игры оверлей мерит сам, по переходам тика в своих же
-    // отсчётах, поэтому оценка не может быть выше частоты самого оверлея:
-    // каждый отсчёт видит новый тик, и период перехода равен периоду оверлея.
-    // Одна длинная пауза кадра опускала оценку, оверлей замедлялся под неё и уже
-    // не мог подняться обратно — визуалы ползли на 24-30 к/с и «залипали» на слабых
-    // устройствах, пока оценка не падала ниже 24 и темп не прыгал назад на 60.
-    return hz < kOverlayFallbackPaceHz ? kOverlayFallbackPaceHz : hz;
+    return kOverlayFallbackPaceHz;
 }
 
 static void ApplyOverlayRefresh(ANativeWindow* w, float hz) {
@@ -157,10 +171,20 @@ static void ApplyOverlayRefresh(ANativeWindow* w, float hz) {
     static bool buffers_set = false;
     static float applied_hz = 0.f;
     static ANativeWindow* configured_window = nullptr;
+    // Гистерезис подсказки частоты (см. ниже): цель должна продержаться
+    // kHintDwellSec, а между двумя отправками проходит kHintMinGapSec.
+    static constexpr double kHintDwellSec  = 1.5;
+    static constexpr double kHintMinGapSec = 6.0;
+    static float  pending_hz = 0.f;
+    static double pending_since = 0.0;
+    static double last_apply_at = -1e9;
     if (configured_window != w) {
         configured_window = w;
         buffers_set = false;
         applied_hz = 0.f;
+        pending_hz = 0.f;
+        pending_since = 0.0;
+        last_apply_at = -1e9;   // новая поверхность — своя история подсказок
     }
     if (setbc && !buffers_set) { setbc(w, 4); buffers_set = true; }
     // hz <= 61 — сознательно: оверлей больше не переводит панель в 120 Гц ради
@@ -168,22 +192,30 @@ static void ApplyOverlayRefresh(ANativeWindow* w, float hz) {
     // удвоенную герцовку).
     //
     // Подсказка частоты уходит композитору только когда сменилось ОКРУГЛЁННОЕ
-    // значение. Раньше она переотправлялась каждые 180 кадров с сырой оценкой
-    // (91.3, 89.7, ...) — SurfaceFlinger каждый раз пересчитывал выбор режима
+    // значение — иначе SurfaceFlinger каждый раз пересчитывал выбор режима
     // панели, и на части устройств это давало переключение режима и секундное
-    // залипание всей картинки раз в несколько секунд. eglSwapInterval выставлен
-    // один раз при создании поверхности (init_egl) — повторный вызов драйверу не
-    // нужен и на некоторых GPU дорогой.
-    if (hz > 61.f) {
-        const float snapped = SnapHz(hz);
-        if (snapped != applied_hz) {
-            applied_hz = snapped;
-            if (setfr2) setfr2(w, snapped, 0, 1);
-            else if (setfr) setfr(w, snapped, 0);
-        }
-    } else {
-        applied_hz = 0.f;
-    }
+    // залипание всей картинки раз в несколько секунд.
+    //
+    // Одного округления оказалось мало: оценка частоты игры гуляет вокруг порога
+    // 61 Гц, и КАЖДЫЙ её заход за порог заново отправлял подсказку (предыдущая
+    // ветка сбрасывала applied_hz в 0), то есть на ровном месте получалась та же
+    // серия переключений режима — «ESP залип на пару секунд». Теперь цель должна
+    // продержаться kHintDwellSec, между отправками выдерживается kHintMinGapSec,
+    // а уход оценки ниже порога подсказку не сбрасывает и не переотправляет.
+    // eglSwapInterval выставлен один раз при создании поверхности (init_egl) —
+    // повторный вызов драйверу не нужен и на некоторых GPU дорогой.
+    if (hz <= 61.f) return;
+    const float target = SnapHz(hz);
+    if (target == applied_hz) { pending_since = 0.0; return; }
+    const double now = NowSeconds();
+    if (pending_hz != target) { pending_hz = target; pending_since = now; return; }
+    if (now - pending_since < kHintDwellSec) return;
+    if (now - last_apply_at < kHintMinGapSec) return;
+    applied_hz = target;
+    pending_since = 0.0;
+    last_apply_at = now;
+    if (setfr2) setfr2(w, target, 0, 1);
+    else if (setfr) setfr(w, target, 0);
 }
 
 float overlay_fps() {
@@ -276,8 +308,26 @@ bool init_egl(uint32_t _screen_x, uint32_t _screen_y, bool log) {
     return true;
 }
 
+// Опрос дисплея — это IPC в SurfaceFlinger (getDisplayState/getDisplayInfo), а не
+// чтение локального поля. drawBegin зовёт его КАЖДЫЙ кадр, то есть на 120 Гц это
+// 120 binder-транзакций в секунду в тот же процесс, который в это время
+// композит кадры игры. Загруженный SF отвечает не мгновенно, и ожидание ответа
+// стоит ровно в цикле оверлея: кадр (а с ним ESP, фрикам и иксрей) встаёт на
+// всё время ответа — с устройства это и видно как «ESP залип на несколько
+// секунд в случайный момент». Частота/ориентация дисплея меняются раз в
+// секунды, а не раз в кадр: опрашиваем 10 раз в секунду, поворот подхватывается
+// максимум через 100 мс (6 кадров при 60 Гц).
 void screen_config() {
-    displayInfo = anwc::ANativeWindowCreator::GetDisplayInfo();
+    static double next_poll = 0.0;
+    const double now = NowSeconds();
+    if (now < next_poll) return;
+    const anwc::ANativeWindowCreator::DisplayInfo info =
+        anwc::ANativeWindowCreator::GetDisplayInfo();
+    // Пустой ответ (SF не отдал display state) оставляем прежней геометрией и
+    // переспрашиваем следующим кадром: раньше пустой ответ затирал её нулями.
+    if (info.width <= 0 || info.height <= 0) return;
+    displayInfo = info;
+    next_poll = now + 0.1;
 }
 
 bool ImGui_init() {

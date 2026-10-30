@@ -28,6 +28,7 @@
 #include "kernel_io.h"
 #include "stealth.h"
 #include "FakeLag.h"
+#include "attach_log.h"      // журнал кадра: медленные кадры и их стадии
 #include "bw_obf.h"          // BW_GUARD / BW_CONST: непрозрачные ветвления
 #include <sys/socket.h>
 #include <sys/utsname.h>
@@ -364,6 +365,53 @@ void InstallCrashSignalCleanup() {
 }
 } // namespace
 
+// ---- Разбор медленного кадра ------------------------------------------------
+//
+// Жалобы «ESP залип на несколько секунд», «фрикам лагает», «иксрей лагает»
+// описывают ОДИН и тот же цикл: оверлей, ESP, фрикам и иксрей живут в одном
+// потоке, и если кадр кого-то из них ждёт, картинка остаётся на экране
+// последним отправленным кадром. По логу без разбивки этого не видно: строка
+// «кадр 300 мс» одинаково выглядит и когда мы прочитали слишком много памяти
+// игры, и когда ждали композитор в eglSwapBuffers.
+//
+// Поэтому стадии меряются всегда (это несколько clock_gettime на кадр), а в
+// журнал уходит только медленный кадр — не чаще раза в 2 с, с числом чтений
+// памяти игры за кадр: по нему видно, «читаем много» или «читаем столько же,
+// но каждое чтение ждёт».
+struct FrameWatch {
+    double begin = 0.0;
+    double esp = 0.0;
+    double aim = 0.0;
+    double farm = 0.0;
+    double menu = 0.0;
+    double freecam = 0.0;
+    double swap = 0.0;
+    unsigned long long reads = 0;
+
+    static double now() {
+        struct timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+    }
+};
+
+// Порог «медленного» кадра: 120 мс — это два кадра игры подряд, пропущенных
+// оверлеем; на глаз такое уже читается как рывок визуалов.
+static constexpr double kSlowFrameSeconds = 0.120;
+static constexpr double kSlowFrameLogGap  = 2.0;
+
+static void ReportSlowFrame(const FrameWatch& w, double total) {
+    static double last_log = -1e9;
+    const double at = FrameWatch::now();
+    if (at - last_log < kSlowFrameLogGap) return;
+    last_log = at;
+    attachlog::say("[кадр] %.0f мс: начало %.0f, ESP %.0f, аим %.0f, фарм %.0f, "
+                   "меню %.0f, фрикам %.0f, swap %.0f; чтений %llu, темп %.0f Гц, fps %.0f",
+                   total * 1000.0, w.begin * 1000.0, w.esp * 1000.0, w.aim * 1000.0,
+                   w.farm * 1000.0, w.menu * 1000.0, w.freecam * 1000.0, w.swap * 1000.0,
+                   w.reads, (double)overlay_pace_hz(), (double)overlay_fps());
+}
+
 static void SyncOverlayCaptureMode() {
     if (g_state.streamer_mode == overlay_capture_visible()) return;
     if (!overlay_set_capture_visible(g_state.streamer_mode)) {
@@ -539,7 +587,13 @@ int main(int argc, char* argv[]) {
             stealth::ProtectProcess(getpid());
         }
         g_frame_done.store(false);
+        // Стадии кадра: см. FrameWatch — по ним медленный кадр раскладывается на
+        // «сколько читали» и «сколько ждали композитор».
+        FrameWatch watch;
+        const double t_frame_start = FrameWatch::now();
+        const unsigned long long reads_at_start = esp_mem_reads_total();
         drawBegin();
+        watch.begin = FrameWatch::now() - t_frame_start;
 
         esp_mem_frame_begin();   // кадр начался: кэш блоков памяти игры сброшен
         esp_viewmodel_tick(g_state.viewmodel); // independent of ESP/aim/farm
@@ -566,12 +620,26 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        watch.esp = 0.0;
+        watch.aim = 0.0;
+        watch.farm = 0.0;
+        watch.menu = 0.0;
+        watch.freecam = 0.0;
+        watch.swap = 0.0;
+        double t_stage = FrameWatch::now();
         DrawEspOverlay();
+        watch.esp = FrameWatch::now() - t_stage;   // включает чтение памяти игры
+        t_stage = FrameWatch::now();
         UpdateAim(ImGui::GetIO().DeltaTime);
+        watch.aim = FrameWatch::now() - t_stage;
+        t_stage = FrameWatch::now();
         UpdateFarm(ImGui::GetIO().DeltaTime);
+        watch.farm = FrameWatch::now() - t_stage;
         // Индикация привязки (тосты «игра найдена / не найдена») убрана:
         // состояние видно по счётчику игроков в пилюле.
+        t_stage = FrameWatch::now();
         RenderMenu();
+        watch.menu = FrameWatch::now() - t_stage;
         // The close button is handled inside RenderMenu. Do not submit one
         // final frame after it: eglSwapBuffers can block while Android is
         // tearing the Surface down, leaving the last overlay image frozen.
@@ -580,14 +648,21 @@ int main(int argc, char* argv[]) {
             break;
         }
         SyncOverlayCaptureMode(); // also handles a profile loaded from the menu
+        t_stage = FrameWatch::now();
         UpdateFreecam(ImGui::GetIO().DeltaTime);   // фрикам: полёт камеры
         AimEndFrame(); // закрыть lease, если меню/фрикам выключили сайлент позднее
+        watch.freecam = FrameWatch::now() - t_stage;
         if (!main_thread_flag.load(std::memory_order_acquire)) {
             g_frame_done.store(true, std::memory_order_release);
             break;
         }
-        drawEnd();
+        t_stage = FrameWatch::now();
+        drawEnd();          // включает eglSwapBuffers: здесь видно ожидание композитора
+        watch.swap = FrameWatch::now() - t_stage;
         g_frame_done.store(true);
+        watch.reads = esp_mem_reads_total() - reads_at_start;
+        const double t_total = FrameWatch::now() - t_frame_start;
+        if (t_total >= kSlowFrameSeconds) ReportSlowFrame(watch, t_total);
     }
     s_touchRetryRun.store(false);
     // Start the deadline before EGL teardown as well: the compositor itself

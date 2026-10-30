@@ -349,7 +349,8 @@ static void always_day_tick() {
     // Day). Имя его класса обфусцировано и РОТИРУЕТ каждый билд: в дампе
     // 89e0b63 это был "IY", в 62a8534 — "UV" (в ещё более старом — "Gq"),
     // в dump11966 — "lE", в dump11978 — "QA" (слот QA_TypeInfo 0xE66E548),
-    // в dump11991 — "lI" (TDI 706, слот lI_TypeInfo 0xE611560).
+    // в dump11991 — "lI" (TDI 706, слот 0xE611560), в dump11993 — "Zf"
+    // (TDI 708, слот 0xE919750).
     // Прежний Oxide.TimeOfDay в боевых сценах не существует: его ленивые
     // метадата-слоты так и не инициализированы (лог day_log: нечётные токены)
     // — Awake ни разу не вызывался. TOD_Sky ищем по СИГНАТУРЕ, без имён: у его
@@ -3061,13 +3062,16 @@ static bool evaluate_player_position_offset(const std::vector<uint64_t>& players
     return true;
 }
 
-// Direct (PlayerManager field) position offsets, most trusted first. 0x260 is
-// the field the live client actually uses now: the log at 19:52 confirmed it
-// against kcc (8 of 9 players) while the profile's 0x1F4 read invalid-world
-// for every player. The canonical field is lastSavedPosition (0x1D0);
-// lastTickPosition (0x1C8) is equivalent. The rest are legacy guesses kept as
-// a last resort only.
-static const uint64_t k_known_position_offsets[] = {0x260, 0x1D0, 0x1C8, 0x1E0, 0x2D0, 0x2DC, 0x1D4, 0x1DC, 0x1E8};
+// Direct (PlayerManager field) position offsets, most trusted first. 11993:
+// lastSavedPosition 0x234 (= go_active::PLAYER_POSITION), lastTickPosition
+// 0x228, lastDeathPosition 0x240 и неименованные Vector3 0x340/0x34C/0x358,
+// originalPosition 0x438. Первый обязан совпадать с профилем (это проверяет
+// assert ниже), остальные — только запасные кандидаты для самопроверки.
+// Первая запись — всегда значение профиля (go_active::PLAYER_POSITION), а не
+// литерал: список статический, поэтому смена профиля подхватывается только
+// при старте процесса.
+static const uint64_t k_known_position_offsets[] = {
+    go_active::PLAYER_POSITION, 0x228, 0x240, 0x340, 0x34C, 0x358, 0x438};
 
 static uint64_t find_direct_player_position_offset(const std::vector<uint64_t>& players) {
     bool saved_use_direct = g_use_direct_player_position;
@@ -9786,9 +9790,9 @@ static void append_bot_boxes(std::vector<EspBox>& out) {
 //      isOccluded): каждый кадр в ScreenMarkerPresenter::LateTick (0x5D14C30)
 //      игра стреляет Physics.Raycast(camPos, headPos - camPos, dist, obstacleMask)
 //      для каждого вражеского игрока в радиусе 200м на экране.
-//   2. RaycastManager (PlayerManager + 0x88): RaycastData (+0x160) и 300-метровый
+//   2. RaycastManager (PlayerManager + 0xC8): RaycastData (+0x160) и 300-метровый
 //      AimRaycast (+0x168) вдоль оси камеры.
-//   3. AimAssist (hwR / YuB, PlayerManager + 0x258): прямой рейкаст по коллайдеру
+//   3. AimAssist (PlayerManager + 0x298): прямой рейкаст по коллайдеру
 //      цели с пропуском собственных коллайдеров игрока (hwR::ohb -> hwR::ohe),
 //      опрашивающий ботов и цели по кругу через tjb (+0x60) при обнулённых
 //      скоростях доводки в AimAssistConfig (+0x38..+0x44).
@@ -10012,7 +10016,7 @@ static void expire_local_player_hit_timers(uint64_t local_player) {
 // (TypeDefIndex: 6280, RVA 0xDEA6BD8) или hMD (6279, 0xDEA6B98); Beta 11982 —
 // tzc; Release 11978 — kiQ (RVA 0xE674BE8, статик-поля 0x00..0x60,
 // сигнатура 25 int32 сверена с dump.cs); Release 11991 — ryl
-// (TypeInfo-слот 0xE612F58, 25 статиков 0x00..0x60 шаг 4, dump.cs).
+// (0xE612F58), Release 11993 — UlV (0xE917638); 25 статиков 0x00..0x60 шаг 4.
 // Во всех сборках поля проверяются
 // одной сигнатурой.
 // Извлечение маски твёрдых стен/рельефа
@@ -10276,8 +10280,8 @@ static void collect_nearby_player_occlusion(uint64_t local_player,
 
         NearbyPlayerOccSample sample{};
         sample.model_tr    = managed_object_native(rd_ptr(data + MARKER_DATA_TRANSFORM));
-        sample.user_id_str = rd_ptr(data + 0x58); // NV.Rqd == [PlayerManager + 0x298] (userID)
-        sample.name_str    = rd_ptr(data + 0x60); // NV.RWz == [PlayerManager + 0x240] (uKU)
+        sample.user_id_str = rd_ptr(data + 0x58); // PM + 0x2E8 (userID)
+        sample.name_str    = rd_ptr(data + 0x60); // PM + 0x280 (displayName)
         sample.world_pos   = world_pos;
         sample.head_pos    = have_base_torso ? base_torso : head_pos;
         sample.visible     = (is_occ == 0);
@@ -10390,7 +10394,7 @@ static void sanitize_camera_and_aim_assist(uint64_t local_player) {
 
 // Na::Tick (0x5CFD850..0x5CFD8A8) кладёт в data + 0x40 (MARKER_DATA_TRANSFORM)
 // трансформ головы из PlayerModelInfo (+0x20, MODELINFO_HEAD), доставая сам
-// PlayerModelInfo через [PlayerManager + 0x260] -> [+0x10].
+// PlayerModelInfo через [PlayerManager + 0x2A0] -> [+0x10].
 static uint64_t player_marker_head_transform(uint64_t player, PlayerAux& aux) {
     if (!valid_obj(player)) return 0;
     const uint64_t mi_ref = rd_ptr(player + PLAYER_MODEL_INFO_REF);

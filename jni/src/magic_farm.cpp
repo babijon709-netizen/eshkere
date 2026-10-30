@@ -13,6 +13,8 @@
 #include <algorithm>
 
 namespace magicfarm {
+constexpr std::uint64_t kLoadRetryBaseNs = 2000000000ULL;
+constexpr std::uint64_t kLoadRetryMaxNs = 30000000000ULL;
 namespace {
 std::atomic<State> ui{State::Idle};
 std::uint64_t now_ns() {
@@ -27,6 +29,8 @@ class Client {
     int pid_{};
     std::uintptr_t base_{},context_{};
     std::uint64_t generation_{};
+    std::uint64_t retry_after_{};
+    unsigned load_failures_{};
     State loading_{State::Idle};
     void run() {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -38,6 +42,13 @@ class Client {
             lock.unlock();const auto result=load_module(pid,base);lock.lock();
             if (generation_==generation && !stop_) {
                 context_=result.shared;loading_=result.state;
+                if (!result.shared && (result.state==State::LoadFailed || result.state==State::NoAccess)) {
+                    const unsigned shift=std::min(load_failures_,4u);
+                    retry_after_=now_ns()+std::min(kLoadRetryMaxNs,kLoadRetryBaseNs<<shift);
+                    ++load_failures_;
+                } else {
+                    retry_after_=0;load_failures_=0;
+                }
             }
         }
     }
@@ -49,11 +60,21 @@ public:
     ~Client() { shutdown(); }
     void ensure(int pid,std::uintptr_t base) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (stop_ || (pid_==pid && base_==base)) return;
+        if (stop_) return;
+        const bool same=pid_==pid && base_==base;
+        if (same) {
+            if (context_ || loading_==State::Loading || now_ns()<retry_after_) return;
+        } else {
+            retry_after_=0;load_failures_=0;
+        }
         pid_=pid;base_=base;context_=0;++generation_;pending_=true;loading_=State::Loading;
         if (!worker_.joinable()) {
             try {worker_=std::thread(&Client::run,this);}
-            catch (...) {loading_=State::LoadFailed;pending_=false;return;}
+            catch (...) {
+                loading_=State::LoadFailed;pending_=false;
+                retry_after_=now_ns()+kLoadRetryBaseNs;++load_failures_;
+                return;
+            }
         }
         wake_.notify_one();
     }
@@ -81,6 +102,7 @@ public:
     void reset() {
         clear();std::lock_guard<std::mutex> lock(mutex_);
         ++generation_;pid_=0;base_=context_=0;pending_=false;loading_=State::Idle;
+        retry_after_=0;load_failures_=0;
     }
     void shutdown() {
         clear();{
@@ -119,7 +141,7 @@ const char* status_text() {
     case State::NoTarget:return "Magic Farm: поиск ресурсов";
     case State::WrongBuild:return "Magic Farm: нужен релиз 11991";
     case State::NoAccess:return "Magic Farm: нет доступа к процессу игры";
-    case State::LoadFailed:return "Magic Farm: модуль не подключён";
+    case State::LoadFailed:return "Magic Farm: модуль не подключён · /data/local/benzware/magic.log";
     case State::HookFailed:return "Magic Farm: обработчик не подключён";
     case State::NoProgress:return "Magic Farm: сервер не подтвердил добычу";
     case State::Stuck:return "Magic Farm: цель недоступна";

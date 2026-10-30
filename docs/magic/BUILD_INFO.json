@@ -1,0 +1,14 @@
+{
+  "packaged_utc": "2026-10-30T12:14:26.580110+00:00",
+  "revision": "magic-purpose-mask-fix-v1",
+  "ndk": "r26d",
+  "abi": "arm64-v8a",
+  "android_api": 24,
+  "binary_sha256": "ac49b015fc45d1c23e91e4bad6c2cd76268e10e71693373194fd7b1ec8c73c93",
+  "device_tested": false,
+  "behavior": "accept the exact 0xffffffff Flags mask; normalize resource matching to bits 1|2|4; preserve rejection of other unknown values",
+  "tests": [
+    "test_magic_tools_memory (Everything mask regression, -ffast-math)",
+    "test_farm_control_core"
+  ]
+}

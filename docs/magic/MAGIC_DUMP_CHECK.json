@@ -1,0 +1,142 @@
+{
+  "dump11991": {
+    "FPManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "private RaycastManager m_RaycastManager; // 0x48",
+        "public FPObject _currentWeapon; // 0x50"
+      ]
+    },
+    "FPObject": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "protected RaycastManager GFa; // 0x90",
+        "public PlayerManager Player; // 0xC0"
+      ]
+    },
+    "FPMelee": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "private float m_MaxReach; // 0x130",
+        "private float m_TimeBetweenAttacks; // 0x138"
+      ]
+    },
+    "FPTool": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public FPTool.ToolPurpose m_ToolPurposes; // 0x168",
+        "private bool alwaysCrit; // 0x170",
+        "public bool useAmmo; // 0x171"
+      ]
+    },
+    "RaycastManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public PlayerManager player; // 0x20",
+        "public float m_RayLength; // 0x38",
+        "private float m_AimRayLength; // 0x3C"
+      ]
+    },
+    "PlayerManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public RaycastManager raycastManager; // 0x88",
+        "public FPManager fpManager; // 0x90",
+        "public static RY<PlayerManager> sleepingPlayerList; // 0x0",
+        "public static RY<PlayerManager> activePlayerList; // 0x8",
+        "public static readonly List<PlayerManager> clientPlayerList; // 0x10",
+        "public PlayerManager.PlayerFlags playerFlags; // 0x280",
+        "public PlayerManager observedPlayer; // 0x3D8",
+        "private static readonly HashSet<PlayerManager> GVM; // 0x28"
+      ]
+    },
+    "NetworkIdentity": {
+      "namespace": "// Namespace: Mirror",
+      "fields": [
+        "private bool <isLocalPlayer>k__BackingField; // 0x4A"
+      ]
+    },
+    "archive_sha256": "4f1303ec0912dde9f40e4cd165dd8a91b404bec458c6e7b04808439ca16d0c4c",
+    "ToolPurpose": {
+      "flags_attribute": true,
+      "declared_values": {
+        "CutWood": 1,
+        "BreakRocks": 2,
+        "CutAnimals": 4
+      },
+      "live_raw_mask_from_attach_log": "0xffffffff",
+      "normalization_for_matching": 7,
+      "note": "No named All enumerator is declared; accept the exact all-bits-set Flags sentinel, reject other unknown bits."
+    }
+  },
+  "dumpbeta11982": {
+    "FPManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "private RaycastManager m_RaycastManager; // 0x48",
+        "public FPObject _currentWeapon; // 0x50"
+      ]
+    },
+    "FPObject": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "protected RaycastManager Geo; // 0x90",
+        "public PlayerManager Player; // 0xC0"
+      ]
+    },
+    "FPMelee": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "private float m_MaxReach; // 0x130",
+        "private float m_TimeBetweenAttacks; // 0x138"
+      ]
+    },
+    "FPTool": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public FPTool.ToolPurpose m_ToolPurposes; // 0x168",
+        "private bool alwaysCrit; // 0x170",
+        "public bool useAmmo; // 0x171"
+      ]
+    },
+    "RaycastManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public PlayerManager player; // 0x20",
+        "public float m_RayLength; // 0x38",
+        "private float m_AimRayLength; // 0x3C"
+      ]
+    },
+    "PlayerManager": {
+      "namespace": "// Namespace: Oxide",
+      "fields": [
+        "public RaycastManager raycastManager; // 0xC8",
+        "public FPManager fpManager; // 0xD0",
+        "public static AO<PlayerManager> sleepingPlayerList; // 0x0",
+        "public static AO<PlayerManager> activePlayerList; // 0x8",
+        "public static readonly List<PlayerManager> clientPlayerList; // 0x10",
+        "public PlayerManager.PlayerFlags playerFlags; // 0x2C0",
+        "public PlayerManager observedPlayer; // 0x420",
+        "private static readonly HashSet<PlayerManager> GVf; // 0x28"
+      ]
+    },
+    "NetworkIdentity": {
+      "namespace": "// Namespace: Mirror",
+      "fields": [
+        "private bool <isLocalPlayer>k__BackingField; // 0x4A"
+      ]
+    },
+    "archive_sha256": "c6cc576f1b90020c5ea7dd18a22ed8e004f061f28762b4a6acd49f2235698fa7",
+    "ToolPurpose": {
+      "flags_attribute": true,
+      "declared_values": {
+        "CutWood": 1,
+        "BreakRocks": 2,
+        "CutAnimals": 4
+      },
+      "live_raw_mask_from_attach_log": "0xffffffff",
+      "normalization_for_matching": 7,
+      "note": "No named All enumerator is declared; accept the exact all-bits-set Flags sentinel, reject other unknown bits."
+    }
+  }
+}

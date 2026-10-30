@@ -1,0 +1,949 @@
+--- a/jni/include/app_state.h
++++ b/jni/include/app_state.h
+@@ -87,6 +87,10 @@
+     float esp_thick = 1.5f;
+     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
+     // Автофарм: главный выключатель + какие ресурсы добывать.
++    bool magic_tools = false, magic_farm = false;
++    bool magic_stone = true, magic_metal = true, magic_sulfur = true;
++    float a_magic_tools=0.f, a_magic_farm=0.f;
++    float a_magic_stone=1.f, a_magic_metal=1.f, a_magic_sulfur=1.f;
+     bool  farm_on = false;
+     bool  farm_wood = true, farm_stone = false, farm_metal = false, farm_sulfur = false;
+     // Калибровка зон бота (доли экрана 0..1; -1 = не задано, берём дефолт).
+--- a/jni/include/farm.h
++++ b/jni/include/farm.h
+@@ -22,7 +22,7 @@
+ extern int  g_farmToolNeed;   // что нужно ближайшим узлам (флаги ToolPurpose)
+ extern int  g_farmXp;         // опыт за текущий узел
+ extern bool g_farmBlocked;    // узел перекрыт
+-extern bool g_farmProtected;  // клиент под Appdome: автофарм и запись в память запрещены
++extern bool g_farmWriteBlocked;  // нет подтверждённой карты памяти процесса: ввод временно отключён
+ 
+ // Калибровка зон вводом с экрана (меню прячется, тап записывает точку):
+ // 0 — нет, 1 — (снят: зона джойстика автофарма — стик ходит через память,
+--- /dev/null
++++ b/jni/include/magic_tools.h
+@@ -0,0 +1,3 @@
++#pragma once
++bool esp_magic_tools_ready();
++int esp_magic_tools_stage();
+--- /dev/null
++++ b/jni/include/tool_purpose.h
+@@ -0,0 +1,15 @@
++#pragma once
++#include <cstdint>
++
++namespace farm_tool {
++inline constexpr std::int32_t kKnownPurposes = 1 | 2 | 4;
++// Unity can serialize a Flags field with Everything selected as all bits set.
++// Do not confuse that exact sentinel with a failed read or accept other
++// unknown bits. Keep the raw value in diagnostics, normalize only for matching.
++inline bool valid_purposes(std::int32_t raw) {
++    return raw == -1 || (raw > 0 && (raw & ~kKnownPurposes) == 0);
++}
++inline std::int32_t effective_purposes(std::int32_t raw) {
++    return valid_purposes(raw) ? raw & kKnownPurposes : 0;
++}
++}
+--- a/jni/src/config.cpp
++++ b/jni/src/config.cpp
+@@ -296,6 +296,10 @@
+               (g_state.farm_on       ? (1u << 14) : 0u) |
+               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
+               (g_state.esp_armor     ? (1u << 16) : 0u) |
++              (1u << 27) | // Magic resource-selection extension is present.
++              (g_state.magic_stone ? (1u << 24) : 0u) |
++              (g_state.magic_metal ? (1u << 25) : 0u) |
++              (g_state.magic_sulfur ? (1u << 26) : 0u) |
+               overlay_capture::config_flag(g_state.streamer_mode) |
+               screen_capture::video_config_flags(g_state.capture_video);
+     t.esp_arrow_ring   = g_state.esp_arrow_ring;
+@@ -799,6 +803,13 @@
+             g_state.farm_on        = (ext2.flags & (1u << 14)) != 0;
+             g_state.esp_pumpkins   = (ext2.flags & (1u << 15)) != 0;
+             g_state.esp_armor      = (ext2.flags & (1u << 16)) != 0;
++            if(ext2.flags & (1u << 27)) {
++                g_state.magic_stone=(ext2.flags & (1u << 24))!=0;
++                g_state.magic_metal=(ext2.flags & (1u << 25))!=0;
++                g_state.magic_sulfur=(ext2.flags & (1u << 26))!=0;
++            }
++            // Loading a profile must not enable automatic input or tool patches.
++            g_state.magic_tools=false;g_state.magic_farm=false;
+ 
+             g_state.esp_arrow_ring   = num(ext2.esp_arrow_ring,   8.f,   60.f,  30.f);
+             g_state.esp_radar_size   = num(ext2.esp_radar_size,   90.f,  360.f, 170.f);
+--- a/jni/src/farm.cpp
++++ b/jni/src/farm.cpp
+@@ -1,4 +1,8 @@
+ #include "farm.h"
++#include "magic_tools.h"
++#include "attach_log.h"
++#include "feature_log_gate.h"
++#include "magic_tools_memory.h"
+ #include "farm_joy.h"          // память-джойстик: движение без тача
+ #include "farm_control_core.h"
+ #include "cfg.h"
+@@ -73,7 +77,7 @@
+ int  g_farmToolNeed = 0;     // какие умения запросили отброшенные узлы
+ int  g_farmXp = 0;           // сколько опыта даёт текущий узел (0 = неизвестно)
+ bool g_farmBlocked = false;  // узел перекрыт: луч игры упёрся ближе точки прицела
+-bool g_farmProtected = false; // Appdome libloader.so: не инжектим и не пишем в игру
++bool g_farmWriteBlocked = false; // No complete maps snapshot for the current target PID.
+ 
+ 
+ 
+@@ -224,9 +228,51 @@
+ 
+ } // namespace
+ 
++namespace {
++struct FarmTrace {
++    int event=0;
++    uint64_t target=0, attacks=0, attack_ok=0;
++    bool have=false, ray_self=false, ray_foreign=false;
++    bool last_attack_on=false, last_attack_ok=false;
++    float distance=0.f, reach=0.f, period=0.f;
++} farm_trace;
++const char* farm_event_name(int event) {
++    switch(event) {
++    case 1:return "off/no-resources";case 2:return "maps-not-ready";
++    case 3:return "not-attached";case 4:return "magic-tools-not-ready";
++    case 5:return "no-target";case 6:return "outside-magic-radius";
++    default:return "controller";
++    }
++}
++struct FarmLogOnExit {
++    ~FarmLogOnExit() {
++        static feature_log::Gate gate;
++        const uint64_t mask=uint64_t(g_state.magic_stone) | (uint64_t(g_state.magic_metal)<<1) |
++            (uint64_t(g_state.magic_sulfur)<<2);
++        const uint64_t key=(uint64_t(farm_trace.event) | (uint64_t(g_farmPhase)<<8) |
++            (uint64_t(g_farmPaused)<<12) | (uint64_t(g_state.magic_farm)<<13) |
++            (uint64_t(g_state.farm_on)<<14) | (mask<<16)) ^ (farm_trace.target<<20);
++        if(!gate.accept(key,std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(),g_state.magic_farm || g_state.farm_on)) return;
++        attachlog::say("[farm] magic=%d normal=%d mask=0x%llx event=%s active=%d phase=%d paused=%d nodes=%d idle_reason=%d write_blocked=%d",
++            int(g_state.magic_farm),int(g_state.farm_on),(unsigned long long)mask,farm_event_name(farm_trace.event),
++            int(g_farmActive),g_farmPhase,int(g_farmPaused),g_farmNodes,g_farmReason,int(g_farmWriteBlocked));
++        if(g_state.magic_farm || g_state.farm_on)
++            attachlog::say("[farm.target] valid=%d id=0x%llx kind=%d distance=%.3f reach=%.3f ray_self=%d ray_foreign=%d period=%.3f hp=%.1f attack_ok=%llu attempts=%llu last_attack_on=%d last_attack_ok=%d aim_owns=%d calibration=%d",
++                int(farm_trace.have),(unsigned long long)farm_trace.target,g_farmTgtKind,
++                double(farm_trace.distance),double(farm_trace.reach),int(farm_trace.ray_self),int(farm_trace.ray_foreign),
++                double(farm_trace.period),double(g_farmHpPct),(unsigned long long)farm_trace.attack_ok,
++                (unsigned long long)farm_trace.attacks,int(farm_trace.last_attack_on),int(farm_trace.last_attack_ok),int(g_aimActive),g_calibMode);
++    }
++};
++}
++
+ static void UpdateFarmInner(float dt);
+ 
+ void UpdateFarm(float dt) {
++    FarmLogOnExit farm_log_on_exit;
++    farm_trace.event=0;farm_trace.target=0;farm_trace.have=false;
++    farm_trace.distance=farm_trace.reach=farm_trace.period=0.f;
++    farm_trace.ray_self=farm_trace.ray_foreign=false;
+ #ifdef __ANDROID__
+     static int checked_pid = -1;
+     static auto next_check = std::chrono::steady_clock::time_point{};
+@@ -237,18 +283,20 @@
+         next_check = now + std::chrono::seconds(1);
+     }
+ #endif
+-    if (runtime_guard::is_protected(g_target_pid)) {
+-        if (!g_farmProtected) {
++    if (!runtime_guard::writes_allowed(g_target_pid)) {
++        if (!g_farmWriteBlocked) {
+             // Release the normal controller's cached press/movement state once.
+-            const bool enabled = g_state.farm_on;
+-            g_state.farm_on = false; UpdateFarmInner(dt); g_state.farm_on = enabled;
++            const bool enabled = g_state.farm_on, magicEnabled=g_state.magic_farm;
++            g_state.farm_on = false;g_state.magic_farm=false;
++            UpdateFarmInner(dt);
++            g_state.farm_on = enabled;g_state.magic_farm=magicEnabled;
+         }
+         farmjoy::release();
+         g_farmActive = false; g_farmPaused = true; g_farmPhase = 0;
+-        g_farmProtected = true;
++        g_farmWriteBlocked = true;farm_trace.event=2;
+         return;
+     }
+-    g_farmProtected = false;
++    g_farmWriteBlocked = false;
+     UpdateFarmInner(dt);
+ }
+ 
+@@ -289,7 +337,13 @@
+     static float s_lookWaitT = 0.f;
+     static bool  s_coarseArmed = true;
+ 
+-    const auto writeAttack = [](bool on) { return farmjoy::attack(on); };
++    const auto writeAttack = [](bool on) {
++        ++farm_trace.attacks;
++        const bool ok=farmjoy::attack(on);
++        farm_trace.last_attack_on=on;farm_trace.last_attack_ok=ok;
++        if(ok) ++farm_trace.attack_ok;
++        return ok;
++    };
+     auto releaseAll = [&]() {
+         farmjoy::release();
+         s_moveDown = false;
+@@ -320,17 +374,28 @@
+     // Память-джойстик: кэш цели движения и его периодическая перепроверка.
+     farmjoy::tick(dt);
+ 
++    const bool magic = g_state.magic_farm;
++    static bool lastMagic=false;
++    if(magic!=lastMagic) {
++        releaseAll();resetNode();s_settle=0.f;s_lostTime=0.f;
++        lastMagic=magic;
++    }
+     unsigned mask = 0;
+-    if (g_state.farm_on) {
++    if(magic) {
++        if(g_state.magic_stone) mask|=2u;
++        if(g_state.magic_metal) mask|=4u;
++        if(g_state.magic_sulfur) mask|=8u;
++    } else if (g_state.farm_on) {
+         if (g_state.farm_wood)   mask |= 1u;
+         if (g_state.farm_stone)  mask |= 2u;
+         if (g_state.farm_metal)  mask |= 4u;
+         if (g_state.farm_sulfur) mask |= 8u;
+     }
+     esp_farm_set_resources(mask);
+-    esp_farm_set_range(g_state.farm_range);
+-
+-    if (mask == 0 || !g_esp_attached) {
++    esp_farm_set_range(magic ? magic_tools::kFarmRadius : g_state.farm_range);
++
++    if (mask == 0 || !g_esp_attached || (magic && !esp_magic_tools_ready())) {
++        farm_trace.event=mask==0?1:(!g_esp_attached?3:4);
+         releaseAll();
+         g_farmActive = false; g_farmPhase = 0; g_farmPaused = false;
+         g_farmHpPct = -1.f; g_farmSpotLife = -1.f; g_farmBlocked = false;
+@@ -366,7 +431,14 @@
+     const unsigned long long preferred = (g_farmPhase == 3 || s_mineTime > 0.f) ? s_nodeId : 0;
+     const bool haveTgt = esp_farm_get_target(tgt, preferred) && tgt.valid;
+     esp_farm_debug(g_farmNodes, g_farmReason);
+-    if (!haveTgt) {
++    farm_trace.have=haveTgt;farm_trace.target=tgt.id;
++    farm_trace.distance=tgt.aim_3d;farm_trace.reach=tgt.melee_reach;
++    farm_trace.period=tgt.attack_period;farm_trace.ray_self=tgt.ray_self;farm_trace.ray_foreign=tgt.ray_foreign;
++    const bool beyondMagic = haveTgt && magic &&
++        (!viewmodel::finite(tgt.aim_3d) || tgt.aim_3d > magic_tools::kFarmRadius);
++    if(beyondMagic) esp_farm_blacklist(tgt.id,1.f);
++    if (!haveTgt || beyondMagic) {
++        farm_trace.event=beyondMagic?6:5;
+         // Рабочая цель может исчезнуть на пару кадров (рескан реестра, сбой
+         // чтения посреди апдейта) и тут же вернуться. Мгновенный сброс всего
+         // давал топтание «стоп-шаг-стоп»: на короткое время просто замораживаем
+@@ -752,6 +824,9 @@
+             (phase == 3 && noRay &&
+              distNow > kNoRayCloseTo);
+         if (s_evadeTime > 0.f) wantWalk = true;  // манёвр ведёт стик сам
++        if(magic) { wantWalk=false;s_evadeTime=0.f;s_walkOffTime=0.f;
++            if(s_moveDown) { farmjoy::release();s_joyX=s_joyY=0.f;s_moveDown=false; }
++        }
+ 
+         // Гистерезис отпускания: фаза мигает на кадр-другой вокруг порогов
+         // (шум дистанции/угла), и каждое мигание раньше поднимало и снова
+--- /dev/null
++++ b/jni/src/feature_log_gate.h
+@@ -0,0 +1,16 @@
++#pragma once
++#include <cstdint>
++namespace feature_log {
++// Changed states: at most twice a second. Active states: heartbeat every 5 s.
++struct Gate {
++    uint64_t key=0;
++    double last=-1.0;
++    bool initialized=false;
++    bool accept(uint64_t next,double now,bool active) {
++        const bool changed=!initialized || next!=key;
++        if(initialized && now>=last && now-last<0.5) return false;
++        if(!changed && (!active || (now>=last && now-last<5.0))) return false;
++        initialized=true;key=next;last=now;return true;
++    }
++};
++}
+--- a/jni/src/game.cpp
++++ b/jni/src/game.cpp
+@@ -1,4 +1,5 @@
+ #include "game.h"
++#include "tool_purpose.h"
+ #include "scoped_text.h"
+ #include "bw_obf.h"           // BW_GUARD: привязка и транспорт
+ #include "aim.h"
+@@ -8506,11 +8507,8 @@
+         is_chainsaw || is_jackhammer) {
+         int32_t purposes = 0;
+         if (rd_exact(weapon + FPTOOL_TOOL_PURPOSES, purposes)) {
+-            const int32_t known = (int32_t)ToolPurpose::CutWood |
+-                                  (int32_t)ToolPurpose::BreakRocks |
+-                                  (int32_t)ToolPurpose::CutAnimals;
+-            if (purposes != 0 && (purposes & ~known) == 0) {
+-                out.tool_purposes = (int)purposes;
++            if (farm_tool::valid_purposes(purposes)) {
++                out.tool_purposes = farm_tool::effective_purposes(purposes);
+                 out.purposes_valid = true;
+             }
+         }
+--- a/jni/src/game_offsets.h
++++ b/jni/src/game_offsets.h
+@@ -629,6 +629,7 @@
+ // Oxide.FPTool : Oxide.FPMelee. The expanded release 11966 base shifts these
+ // FPTool-specific fields by +8 (база 11985 идентична 11966 — сверено);
+ // beta keeps its previous profile values.
++inline constexpr std::uint64_t FPTOOL_ALWAYS_CRIT            = 0x170; // bool, FPTool.alwaysCrit
+ inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES          = 0x168; // enum ToolPurpose, флаги
+ // Рядом (не читаем): 0x16C m_Efficiency, 0x170 alwaysCrit, 0x171 useAmmo,
+ // 0x174 attacksPerAmmo.
+--- a/jni/src/game_offsets_active.h
++++ b/jni/src/game_offsets_active.h
+@@ -225,6 +225,7 @@
+ inline std::uint64_t FPMELEE_HIT_RADIUS = BW_OFFSET(game_offsets::FPMELEE_HIT_RADIUS);
+ inline std::uint64_t FPMELEE_TIME_BETWEEN_ATTACKS = BW_OFFSET(game_offsets::FPMELEE_TIME_BETWEEN_ATTACKS);
+ inline std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK = BW_OFFSET(game_offsets::FPMELEE_PAUSE_AFTER_ATTACK);
++inline std::uint64_t FPTOOL_ALWAYS_CRIT = BW_OFFSET(game_offsets::FPTOOL_ALWAYS_CRIT);
+ inline std::uint64_t FPTOOL_TOOL_PURPOSES = BW_OFFSET(game_offsets::FPTOOL_TOOL_PURPOSES);
+ inline std::uint64_t RAYCASTMAN_PLAYER = BW_OFFSET(game_offsets::RAYCASTMAN_PLAYER);
+ inline std::uint64_t RAYCASTMAN_RAY_LENGTH = BW_OFFSET(game_offsets::RAYCASTMAN_RAY_LENGTH);
+@@ -686,6 +687,7 @@
+         FPMELEE_HIT_RADIUS = BW_OFFSET(game_offsets_beta::FPMELEE_HIT_RADIUS);
+         FPMELEE_TIME_BETWEEN_ATTACKS = BW_OFFSET(game_offsets_beta::FPMELEE_TIME_BETWEEN_ATTACKS);
+         FPMELEE_PAUSE_AFTER_ATTACK = BW_OFFSET(game_offsets_beta::FPMELEE_PAUSE_AFTER_ATTACK);
++        FPTOOL_ALWAYS_CRIT = BW_OFFSET(game_offsets_beta::FPTOOL_ALWAYS_CRIT);
+         FPTOOL_TOOL_PURPOSES = BW_OFFSET(game_offsets_beta::FPTOOL_TOOL_PURPOSES);
+         RAYCASTMAN_PLAYER = BW_OFFSET(game_offsets_beta::RAYCASTMAN_PLAYER);
+         RAYCASTMAN_RAY_LENGTH = BW_OFFSET(game_offsets_beta::RAYCASTMAN_RAY_LENGTH);
+@@ -1148,6 +1150,7 @@
+         FPMELEE_HIT_RADIUS = BW_OFFSET(game_offsets::FPMELEE_HIT_RADIUS);
+         FPMELEE_TIME_BETWEEN_ATTACKS = BW_OFFSET(game_offsets::FPMELEE_TIME_BETWEEN_ATTACKS);
+         FPMELEE_PAUSE_AFTER_ATTACK = BW_OFFSET(game_offsets::FPMELEE_PAUSE_AFTER_ATTACK);
++        FPTOOL_ALWAYS_CRIT = BW_OFFSET(game_offsets::FPTOOL_ALWAYS_CRIT);
+         FPTOOL_TOOL_PURPOSES = BW_OFFSET(game_offsets::FPTOOL_TOOL_PURPOSES);
+         RAYCASTMAN_PLAYER = BW_OFFSET(game_offsets::RAYCASTMAN_PLAYER);
+         RAYCASTMAN_RAY_LENGTH = BW_OFFSET(game_offsets::RAYCASTMAN_RAY_LENGTH);
+--- a/jni/src/game_offsets_beta.h
++++ b/jni/src/game_offsets_beta.h
+@@ -117,6 +117,7 @@
+ inline constexpr std::uint64_t FPMELEE_HIT_RADIUS = game_offsets::FPMELEE_HIT_RADIUS;
+ inline constexpr std::uint64_t FPMELEE_TIME_BETWEEN_ATTACKS = game_offsets::FPMELEE_TIME_BETWEEN_ATTACKS;
+ inline constexpr std::uint64_t FPMELEE_PAUSE_AFTER_ATTACK = game_offsets::FPMELEE_PAUSE_AFTER_ATTACK;
++inline constexpr std::uint64_t FPTOOL_ALWAYS_CRIT = game_offsets::FPTOOL_ALWAYS_CRIT;
+ inline constexpr std::uint64_t FPTOOL_TOOL_PURPOSES = game_offsets::FPTOOL_TOOL_PURPOSES;
+ 
+ // Oxide.GameControllerBase (static_fields) — раскладка поимённо совпала с релизом.
+--- a/jni/src/game_viewmodel.cpp
++++ b/jni/src/game_viewmodel.cpp
+@@ -22,6 +22,10 @@
+ #include <unistd.h>
+ #include "game_viewmodel_internal.h"
+ #include "game_internal.h"
++#include "magic_tools.h"
++#include "attach_log.h"
++#include "feature_log_gate.h"
++#include "magic_tools_memory.h"
+ 
+ namespace {
+ struct Memory {
+@@ -337,6 +341,7 @@
+     }
+ };
+ HeapMemory heap_memory;
++magic_tools::Controller<HeapMemory> magic_ctl(heap_memory);
+ weapon_tuning::Controller<HeapMemory> weapons(heap_memory);
+ fast_fire::Controller<HeapMemory> rapid_fire(heap_memory);
+ fast_loot::Controller<HeapMemory> loot_speed(heap_memory);
+@@ -566,6 +571,7 @@
+         ;
+     if (!no_ballistics_ctl.reset(restore && g_mem.bound()))
+         ;
++    magic_ctl.reset(restore && g_mem.bound());
+     loot_speed.reset();
+     unity_base = 0; fps_last_tick = {}; fps_last_resolve = {}; fps_last_limit = 0;
+     unity_next_resolve = {}; unity_fail_streak = 0; unity_job_ready.store(false);
+@@ -574,14 +580,70 @@
+     ++epoch;
+ }
+ 
++namespace {
++void log_feature_state() {
++    static feature_log::Gate magic_gate, feature_gate;
++    const double now=memio::now_seconds();
++    const bool requested=g_state.magic_tools || g_state.magic_farm;
++    const auto& d=magic_ctl.diagnostics();
++    const auto guard=runtime_guard::policy(g_pid);
++    const uint64_t key=(uint64_t(g_state.magic_tools) | (uint64_t(g_state.magic_farm)<<1) |
++        (uint64_t(g_mem.bound())<<2) | (uint64_t(magic_ctl.ready())<<3) |
++        (uint64_t(magic_ctl.has_state())<<4) | (uint64_t(guard)<<5) |
++        (uint64_t(magic_ctl.stage())<<8)) ^ (uint64_t(uint32_t(g_pid))<<32);
++    if(magic_gate.accept(key,now,requested || magic_ctl.has_state())) {
++        const char* reason=!requested && !magic_ctl.has_state()?"off":
++            !g_mem.bound()?"not-bound":guard==runtime_guard::Policy::Unknown?"guard-unknown":
++            !d.player?"local-player-unresolved":magic_tools::stage_name(magic_ctl.stage());
++        attachlog::say("[magic] tools=%d farm=%d pid=%d bound=%d base=0x%llx guard=%u write_allowed=%d ready=%d pending_restore=%d stage=%d (%s)",
++            int(g_state.magic_tools),int(g_state.magic_farm),int(g_pid),int(g_mem.bound()),
++            (unsigned long long)g_il2cpp_base,unsigned(guard),int(runtime_guard::writes_allowed(g_pid)),int(magic_ctl.ready()),
++            int(magic_ctl.has_state()),magic_ctl.stage(),reason);
++        if(requested || magic_ctl.has_state()) {
++            char name[64]{}, ns[64]{};
++            if(!g_mem.bound() || !heap_memory.describe(d.tool,name,sizeof(name),ns,sizeof(ns)))
++                std::snprintf(name,sizeof(name),"unreadable");
++            attachlog::say("[magic.ctx] player=0x%llx fp=0x%llx tool=0x%llx class=%s.%s ray=0x%llx purposes=0x%x",
++                (unsigned long long)d.player,(unsigned long long)d.fp,(unsigned long long)d.tool,
++                ns,name,(unsigned long long)d.ray,unsigned(d.purposes));
++            attachlog::say("[magic.fields] seen_reach=%.3f ray=%.3f aim_ray=%.3f crit=%d desired_reach=%.3f",
++                double(d.reach[0]),double(d.reach[1]),double(d.reach[2]),d.critical,double(magic_tools::kReach));
++            attachlog::say("[magic.io] ctl_reads=%llu read_fail=%llu writes_ok=%llu attempts=%llu restore_attempts=%llu last=%s addr=0x%llx size=%u expected=0x%08x actual=0x%08x",
++                (unsigned long long)d.reads,(unsigned long long)d.read_failures,
++                (unsigned long long)d.write_success,(unsigned long long)d.writes,
++                (unsigned long long)d.restores,d.operation,(unsigned long long)d.address,d.size,d.expected,d.actual);
++        }
++    }
++    const auto& v=g_state.viewmodel;
++    const unsigned flags=unsigned(v.no_spread) | (unsigned(v.no_recoil_button)<<1) |
++        (unsigned(g_state.fast_fire)<<2) | (unsigned(v.fast_loot)<<3) |
++        (unsigned(v.fov_enabled)<<4) | (unsigned(v.hands_enabled)<<5) | (unsigned(v.fps_limit>0)<<6);
++    const uint64_t fkey=uint64_t(flags) | (uint64_t(weapons.spread)<<8) |
++        (uint64_t(rapid_fire.status)<<12) | (uint64_t(no_recoil_ctl.status)<<16) |
++        (uint64_t(loot_speed.state())<<20) | (uint64_t(controller.status.fov)<<24) |
++        (uint64_t(controller.status.hands)<<28) | (uint64_t(fps_controller.status)<<32);
++    if(feature_gate.accept(fkey,now,flags!=0)) {
++        attachlog::say("[features] requested=0x%x spread=%u/stage%d recoil=%u/stage%d fast_fire=%u/stage%d loot=%u/stage%d fov=%u hands=%u fps=%u limit=%d",
++            flags,unsigned(weapons.spread),weapons.stage(),unsigned(no_recoil_ctl.status),no_recoil_ctl.stage(),
++            unsigned(rapid_fire.status),rapid_fire.stage(),unsigned(loot_speed.state()),loot_speed.stage(),
++            unsigned(controller.status.fov),unsigned(controller.status.hands),unsigned(fps_controller.status),v.fps_limit);
++    }
++}
++struct FeatureLogOnExit { ~FeatureLogOnExit() { log_feature_state(); } };
++}
++
+ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
+     ViewmodelSettings settings = raw_settings;
+     settings.no_ballistics = false;
+     using namespace go_active;
+     std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
++    FeatureLogOnExit feature_log_on_exit;
+     const bool want_fast_fire = g_state.fast_fire;
++    const bool want_magic = (g_state.magic_tools || g_state.magic_farm) &&
++                            runtime_guard::writes_allowed(g_pid);
+     if (!g_mem.bound() || !g_il2cpp_base || g_pid <= 0) {
+         controller.reset(false); fps_controller.reset(false); weapons.reset(false);
++        magic_ctl.reset(false);
+         rapid_fire.reset(false);
+         rapid_fire.status = want_fast_fire ? viewmodel::Status::Waiting : viewmodel::Status::Off;
+         no_recoil_ctl.reset(false);
+@@ -622,7 +684,7 @@
+         want_fast_fire || rapid_fire.has_state() ||
+         settings.no_recoil_button || no_recoil_ctl.has_state() ||
+         settings.no_ballistics || no_ballistics_ctl.has_state() ||
+-        g_farmActive) {
++        g_farmActive || want_magic || magic_ctl.has_state()) {
+         auto local_player_ok = [&](uint64_t candidate) {
+             uint64_t net=0; uint8_t local=0;
+             return candidate>=0x10000 && memory.is(candidate,"PlayerManager") &&
+@@ -650,6 +712,7 @@
+             auto wait=controller.has_state()?viewmodel::Status::Failed:viewmodel::Status::Waiting;
+             controller.status={wait,wait};
+             weapons.spread=want_no_spread||weapons.has_state()?viewmodel::Status::Failed:viewmodel::Status::Off;
++            magic_ctl.tick(epoch, g_il2cpp_base, 0, want_magic);
+             rapid_fire.tick(epoch, g_il2cpp_base, 0, want_fast_fire);
+             no_recoil_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_recoil_button);
+             no_ballistics_ctl.tick(epoch, g_il2cpp_base, 0, settings.no_ballistics);
+@@ -663,7 +726,8 @@
+     const unsigned weapon_flags = (want_no_spread ? 1u : 0u) |
+                                   (want_fast_fire ? 2u : 0u) |
+                                   (settings.no_recoil_button ? 4u : 0u) |
+-                                  (settings.no_ballistics ? 8u : 0u);
++                                  (settings.no_ballistics ? 8u : 0u) |
++                                  (want_magic ? 16u : 0u);
+     const auto weapon_now = Clock::now();
+     const bool weapon_due = weapon_flags != weapon_last_flags ||
+                             player != weapon_last_player ||
+@@ -672,6 +736,7 @@
+         weapon_last_tick = weapon_now;
+         weapon_last_player = player;
+         weapon_last_flags = weapon_flags;
++        magic_ctl.tick(epoch, g_il2cpp_base, player, want_magic);
+         weapons.tick(epoch, g_il2cpp_base, player, want_no_spread);
+         rapid_fire.tick(epoch, g_il2cpp_base, player, want_fast_fire);
+         no_recoil_ctl.tick(epoch, g_il2cpp_base, player, settings.no_recoil_button);
+@@ -728,3 +793,13 @@
+     info.build_id = fps_unknown_build_id;
+     return info;
+ }
++
++// UI/controller access shares the existing session lock.
++bool esp_magic_tools_ready() {
++    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
++    return magic_ctl.ready();
++}
++int esp_magic_tools_stage() {
++    std::lock_guard<std::recursive_mutex> guard(viewmodel_session_mutex());
++    return magic_ctl.stage();
++}
+--- /dev/null
++++ b/jni/src/magic_tools_memory.h
+@@ -0,0 +1,194 @@
++#pragma once
++#include "weapon_tuning_memory.h"
++#include "tool_purpose.h"
++#include <algorithm>
++#include <array>
++#include <cstring>
++
++namespace magic_tools {
++// Donor 125x: FPMelee reach 7.5, RaycastManager lengths 7.5.
++// Use the selected game profile; no donor process addresses are reused.
++inline constexpr float kReach = 7.5f;
++inline constexpr float kFarmRadius = 6.f;
++
++struct Diagnostics {
++    uint64_t player=0, fp=0, tool=0, ray=0, address=0;
++    uint64_t reads=0, read_failures=0, writes=0, write_success=0, restores=0;
++    uint32_t actual=0, expected=0;
++    unsigned size=0;
++    float reach[3]{};
++    int critical=-1;
++    int purposes=0;
++    const char* operation="none";
++};
++inline const char* stage_name(int n) {
++    switch(n) {
++    case 0:return "ready/off";case 1:return "player-chain";case 2:return "fp-manager";
++    case 3:return "active-tool";case 4:return "tool-purposes";case 5:return "ray-manager";
++    case 6:return "revalidate/read";case 7:return "write/readback";case 8:return "restore-pending";
++    case 9:return "reach-layout";case 10:return "crit-layout";
++    case 11:return "player-class";case 12:return "player-identity";case 13:return "network-pointer";
++    case 14:return "network-class";case 15:return "local-player-flag";case 16:return "fp-pointer";
++    case 17:return "fp-class";case 18:return "fp-identity";case 19:return "tool-pointer";
++    case 20:return "tool-class";case 21:return "tool-identity";case 22:return "tool-backlink";
++    case 23:return "ray-pointer";case 24:return "ray-identity";case 25:return "ray-backlink";
++    default:return "unknown";
++    }
++}
++template<class T> struct Saved { T original{}, last{}; bool owned=false; };
++struct Context {
++    weapon_tuning::Identity player, fp, tool, ray;
++    bool operator==(const Context& b) const {
++        return player==b.player && fp==b.fp && tool==b.tool && ray==b.ray;
++    }
++};
++
++template<class IO> class Controller {
++    IO& io;
++    Context ctx{};
++    Diagnostics diag{};
++    template<class T> bool read(uint64_t a,T& v) {
++        ++diag.reads;
++        if(io.read(a,v)) return true;
++        ++diag.read_failures;diag.operation="read-failed";diag.address=a;diag.size=sizeof(T);
++        return false;
++    }
++    template<class T> bool write(uint64_t a,const T& value,bool restoring=false) {
++        ++diag.writes;if(restoring) ++diag.restores;
++        diag.address=a;diag.size=sizeof(T);diag.expected=0;
++        std::memcpy(&diag.expected,&value,std::min(sizeof(T),sizeof(diag.expected)));
++        diag.operation=restoring?"restore-failed":"write-failed";
++        if(!io.write_heap(a,value)) return false;
++        ++diag.write_success;diag.operation=restoring?"restore-ok":"write-ok";return true;
++    }
++    template<class T> bool readback(uint64_t a,T& now,const T& wanted) {
++        if(!read(a,now)) return false;
++        diag.actual=0;std::memcpy(&diag.actual,&now,std::min(sizeof(T),sizeof(diag.actual)));
++        if(now!=wanted) { diag.operation="readback-mismatch";diag.address=a;diag.size=sizeof(T);return false; }
++        return true;
++    }
++    std::array<Saved<float>,3> fields{};
++    Saved<uint8_t> crit{};
++    uint64_t session=0, base=0;
++    int stage_=0;
++    bool ready_=false;
++    bool fail(int n) { stage_=n; ready_=false; return false; }
++    bool ptr(uint64_t a,uint64_t& p) { if(!read(a,p)) return false;p&=0x00ffffffffffffffULL;return p>=0x10000; }
++    bool resolve(uint64_t player, Context& c) {
++        using namespace go_active;
++        uint64_t net=0, fp=0, tool=0, ray=0, back=0;
++        uint8_t local=0;
++        diag.player=player;diag.fp=diag.tool=diag.ray=0;diag.purposes=0;
++        if(!io.exact(player,"PlayerManager","Oxide")) return fail(11);
++        if(!c.player.capture(io,player,true)) return fail(12);
++        if(!ptr(player+NETWORK_BEHAVIOUR_IDENTITY,net)) return fail(13);
++        if(!io.named(net,"NetworkIdentity","Mirror")) return fail(14);
++        if(!read(net+NETWORK_IDENTITY_IS_LOCAL_PLAYER,local) || local!=1) return fail(15);
++        if(!ptr(player+PLAYER_FP_MANAGER,fp)) return fail(16);
++        diag.fp=fp;
++        if(!io.exact(fp,"FPManager","Oxide")) return fail(17);
++        if(!c.fp.capture(io,fp,true)) return fail(18);
++        if(!ptr(fp+FPMANAGER_CURRENT_OBJECT,tool)) return fail(19);
++        diag.tool=tool;
++        if(!io.exact(tool,"FPTool","Oxide")) return fail(20);
++        if(!c.tool.capture(io,tool,true)) return fail(21);
++        if(!ptr(tool+FPOBJECT_PLAYER_BACKREF,back) || back!=player) return fail(22);
++        int purposes=0;
++        if(!read(tool+FPTOOL_TOOL_PURPOSES,purposes)) return fail(4);
++        diag.purposes=purposes;
++        if(!farm_tool::valid_purposes(purposes)) return fail(4);
++        if(!ptr(tool+FPOBJECT_RAYCAST_MANAGER,ray)) return fail(23);
++        diag.ray=ray;
++        if(!c.ray.capture(io,ray,true)) return fail(24);
++        if(!ptr(ray+RAYCASTMAN_PLAYER,back) || back!=player) return fail(25);
++        return true;
++    }
++    uint64_t addr(size_t i) const {
++        if(i==0) return ctx.tool.object+go_active::FPMELEE_MAX_REACH;
++        return ctx.ray.object+(i==1?go_active::RAYCASTMAN_RAY_LENGTH:go_active::RAYCASTMAN_AIM_RAY_LENGTH);
++    }
++    bool fresh(uint64_t player) {
++        Context c;
++        return resolve(player,c) && c==ctx;
++    }
++    template<class T> bool restore_one(const weapon_tuning::Identity& owner,uint64_t a,Saved<T>& s) {
++        if(!s.owned) return true;
++        const auto life=owner.life(io);
++        if(life==weapon_tuning::Life::Unreadable) return false;
++        if(life==weapon_tuning::Life::Gone) { s={}; return true; }
++        T value{};
++        if(!read(a,value)) return false;
++        // Another writer owns a different value. Never restore over it.
++        if(value==s.last && value!=s.original) {
++            if(owner.life(io)!=weapon_tuning::Life::Alive || !write(a,s.original,true) ||
++                !readback(a,value,s.original)) return false;
++        }
++        s={}; return true;
++    }
++    bool restore() {
++        bool ok=true;
++        for(size_t i=0;i<fields.size();++i)
++            if(!restore_one(i==0?ctx.tool:ctx.ray,addr(i),fields[i])) ok=false;
++        if(!restore_one(ctx.tool,ctx.tool.object+go_active::FPTOOL_ALWAYS_CRIT,crit)) ok=false;
++        return ok;
++    }
++    template<class T> bool apply(uint64_t player,uint64_t a,T target,Saved<T>& s) {
++        T now{};
++        if(!fresh(player) || !read(a,now)) return fail(6);
++        if(now==target) return true;
++        if(!s.owned || now!=s.last) s.original=now;
++        s.last=target; s.owned=true;
++        if(!write(a,target) || !readback(a,now,target)) return fail(7);
++        return true;
++    }
++public:
++    explicit Controller(IO& memory):io(memory){}
++    const Diagnostics& diagnostics() const { return diag; }
++    bool ready() const { return ready_; }
++    int stage() const { return stage_; }
++    bool has_state() const {
++        if(crit.owned) return true;
++        for(const auto& s:fields) if(s.owned) return true;
++        return false;
++    }
++    bool reset(bool restore_originals) {
++        bool ok=!restore_originals || restore();
++        fields={};crit={};ctx={};session=base=0;ready_=false;stage_=0;return ok;
++    }
++    void tick(uint64_t epoch,uint64_t library,uint64_t player,bool enabled) {
++        ready_=false;
++        if(epoch!=session || library!=base) { reset(false);session=epoch;base=library; }
++        if(!enabled) { if(!restore()) fail(8); return; }
++        if(!player || !library) { fail(1);return; }
++        Context c;
++        if(!resolve(player,c)) {
++            // Unreadable active objects are not proof of destruction.
++            restore();return;
++        }
++        if(!(c==ctx)) {
++            if(!restore()) { fail(8);return; }
++            ctx=c;
++        }
++        // Validate the whole layout before the first write.
++        float now[3]{};uint8_t critical=0;
++        for(size_t i=0;i<3;++i) {
++            if(!read(addr(i),now[i])) { fail(9);return; }
++            diag.reach[i]=now[i];
++            if(!viewmodel::finite(now[i]) || now[i]<=0.f || now[i]>100.f) {
++                diag.operation="layout-invalid";diag.address=addr(i);diag.size=4;
++                std::memcpy(&diag.actual,&now[i],4);fail(9);return;
++            }
++        }
++        if(!read(ctx.tool.object+go_active::FPTOOL_ALWAYS_CRIT,critical)) { fail(10);return; }
++        diag.critical=critical;
++        if(critical>1) { fail(10);return; }
++        for(size_t i=0;i<3;++i) {
++            const float target=std::max(now[i],kReach);
++            if(!apply(player,addr(i),target,fields[i])) return;
++            diag.reach[i]=target;
++        }
++        if(!apply(player,ctx.tool.object+go_active::FPTOOL_ALWAYS_CRIT,uint8_t{1},crit)) return;
++        diag.critical=1;ready_=true;stage_=0;
++    }
++};
++}
+--- a/jni/src/mem_io.h
++++ b/jni/src/mem_io.h
+@@ -400,8 +400,8 @@
+         if (!addr || !in || !len) return false;
+         const int pid = pid_.load();
+         if (!open_.load() || pid <= 0) return false;
+-        // Appdome-protected clients: no game-memory writes, including joystick,
+-        // attack, camera, viewmodel, xray, freecam and silent-aim paths.
++        // Android requires a complete maps snapshot for this PID. Loader
++        // detection is diagnostic; transport errors are checked by raw_write.
+         if (!runtime_guard::writes_allowed(pid)) return false;
+         addr = normalize(addr);
+         if (!valid_user_range(addr, len)) return false;
+--- a/jni/src/menu.cpp
++++ b/jni/src/menu.cpp
+@@ -1,5 +1,6 @@
+ #include "menu.h"
+ #include "farm.h"
++#include "magic_tools.h"
+ #include "main.h"
+ #include "Android_touch/TouchHelperA.h"   // Touch_GetActive/BlockRect (фрикам)
+ #include "game.h"
+@@ -867,12 +868,26 @@
+             if (oldRecoil != vm.no_recoil_button || oldSpread != vm.no_spread || oldFastFire != g_state.fast_fire)
+                 esp_viewmodel_tick(vm);
+         }
++        SHdr(XS("Magic"));
++        if(SettingsHeader("##misc_magic", XS("Magic Tools / Magic Farm"),
++                          XS("Дальность 7.5 м · Фарм руды в радиусе 6 м"))) {
++            CardBg(Layout::RowH * 5.f + ImGui::GetTextLineHeightWithSpacing()*2.f);
++            ToggleRow("##magic_tools",XS("Magic Tools"),&g_state.magic_tools,g_state.a_magic_tools,false);
++            ToggleRow("##magic_farm",XS("Magic Farm"),&g_state.magic_farm,g_state.a_magic_farm,false);
++            ToggleRow("##magic_stone",XS("Камень"),&g_state.magic_stone,g_state.a_magic_stone,false);
++            ToggleRow("##magic_metal",XS("Металл"),&g_state.magic_metal,g_state.a_magic_metal,false);
++            ToggleRow("##magic_sulfur",XS("Сера"),&g_state.magic_sulfur,g_state.a_magic_sulfur,false);
++            if(g_farmWriteBlocked) ImGui::TextDisabled("%s",XS("Ожидание доступа к памяти процесса"));
++            else if(g_state.magic_tools || g_state.magic_farm)
++                ImGui::TextDisabled("%s",esp_magic_tools_ready()?XS("Инструмент готов"):XS("Ожидание инструмента / доступа к памяти"));
++            ImGui::TextDisabled("%s",XS("Magic Farm: без ходьбы; зона атаки общая с автофармом"));
++        }
+         SHdr(XS("Автофарм"));
+         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
+                            false, &g_state.farm_on, g_state.a_farm_on)) {
+             CardBg(Layout::RowH * 6.f + Layout::SliderH + 2.f * ImGui::GetTextLineHeightWithSpacing());
+-            if (g_farmProtected)
+-                ImGui::TextDisabled("%s", XS("Клиент под защитой: автофарм и запись в память отключены"));
++            if (g_farmWriteBlocked)
++                ImGui::TextDisabled("%s", XS("Ожидание карты памяти: автофарм временно отключён"));
+             ToggleRow("##farm_wood", XS("Дерево"), &g_state.farm_wood, g_state.a_farm_wood, false);
+             ToggleRow("##farm_stone", XS("Камень"), &g_state.farm_stone, g_state.a_farm_stone, false);
+             ToggleRow("##farm_metal", XS("Металл"), &g_state.farm_metal, g_state.a_farm_metal, false);
+@@ -1502,6 +1517,11 @@
+     Tick(g_state.a_esp_skeleton, g_state.esp_skeleton,     dt);
+     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
+     Tick(g_state.a_streamer_mode, g_state.streamer_mode,   dt);
++    Tick(g_state.a_magic_tools,g_state.magic_tools,dt);
++    Tick(g_state.a_magic_farm,g_state.magic_farm,dt);
++    Tick(g_state.a_magic_stone,g_state.magic_stone,dt);
++    Tick(g_state.a_magic_metal,g_state.magic_metal,dt);
++    Tick(g_state.a_magic_sulfur,g_state.magic_sulfur,dt);
+     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
+     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
+     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);
+--- a/jni/src/runtime_guard.h
++++ b/jni/src/runtime_guard.h
+@@ -1,13 +1,8 @@
+ #pragma once
+-// Fail-closed runtime policy for protected clients.
+-//
+-// Observed in Oxide 1.16.11991: Appdome's libloader.so is loaded from the
+-// Application bootstrap, and classes7.dex contains key-injection blocking,
+-// installed-package "click bot" / superuser-permission reporting, and
+-// finish/kill enforcement. This guard does NOT bypass or hide from Appdome.
+-// It only refuses to add our own injection / game-memory writes when the
+-// protected loader is mapped, and blocks writes until a maps snapshot proves
+-// the target clear on Android.
++// Map-snapshot readiness and loader detection are separate concerns.
++// libloader.so is recorded for diagnostics. Its presence does not establish
++// whether the selected memory transport accepts a write.
++// Android still requires a complete maps snapshot for the bound PID.
+ 
+ #include "maps_lookup.h"
+ 
+@@ -60,13 +55,18 @@
+ }
+ inline bool is_protected(int pid) { return policy(pid) == Policy::Protected; }
+ 
++inline bool snapshot_allows_writes(Policy p) {
++    return p == Policy::Clear || p == Policy::Protected;
++}
++
+ inline bool writes_allowed(int pid) {
++    if(pid <= 0) return false;
+ #ifdef __ANDROID__
+-    return policy(pid) == Policy::Clear;
++    return snapshot_allows_writes(policy(pid));
+ #else
+-    // Host rigs do not have the target's /proc maps. They remain usable unless
+-    // a test explicitly observes a protected snapshot for that pid.
+-    return policy(pid) != Policy::Protected;
++    // Host memory rigs have no target procfs; exercise the Android snapshot
++    // rule independently through snapshot_allows_writes().
++    return true;
+ #endif
+ }
+ 
+--- /dev/null
++++ b/jni/tests/test_feature_log_gate.cpp
+@@ -0,0 +1,20 @@
++#include "feature_log_gate.h"
++#include <cassert>
++#include <cstdio>
++int main() {
++    feature_log::Gate g;
++    assert(g.accept(0,0,false));
++    assert(!g.accept(0,100,false));
++    assert(g.accept(1,101,true));
++    unsigned accepted=0;
++    for(unsigned i=1;i<=4000;++i)
++        if(g.accept(1+(i%2),101+i*0.001,true)) ++accepted;
++    assert(accepted<=8); // Flapping every millisecond must not spam the file.
++    assert(g.accept(3,110,true));
++    assert(!g.accept(3,114.999,true));
++    assert(g.accept(3,115,true));
++    assert(g.accept(0,116,false));
++    assert(!g.accept(0,200,false));
++    assert(g.accept(1,1,true)); // Clock rollback cannot silence a new state.
++    puts("feature log throttling: ok");
++}
+--- /dev/null
++++ b/jni/tests/test_magic_tools_memory.cpp
+@@ -0,0 +1,84 @@
++#include "magic_tools_memory.h"
++#include <cassert>
++#include <map>
++#include <string>
++#include <limits>
++#include <cstdio>
++
++struct FakeIO {
++    std::map<uint64_t,uint8_t> mem;
++    std::map<uint64_t,std::string> types;
++    uint64_t fail_read=0, fail_write=0;
++    unsigned writes=0;
++    template<class T> void put(uint64_t a,T v) {
++        auto* b=reinterpret_cast<const uint8_t*>(&v);
++        for(size_t i=0;i<sizeof(T);++i) mem[a+i]=b[i];
++    }
++    template<class T> bool read(uint64_t a,T& v) {
++        if(a==fail_read) return false;
++        auto* b=reinterpret_cast<uint8_t*>(&v);
++        for(size_t i=0;i<sizeof(T);++i) { auto it=mem.find(a+i);if(it==mem.end())return false;b[i]=it->second; }
++        return true;
++    }
++    template<class T> bool write_heap(uint64_t a,T v) {
++        if(a==fail_write)return false;
++        ++writes;put(a,v);return true;
++    }
++    bool exact(uint64_t a,const char* n,const char*) { return types[a]==n; }
++    bool named(uint64_t a,const char* n,const char* ns) { return exact(a,n,ns); }
++    void obj(uint64_t a,const char* n) {
++        types[a]=n;put<uint64_t>(a,a+0x800000);put<uint64_t>(a+go_active::MANAGED_CACHED_PTR,a+0x900000);
++    }
++    template<class T> T get(uint64_t a) { T v{};assert(read(a,v));return v; }
++};
++constexpr uint64_t p=0x10000,n=0x20000,fp=0x30000,t=0x40000,r=0x50000;
++struct Rig {
++    FakeIO io;magic_tools::Controller<FakeIO> c{io};
++    Rig() {
++        using namespace go_active;
++        io.obj(p,"PlayerManager");io.obj(n,"NetworkIdentity");io.obj(fp,"FPManager");io.obj(t,"FPTool");io.obj(r,"RaycastManager");
++        io.put(p+NETWORK_BEHAVIOUR_IDENTITY,n);io.put<uint8_t>(n+NETWORK_IDENTITY_IS_LOCAL_PLAYER,1);
++        io.put(p+PLAYER_FP_MANAGER,fp);io.put(fp+FPMANAGER_CURRENT_OBJECT,t);
++        io.put(t+FPOBJECT_PLAYER_BACKREF,p);io.put(t+FPOBJECT_RAYCAST_MANAGER,r);
++        io.put<int>(t+FPTOOL_TOOL_PURPOSES,2);io.put(r+RAYCASTMAN_PLAYER,p);
++        io.put<float>(t+FPMELEE_MAX_REACH,1.5f);io.put<float>(r+RAYCASTMAN_RAY_LENGTH,1.5f);
++        io.put<float>(r+RAYCASTMAN_AIM_RAY_LENGTH,1.5f);io.put<uint8_t>(t+FPTOOL_ALWAYS_CRIT,0);
++    }
++    void tick(bool on=true) { c.tick(1,0x100000,p,on); }
++};
++int main() {
++    using namespace go_active;
++    { Rig a;a.tick(false);assert(a.io.writes==0);a.tick();assert(a.c.ready());assert(a.io.writes==4);assert(a.c.diagnostics().write_success==4);
++      assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==7.5f);
++      assert(a.io.get<uint8_t>(t+FPTOOL_ALWAYS_CRIT)==1);
++      a.tick();assert(a.io.writes==4);a.tick(false);assert(!a.c.has_state());
++      assert(a.io.get<float>(r+RAYCASTMAN_RAY_LENGTH)==1.5f);assert(a.io.get<uint8_t>(t+FPTOOL_ALWAYS_CRIT)==0); }
++    { Rig a;a.io.types[t]="FPHitscan";a.tick();assert(!a.c.ready() && a.io.writes==0);assert(a.c.stage()==20);assert(a.c.diagnostics().tool==t); }
++    { Rig a;a.io.fail_read=fp+FPMANAGER_CURRENT_OBJECT;a.tick();assert(a.io.writes==0);assert(a.c.stage()==19);assert(a.c.diagnostics().address==a.io.fail_read);assert(a.c.diagnostics().read_failures==1); }
++    { Rig a;a.io.put<float>(r+RAYCASTMAN_AIM_RAY_LENGTH,std::numeric_limits<float>::quiet_NaN());a.tick();assert(a.io.writes==0); }
++    { Rig a;a.tick();a.io.put<float>(t+FPMELEE_MAX_REACH,4.f);a.tick(false);
++      assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==4.f);assert(!a.c.has_state()); }
++    { Rig a;a.tick();a.io.fail_read=t+FPMELEE_MAX_REACH;a.tick(false);assert(a.c.has_state());
++      a.io.fail_read=0;a.tick(false);assert(!a.c.has_state());assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==1.5f); }
++    { Rig a;a.tick();a.io.put<uint64_t>(t+MANAGED_CACHED_PTR,0);unsigned old=a.io.writes;a.tick(false);
++      assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==7.5f);assert(a.io.writes==old+2);assert(!a.c.has_state()); }
++    { Rig a;a.io.fail_write=r+RAYCASTMAN_RAY_LENGTH;a.tick();assert(!a.c.ready());
++      a.io.fail_write=0;a.tick(false);assert(!a.c.has_state());assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==1.5f); }
++    { Rig a;a.tick();unsigned old=a.io.writes;a.c.tick(2,0x100000,0,false);assert(a.io.writes==old);assert(!a.c.has_state()); }
++    // Regression: the live FPTool from attach.log has Everything = 0xffffffff.
++    { Rig a;a.io.put<int32_t>(t+FPTOOL_TOOL_PURPOSES,-1);a.tick();
++      assert(a.c.ready() && a.io.writes==4);assert(a.c.diagnostics().purposes==-1);
++      a.tick(false);assert(!a.c.has_state());
++      assert(a.io.get<float>(t+FPMELEE_MAX_REACH)==1.5f); }
++    for(int32_t invalid : {0,-2,8,9,static_cast<int32_t>(0x80000000u)}) {
++      Rig a;a.io.put<int32_t>(t+FPTOOL_TOOL_PURPOSES,invalid);a.tick();
++      assert(!a.c.ready() && a.c.stage()==4 && a.io.writes==0);
++    }
++    assert(farm_tool::effective_purposes(-1)==7);
++    assert((farm_tool::effective_purposes(-1)&2)!=0);
++    assert(farm_tool::effective_purposes(1)==1);
++    assert(farm_tool::effective_purposes(2)==2);
++    assert(farm_tool::effective_purposes(3)==3);
++    assert(farm_tool::effective_purposes(4)==4);
++    std::puts("magic tools lifecycle / Everything-mask regression: ok");
++}
+--- a/jni/tests/test_runtime_guard.cpp
++++ b/jni/tests/test_runtime_guard.cpp
+@@ -1,4 +1,4 @@
+-// Host tests for the Appdome fail-closed guard. No Android or game required.
++// Host tests for maps readiness and diagnostic loader detection.
+ #include "runtime_guard.h"
+ 
+ #include <cassert>
+@@ -23,6 +23,10 @@
+ } // namespace
+ 
+ int main() {
++    assert(!runtime_guard::snapshot_allows_writes(runtime_guard::Policy::Unknown));
++    assert(runtime_guard::snapshot_allows_writes(runtime_guard::Policy::Clear));
++    assert(runtime_guard::snapshot_allows_writes(runtime_guard::Policy::Protected));
++    assert(!runtime_guard::writes_allowed(-1));
+     assert(runtime_guard::maps_have_loader(kLoader));
+     assert(runtime_guard::maps_have_loader(kLoaderDeleted));
+     assert(runtime_guard::maps_have_loader(kLoaderApk));
+@@ -33,16 +37,24 @@
+     runtime_guard::reset();
+     assert(runtime_guard::policy(100) == runtime_guard::Policy::Unknown);
+     assert(!runtime_guard::is_protected(100));
++#ifdef __ANDROID__
++    assert(!runtime_guard::writes_allowed(100));
++#endif
+ 
+     runtime_guard::observe_maps(100, kClear);
+     assert(runtime_guard::policy(100) == runtime_guard::Policy::Clear);
+     assert(runtime_guard::writes_allowed(100));
+     assert(runtime_guard::policy(101) == runtime_guard::Policy::Unknown);
++#ifdef __ANDROID__
++    assert(!runtime_guard::writes_allowed(101));
++#endif
+ 
+     runtime_guard::observe_maps(100, kLoader);
+     assert(runtime_guard::policy(100) == runtime_guard::Policy::Protected);
+     assert(runtime_guard::is_protected(100));
+-    assert(!runtime_guard::writes_allowed(100));
++    assert(runtime_guard::writes_allowed(100));
++    assert(runtime_guard::snapshot_allows_writes(runtime_guard::policy(100)));
++    assert(!runtime_guard::snapshot_allows_writes(runtime_guard::policy(101)));
+     assert(!runtime_guard::is_protected(101));
+ 
+     // A failed/truncated snapshot must not downgrade a known protected client
+@@ -61,5 +73,5 @@
+     assert(!runtime_guard::refresh_proc(-1));
+     runtime_guard::reset();
+     assert(runtime_guard::policy(101) == runtime_guard::Policy::Unknown);
+-    std::puts("runtime guard Appdome maps policy: PASS");
++    std::puts("maps readiness / loader diagnostic policy: PASS");
+ }

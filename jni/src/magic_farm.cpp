@@ -4,6 +4,7 @@
 #include "farm_joy.h"
 #include "game.h"
 #include "process.h"
+#include "runtime_guard.h"
 #include "app_state.h"
 #include <atomic>
 #include <condition_variable>
@@ -63,7 +64,8 @@ public:
         if (stop_) return;
         const bool same=pid_==pid && base_==base;
         if (same) {
-            if (context_ || loading_==State::Loading || now_ns()<retry_after_) return;
+            if (context_ || loading_==State::Loading || loading_==State::ProtectedClient ||
+                now_ns()<retry_after_) return;
         } else {
             retry_after_=0;load_failures_=0;
         }
@@ -85,7 +87,7 @@ public:
         }
         if (!esp_silent_target(pid) || !esp_silent_read(context,&remote,sizeof(remote)) ||
             remote.magic!=kMagic || remote.abi!=kAbi || remote.size!=sizeof(Shared) ||
-            remote.state>static_cast<unsigned>(State::Unavailable)) return State::LoadFailed;
+            remote.state>static_cast<unsigned>(State::ProtectedClient)) return State::LoadFailed;
         return static_cast<State>(remote.state);
     }
     bool publish(const Command& command) {
@@ -129,6 +131,8 @@ void release() {farmjoy::release();g_farmPhase=0;}
 
 State status() {return ui.load();}
 const char* status_text() {
+    if (runtime_guard::is_protected(g_target_pid))
+        return "Magic Farm: клиент под защитой · инъекция и запись в память отключены";
     switch (status()) {
     case State::Idle:return "Magic Farm: ожидание";
     case State::Loading:return "Magic Farm: подключение";
@@ -146,6 +150,7 @@ const char* status_text() {
     case State::NoProgress:return "Magic Farm: сервер не подтвердил добычу";
     case State::Stuck:return "Magic Farm: цель недоступна";
     case State::Exception:return "Magic Farm: ошибка обработки в игре";
+    case State::ProtectedClient:return "Magic Farm: клиент под защитой · инъекция и запись в память отключены";
     default:return "Magic Farm: ожидание актуальных данных";
     }
 }
@@ -159,6 +164,10 @@ void Update(float dt) {
     dt=finite(dt)?std::max(0.f,std::min(dt,0.1f)):0.016f;
     farmjoy::tick(dt);
     if (g_target_pid!=session_pid) {Stop();session_pid=g_target_pid;}
+    if (runtime_guard::is_protected(g_target_pid)) {
+        client().clear();release();g_farmActive=false;g_farmPaused=true;g_farmPhase=0;
+        ui=State::ProtectedClient;return;
+    }
     unsigned mask=0;
     if (g_state.farm_on) {
         if (g_state.farm_wood) mask|=1;

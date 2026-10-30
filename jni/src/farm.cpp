@@ -12,6 +12,8 @@
 #include "esp_draw.h"            // FrameBoxes
 #include "menu.h"                // g_calibMode
 #include "process.h"             // g_esp_attached
+#include "runtime_guard.h"
+#include <chrono>
 #include <cmath>
 
 // Главный принцип: КАМЕРА НАВОДИТСЯ РОВНО В КРЕСТИК, И УДАРЫ ИДУТ ПО НЕМУ.
@@ -72,6 +74,7 @@ int  g_farmToolHave = 0;     // флаги ToolPurpose орудия в рука�
 int  g_farmToolNeed = 0;     // какие умения запросили отброшенные узлы
 int  g_farmXp = 0;           // сколько опыта даёт текущий узел (0 = неизвестно)
 bool g_farmBlocked = false;  // узел перекрыт: луч игры упёрся ближе точки прицела
+bool g_farmProtected = false; // Appdome libloader.so: не инжектим и не пишем в игру
 
 
 
@@ -226,6 +229,30 @@ static void UpdateFarmInner(float dt);
 
 void UpdateFarm(float dt) {
     static bool magic = false;
+#ifdef __ANDROID__
+    static int checked_pid = -1;
+    static auto next_check = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (g_target_pid != checked_pid || now >= next_check) {
+        runtime_guard::refresh_proc(g_target_pid);
+        checked_pid = g_target_pid;
+        next_check = now + std::chrono::seconds(1);
+    }
+#endif
+    if (runtime_guard::is_protected(g_target_pid)) {
+        if (!g_farmProtected) {
+            // Release the normal controller's cached press/movement state once.
+            const bool enabled = g_state.farm_on;
+            g_state.farm_on = false; UpdateFarmInner(dt); g_state.farm_on = enabled;
+            magicfarm::Stop();
+            magic = false;
+        }
+        farmjoy::release();
+        g_farmActive = false; g_farmPaused = true; g_farmPhase = 0;
+        g_farmProtected = true;
+        return;
+    }
+    g_farmProtected = false;
     if (g_state.farm_magic != magic) {
         magicfarm::Stop();
         const bool enabled=g_state.farm_on;

@@ -837,17 +837,19 @@ static int get_base_candidates(const char* lib, uint64_t* out, int max) {
     if (fd >= 0) {
         std::string text;
         char chunk[8192];
+        bool complete = true;
         for (;;) {
             const ssize_t n = read(fd, chunk, sizeof(chunk));
             if (n > 0) {
                 text.append(chunk, (size_t)n);
-                if (text.size() > (8u << 20)) break;
+                if (text.size() > (8u << 20)) { complete = false; break; }
                 continue;
             }
             if (n < 0 && errno == EINTR) continue;
             break;
         }
         close(fd);
+        runtime_guard::observe_maps(g_pid, text, complete);
         count = maps::lookup_library_bases(text, lib, out, max);
     }
     if (g_mem_backend == ESP_MEM_DITPRO && count < max) {
@@ -9414,6 +9416,7 @@ void esp_reset() {
     silent_aim::clear();
     esp_viewmodel_reset(false); // process lost: never restore to a reused address
     g_mem.unbind();
+    runtime_guard::reset();
     g_attach_state = ESP_ATTACH_OK;
     g_pid = -1; g_il2cpp_base = 0;
     g_native_camera = 0;

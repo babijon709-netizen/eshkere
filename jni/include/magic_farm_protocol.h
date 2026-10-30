@@ -11,7 +11,7 @@ constexpr std::uint64_t kLeaseNs = 200000000ULL;
 enum class State : std::uint32_t {
     Idle, Loading, Ready, Sent, OutOfReach, Blocked, NoTool, NoTarget,
     WrongBuild, NoAccess, LoadFailed, HookFailed, InvalidCommand, Exception,
-    NoProgress, Moving, Stuck, Unavailable
+    NoProgress, Moving, Stuck, Unavailable, ProtectedClient
 };
 struct Vec { float x{}, y{}, z{}; };
 struct Command {

@@ -22,6 +22,7 @@ extern int  g_farmToolHave;   // что умеет орудие в руках (�
 extern int  g_farmToolNeed;   // что нужно ближайшим узлам (флаги ToolPurpose)
 extern int  g_farmXp;         // опыт за текущий узел
 extern bool g_farmBlocked;    // узел перекрыт
+extern bool g_farmProtected;  // клиент под Appdome: автофарм и запись в память запрещены
 
 // Калибровка зон вводом с экрана (меню прячется, тап записывает точку):
 // 0 — нет, 1 — (снят: зона джойстика автофарма — стик ходит через память,

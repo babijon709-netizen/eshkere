@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include "runtime_guard.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -396,7 +398,11 @@ public:
 
     bool write(uint64_t addr, const void* in, size_t len) {
         if (!addr || !in || !len) return false;
-        if (!open_.load() || pid_.load() <= 0) return false;
+        const int pid = pid_.load();
+        if (!open_.load() || pid <= 0) return false;
+        // Appdome-protected clients: no game-memory writes, including joystick,
+        // attack, camera, viewmodel, xray, freecam and silent-aim paths.
+        if (!runtime_guard::writes_allowed(pid)) return false;
         addr = normalize(addr);
         if (!valid_user_range(addr, len)) return false;
         if (!raw_write(addr, in, len)) return false;

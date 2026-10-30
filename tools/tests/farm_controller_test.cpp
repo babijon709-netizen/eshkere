@@ -6,6 +6,7 @@
 #include "game.h"
 #include "esp_draw.h"
 #include "magic_farm_loader.h"
+#include "runtime_guard.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
@@ -21,6 +22,7 @@ static unsigned long long last_preferred = 0;
 static std::vector<unsigned long long> blacklisted;
 static bool byte_held = false, fail_press = false;
 static int attacks_on = 0, attacks_off = 0, releases = 0;
+static int load_calls = 0;
 
 const std::vector<EspBox>& FrameBoxes(float, float) { static std::vector<EspBox> boxes; return boxes; }
 void esp_farm_set_resources(unsigned) {}
@@ -35,7 +37,7 @@ bool esp_silent_target(int) { return false; }
 bool esp_silent_read(uint64_t, void*, size_t) { return false; }
 bool esp_silent_write(uint64_t, const void*, size_t) { return false; }
 namespace magicfarm {
-Loaded load_module(int, std::uintptr_t) { return {0, State::LoadFailed}; }
+Loaded load_module(int, std::uintptr_t) { ++load_calls; return {0, State::LoadFailed}; }
 }
 void esp_farm_blacklist(unsigned long long id, float) { blacklisted.push_back(id); }
 bool esp_mem_aim_look_params(float&, bool&, bool&) { return false; }
@@ -136,5 +138,30 @@ int main() {
     assert(!byte_held && blacklisted.empty());
     g_state.farm_on = false;
     step();
-    std::puts("farm controller ray loss, remaining HP and attack safety: PASS");
+
+    // Appdome preflight: a mapped libloader.so pauses both controllers and
+    // refuses Magic injection. Clearing the snapshot resumes the normal path.
+    node.ray_foreign = false;
+    node.ray_self = node.ray_valid = true;
+    node.continuous_tool = true;
+    g_state.farm_on = true;
+    g_state.farm_magic = false;
+    runtime_guard::reset();
+    step(2);
+    assert(byte_held);
+    const int loads_before = load_calls;
+    const int releases_before = releases;
+    runtime_guard::observe_maps(g_target_pid,
+        "7000000000-7000001000 r-xp 00000000 fd:00 123 /data/app/lib/arm64/libloader.so\n");
+    g_state.farm_magic = true;
+    step(3);
+    assert(g_farmProtected && g_farmPaused && !byte_held);
+    assert(releases > releases_before && load_calls == loads_before);
+    g_state.farm_magic = false;
+    runtime_guard::observe_maps(g_target_pid,
+        "7000000000-7000001000 r-xp 00000000 fd:00 123 /data/app/lib/arm64/libil2cpp.so\n");
+    step(3);
+    assert(!g_farmProtected && byte_held);
+    runtime_guard::reset();
+    std::puts("farm controller ray loss, remaining HP, attack safety and Appdome guard: PASS");
 }

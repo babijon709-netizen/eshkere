@@ -1,6 +1,7 @@
 #include "process.h"
 #include "game.h"
 #include "maps_lookup.h"
+#include "runtime_guard.h"
 #include "scoped_text.h"
 
 #include <atomic>
@@ -96,17 +97,19 @@ static int proc_libil2cpp(pid_t pid) {
     if (fd < 0) return -1;
     std::string text;
     char buf[8192];
+    bool complete = true;
     for (;;) {
         const ssize_t n = read(fd, buf, sizeof(buf));
         if (n > 0) {
             text.append(buf, (size_t)n);
-            if (text.size() > (8u << 20)) break;   // столько карта не занимает
+            if (text.size() > (8u << 20)) { complete = false; break; }
             continue;
         }
         if (n < 0 && errno == EINTR) continue;
         break;
     }
     close(fd);
+    runtime_guard::observe_maps(pid, text, complete);
     uint64_t bases[4] = {};
     return maps::lookup_library_bases(text, BW_TEXT("libil2cpp.so").c_str(), bases, 4) > 0 ? 1 : 0;
 }

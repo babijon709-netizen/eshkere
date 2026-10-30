@@ -25,6 +25,8 @@
 #include <string>
 
 AppState g_state;
+pid_t g_target_pid = -1;
+bool g_farmProtected = false;
 InputState g_input;
 bool menu_open = true;
 ConfigEntry g_configs[kMaxConfigs];

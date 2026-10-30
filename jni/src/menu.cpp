@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "farm.h"
 #include "magic_farm.h"
 #include "main.h"
 #include "Android_touch/TouchHelperA.h"   // Touch_GetActive/BlockRect (фрикам)
@@ -870,7 +871,9 @@ float TabContent(int tab, float dt, float cW) {
         SHdr(XS("Автофарм"));
         if (SettingsHeader("##misc_farm", XS("Автофарм"), XS("Ресурсы, дальность и зона огня"),
                            false, &g_state.farm_on, g_state.a_farm_on)) {
-            CardBg(Layout::RowH * 6.f + Layout::SliderH + ImGui::GetTextLineHeightWithSpacing());
+            CardBg(Layout::RowH * 6.f + Layout::SliderH + 2.f * ImGui::GetTextLineHeightWithSpacing());
+            if (g_farmProtected)
+                ImGui::TextDisabled("%s", XS("Клиент под защитой: автофарм и запись в память отключены"));
             ToggleRow("##farm_magic", XS("Magic Farm"), &g_state.farm_magic, g_state.a_farm_magic, false, true);
             if (g_state.farm_magic) ImGui::TextDisabled("%s", magicfarm::status_text());
             ToggleRow("##farm_wood", XS("Дерево"), &g_state.farm_wood, g_state.a_farm_wood, false);

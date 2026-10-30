@@ -1,6 +1,7 @@
 // Android arm64 root loader. No process hiding or security-policy changes.
 #include "magic_farm_loader.h"
 #include "magic_farm_profile.h"
+#include "runtime_guard.h"
 #include <android/dlext.h>
 #include <dlfcn.h>
 #include <elf.h>
@@ -193,6 +194,16 @@ Loaded load_module(int pid,std::uintptr_t game_base) {
     logf("magic: load pid=%d base=%#llx module=%zu bytes\n",pid,
          static_cast<unsigned long long>(game_base),sizeof(module_bytes));
     if (pid<=0 || !game_base || geteuid()!=0) {logf("magic: no access uid=%d\n",geteuid());return {0,State::NoAccess};}
+    // Preflight before ptrace: Appdome's libloader.so is a client-side RASP.
+    // Refuse injection instead of adding hooks it is built to report.
+    if (!runtime_guard::refresh_proc(pid)) {
+        logf("magic: maps preflight unreadable pid=%d\n",pid);
+        return {0,State::NoAccess};
+    }
+    if (runtime_guard::is_protected(pid)) {
+        logf("magic: protected client pid=%d libloader.so mapped; injection refused\n",pid);
+        return {0,State::ProtectedClient};
+    }
     const int tid=unity_thread(pid);
     if (tid<0) {logf("magic: UnityMain not found\n");return {0,State::NoAccess};}
     const auto mmap_fn=remote_function(pid,reinterpret_cast<void*>(&mmap));

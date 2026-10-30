@@ -99,13 +99,19 @@ bool read_proc_maps(pid_t pid, std::string& out) {
         if (got < 0) {
             if (errno == EINTR) continue;
             ::close(fd);
+            runtime_guard::observe_maps(pid, "", false);
             return false;
         }
         if (got == 0) break;
-        if (out.size() + (size_t)got > (8u << 20)) { ::close(fd); return false; }
+        if (out.size() + (size_t)got > (8u << 20)) {
+            ::close(fd);
+            runtime_guard::observe_maps(pid, out, false);
+            return false;
+        }
         out.append(buffer, (size_t)got);
     }
     ::close(fd);
+    runtime_guard::observe_maps(pid, out, true);
     return !out.empty();
 }
 

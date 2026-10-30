@@ -6833,7 +6833,7 @@ static bool read_player_armor_icons(uint64_t player, const PlayerAux& aux,
     const uint64_t holder = managed_object_native(
         rd_ptr(model_info + MODELINFO_EQUIPMENT_HOLDER));
     const uint64_t head_socket = managed_object_native(rd_ptr(model_info + MODELINFO_HEAD));
-    const uint64_t head_model = managed_object_native(rd_ptr(model_info + game_offsets::MODELINFO_HEAD_MODEL));
+    const uint64_t head_model = managed_object_native(rd_ptr(model_info + go_active::MODELINFO_HEAD_MODEL));
     if (!valid_obj(holder) && !valid_obj(head_socket) && !valid_obj(head_model)) return false;
     if (!ensure_gameobject_name_offset(player)) return false;
 
@@ -7209,8 +7209,9 @@ static void char_speed_refresh() {
     const uint64_t kcc = resolve_player_kcc(g_local_player);
     if (!kcc) return;
     CharSpeed fresh{};
-    if (!read_char_speed(rd_ptr(kcc + CHAR_SPEED_CONFIG_KCC), fresh) &&
-        !read_char_speed(rd_ptr(kcc + CHAR_SPEED_CONFIG_SINGLE_KCC), fresh)) return;
+    // 11993: одиночный конфиг остался один — SINGLE_KCC это алиас 0x80,
+    // второй вариант раскладки больше не нужен.
+    if (!read_char_speed(rd_ptr(kcc + CHAR_SPEED_CONFIG_KCC), fresh)) return;
     g_char_speed = fresh;
     // Потолки предикта цели едут за ассетом: спринт конфига плюс небольшой
     // запас на спуск с горы и сжатые сетевые тики.

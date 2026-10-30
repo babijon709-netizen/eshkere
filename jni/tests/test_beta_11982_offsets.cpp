@@ -26,59 +26,59 @@ T get(const std::array<unsigned char, N>& data, std::size_t offset) {
 
 void expect_release() {
     assert(go_active::selected_version == GameVersion::Release);
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE60B7B8);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE60B780);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE606888);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE60AA70);
-    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE60AB38);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE9126C8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE912690);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE90D9A8);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE9119D8);
+    assert(go_active::NETWORK_SERVER_TYPEINFO_RVA == 0xE911AA0);
     assert(go_active::NETWORK_CLIENT_STATICS_RVA == 0);
-    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE60AB50);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE61AB58);
+    assert(go_active::NETWORK_TIME_TYPEINFO_RVA == 0xE911AB8);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE918AC0);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE922C70);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE612F58);
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE600000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE630000);
-    assert(go_active::PLAYER_TRANSFORM == 0x68);
-    assert(go_active::PLAYER_POSITION == 0x1F4);
-    assert(go_active::PLAYER_CHARACTER_MODEL == 0x150);
-    assert(go_active::PLAYER_NICKLABEL == 0x130);
-    assert(go_active::PLAYER_DISPLAY_NAME == 0x240);
-    assert(go_active::PLAYER_VOICE_STATE == 0x338);
-    assert(go_active::PLAYER_VOICE_PLAYER == 0x140);
-    assert(go_active::PLAYER_EVENT_HANDLER == 0x78);
-    assert(go_active::PLAYER_MANAGER_RESPAWNING == 0x228);
-    assert(go_active::PLAYER_DEATH_HANDLER == 0x80);
-    assert(go_active::PLAYER_VITALS == 0xC8);
-    assert(go_active::PLAYER_UKX == 0x260);
-    assert(go_active::PLAYER_MODEL_INFO_REF == 0x260);
-    assert(go_active::PLAYER_INVENTORY == 0x98);
-    assert(go_active::PLAYER_WEAPON_REFERENCE == 0xF0);
-    assert(go_active::PLAYER_WEAPONS_ARRAY == 0x1B8);
-    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
-    assert(go_active::PLAYERWEAPON_PIECE == 0x130);
-    assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
-    assert(go_active::PLAYER_FP_MANAGER == 0x90);
-    assert(go_active::PLAYER_MOUSE_LOOK == 0x70);
-    assert(go_active::PLAYER_RAYCAST_MANAGER == 0x88);
-    assert(go_active::PLAYER_VOICE_COLLIDER == 0x168);
-    assert(go_active::PLAYER_TRIGGER_PROBE == 0x170);
-    assert(go_active::PLAYER_AIM_ASSIST_CONFIG == 0x180);
-    assert(go_active::PLAYER_AIM_ASSIST == 0x258);
-    assert(go_active::PLAYER_HIT_TRACKER == 0x358);
-    assert(go_active::PLAYER_KCC_REFERENCE == 0xB0);
-    assert(go_active::PLAYER_USER_ID == 0x2A8);
-    assert(go_active::PLAYER_TEAM_NAME == 0x2B0);
-    assert(go_active::PLAYER_VEHICLE_ID == 0x2B8);
-    assert(go_active::PLAYER_SEAT_ID == 0x2BC);
-    assert(go_active::PLAYER_CLAN_ID == 0x2C0);
-    assert(go_active::PLAYER_CLAN_TAG == 0x2C8);
-    assert(go_active::PLAYER_ZIPLINE_ID == 0x2DC);
-    assert(go_active::KCC_MOVE == 0x1AC);
-    assert(go_active::KCC_VISIBILITY == 0x308);
-    assert(go_active::KCC_MOTOR_ENABLED == 0x30D);
-    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C0);
-    assert(go_active::FPWEAPON_TYPE == 0xDC);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE917638);
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE910000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE924000);
+    assert(go_active::PLAYER_TRANSFORM == 0xA8);
+    assert(go_active::PLAYER_POSITION == 0x234);
+    assert(go_active::PLAYER_CHARACTER_MODEL == 0x190);
+    assert(go_active::PLAYER_NICKLABEL == 0x170);
+    assert(go_active::PLAYER_DISPLAY_NAME == 0x280);
+    assert(go_active::PLAYER_VOICE_STATE == 0x378);
+    assert(go_active::PLAYER_VOICE_PLAYER == 0x180);
+    assert(go_active::PLAYER_EVENT_HANDLER == 0xB8);
+    assert(go_active::PLAYER_MANAGER_RESPAWNING == 0x268);
+    assert(go_active::PLAYER_DEATH_HANDLER == 0xC0);
+    assert(go_active::PLAYER_VITALS == 0x108);
+    assert(go_active::PLAYER_UKX == 0x2A0);
+    assert(go_active::PLAYER_MODEL_INFO_REF == 0x2A0);
+    assert(go_active::PLAYER_INVENTORY == 0xD8);
+    assert(go_active::PLAYER_WEAPON_REFERENCE == 0x130);
+    assert(go_active::PLAYER_WEAPONS_ARRAY == 0x1F8);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x120);
+    assert(go_active::PLAYERWEAPON_PIECE == 0x150);
+    assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x180);
+    assert(go_active::PLAYER_FP_MANAGER == 0xD0);
+    assert(go_active::PLAYER_MOUSE_LOOK == 0xB0);
+    assert(go_active::PLAYER_RAYCAST_MANAGER == 0xC8);
+    assert(go_active::PLAYER_VOICE_COLLIDER == 0x1A8);
+    assert(go_active::PLAYER_TRIGGER_PROBE == 0x1B0);
+    assert(go_active::PLAYER_AIM_ASSIST_CONFIG == 0x1C0);
+    assert(go_active::PLAYER_AIM_ASSIST == 0x298);
+    assert(go_active::PLAYER_HIT_TRACKER == 0x398);
+    assert(go_active::PLAYER_KCC_REFERENCE == 0xF0);
+    assert(go_active::PLAYER_USER_ID == 0x2E8);
+    assert(go_active::PLAYER_TEAM_NAME == 0x2F0);
+    assert(go_active::PLAYER_VEHICLE_ID == 0x2F8);
+    assert(go_active::PLAYER_SEAT_ID == 0x2FC);
+    assert(go_active::PLAYER_CLAN_ID == 0x300);
+    assert(go_active::PLAYER_CLAN_TAG == 0x308);
+    assert(go_active::PLAYER_ZIPLINE_ID == 0x31C);
+    assert(go_active::KCC_MOVE == 0x1B4);
+    assert(go_active::KCC_VISIBILITY == 0x310);
+    assert(go_active::KCC_MOTOR_ENABLED == 0x315);
+    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C8);
+    assert(go_active::FPWEAPON_TYPE == 0xD8);
 }
 
 void expect_beta() {
@@ -212,23 +212,30 @@ void expect_beta() {
 }
 
 void test_profiled_reads() {
-    // Distinct sentinel fields detect reading stale release offsets in beta.
+    // 11993 release and 11982 beta ended up with IDENTICAL managed layouts
+    // (every field offset in both profiles matches), so the profile switch is
+    // only observable through the TypeInfo slots. Keep one real read through
+    // go_active to prove the accessors resolve, and pin both facts.
     std::array<unsigned char, 0x500> player{};
-    std::array<unsigned char, 0x200> weapon{};
-    put<std::uint64_t>(player, 0x70, 0x11111110);
-    put<std::uint64_t>(player, 0xB0, 0x22222220);
-    put<float>(player, 0x1F4, 12.5F);
+    put<std::uint64_t>(player, 0xB0, 0x11111110);
     put<float>(player, 0x234, 24.5F);
-    put<std::int32_t>(weapon, 0xDC, 13); // release weaponType / beta autoADSMode
-    put<std::int32_t>(weapon, 0xD8, 9);  // beta weaponType
+    put<std::int32_t>(player, 0xD8, 9);
+
     go_active::Select(GameVersion::Release);
+    const std::uint64_t rel_pm = go_active::PLAYER_MANAGER_TYPEINFO_RVA;
     assert(get<std::uint64_t>(player, go_active::PLAYER_MOUSE_LOOK) == 0x11111110);
-    assert(get<float>(player, go_active::PLAYER_POSITION) == 12.5F);
-    assert(get<std::int32_t>(weapon, go_active::FPWEAPON_TYPE) == 13);
-    go_active::Select(GameVersion::Beta);
-    assert(get<std::uint64_t>(player, go_active::PLAYER_MOUSE_LOOK) == 0x22222220);
     assert(get<float>(player, go_active::PLAYER_POSITION) == 24.5F);
-    assert(get<std::int32_t>(weapon, go_active::FPWEAPON_TYPE) == 9);
+    assert(get<std::int32_t>(player, go_active::FPWEAPON_TYPE) == 9);
+    assert(go_active::PLAYER_MOUSE_LOOK == game_offsets_beta::PLAYER_MOUSE_LOOK);
+    assert(go_active::PLAYER_POSITION == game_offsets_beta::PLAYER_POSITION);
+    assert(go_active::FPWEAPON_TYPE == game_offsets_beta::FPWEAPON_TYPE);
+    assert(go_active::KCC_MOVE == game_offsets_beta::KCC_MOVE);
+
+    go_active::Select(GameVersion::Beta);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA != rel_pm);
+    assert(get<std::uint64_t>(player, go_active::PLAYER_MOUSE_LOOK) == 0x11111110);
+    assert(get<float>(player, go_active::PLAYER_POSITION) == 24.5F);
+    assert(get<std::int32_t>(player, go_active::FPWEAPON_TYPE) == 9);
 }
 } // namespace
 

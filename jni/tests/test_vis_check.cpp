@@ -39,11 +39,11 @@ void test_lang_table_sorted() {
 }
 
 void test_offsets_consistency() {
-    assert(game_offsets::PLAYER_MOUSE_LOOK == 0x70);
+    assert(game_offsets::PLAYER_MOUSE_LOOK == 0xB0);
     assert(game_offsets::MOUSELOOK_PITCH_YAW == 0x4C);
-    assert(game_offsets::PLAYER_RAYCAST_MANAGER == 0x88);
-    assert(game_offsets::PLAYER_AIM_ASSIST == 0x258);
-    assert(game_offsets::PLAYER_MODEL_INFO_REF == 0x260);
+    assert(game_offsets::PLAYER_RAYCAST_MANAGER == 0xC8);
+    assert(game_offsets::PLAYER_AIM_ASSIST == 0x298);
+    assert(game_offsets::PLAYER_MODEL_INFO_REF == 0x2A0);
     assert(game_offsets::RAYCASTMAN_RAY_LENGTH == 0x38);
     assert(game_offsets::RAYCASTMAN_AIM_RAY_LENGTH == 0x3C);
     assert(game_offsets::RAYCASTMAN_SPHERE_RADIUS == 0x40);
@@ -65,7 +65,7 @@ void test_offsets_consistency() {
     assert(game_offsets::AIMSENSOR_DISTANCE == 0x14);
     assert(game_offsets::GAME_CONTROLLER_MAP_MANAGER == 0x170);
     assert(game_offsets::MARKER_DATA_IS_HIT == 0x73);
-    assert(game_offsets::PLAYER_HIT_TRACKER == 0x358);
+    assert(game_offsets::PLAYER_HIT_TRACKER == 0x398);
     assert(game_offsets::HIT_TRACKER_HIT_DICT == 0x18);
     assert(game_offsets::NEARBY_VIEW_MODULE_CTX == 0x80);
     assert(game_offsets::NEARBY_VIEW_DATA == 0xA8);
@@ -73,7 +73,7 @@ void test_offsets_consistency() {
     assert(game_offsets::OCCLUSION_MOD_INTERVAL == 0x2C);
     assert(game_offsets::OCCLUSION_MOD_HAS_VAL == 0x3C);
     assert(game_offsets::OCCLUSION_MOD_IS_OCCLUDED == 0x3D);
-    assert(game_offsets::HMJ_TYPEINFO_RVA == 0xE612F58);
+    assert(game_offsets::HMJ_TYPEINFO_RVA == 0xE917638);
 
     assert(game_offsets_beta::PLAYER_MOUSE_LOOK == 0xB0);
     assert(game_offsets_beta::MOUSELOOK_PITCH_YAW == game_offsets::MOUSELOOK_PITCH_YAW);

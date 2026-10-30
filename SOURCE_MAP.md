@@ -18,12 +18,12 @@
 | Группа | Файлов | Строк | Где |
 |---|---:|---:|---|
 | Пользовательский код | 111 `.h` + 78 `.cpp` | 54 477 | `jni/src`, `jni/include` |
-| Профили оффсетов | 3 | 3 177 | `game_offsets.h` (release 11991), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
+| Профили оффсетов | 3 | 3 177 | `game_offsets.h` (release 11993), `game_offsets_beta.h` (beta 11982), `game_offsets_active.h` (селектор) |
 | Хост-тесты | 41 | — | `jni/tests/` |
 | Вендор | ImGui, stb_image, TJpgDec | — | `jni/src/ImGui`, `jni/include/ImGui`, `third_party/tjpgd` |
 | Медиа/шрифты | аватарка (JPEG-кадры), атлас брони, иконки вкладок, шрифт, WAV | — | `jni/src/media`, `jni/include/media`, `include/ImGui/Font` |
 
-Цель: `com.catsbit.oxidesurvivalisland`, Unity **IL2CPP**, релиз **11991**, бета **11982**.
+Цель: `com.catsbit.oxidesurvivalisland`, Unity **IL2CPP**, релиз **11993**, бета **11982**.
 Инъекции, хуков, правок кода игры нет: только чтение памяти и точечные записи в
 managed-поля/нативные структуры.
 
@@ -85,15 +85,17 @@ managed-поля/нативные структуры.
 
 ## 4. Профили оффсетов
 
-- `game_offsets.h` — release **11991** (32402 типа, 22755 TypeInfo-слотов). TypeInfo —
+- `game_offsets.h` — release **11993** (31195 классов, 22904 TypeInfo-слота). TypeInfo —
   внутренний `.data`-слот (одно разыменование до `Il2CppClass*`), `.text` file_off = RVA−0x4000,
-  `.data` file_off = RVA−0xC000. В шапке — карта ротации обфусцированных имён 11966→11985→11991.
+  `.data` file_off = RVA−0xC000. В шапке — сдвиги 11991→11993 (PM +0x40, PlayerWeapon +0x20,
+  хвост KCC +0x8) и историческая карта ротации обфусцированных имён 11966→11991
+  (в 11993 дамп уже расшифрован).
 - `game_offsets_beta.h` — beta **11982**; смещения части полей другие
   (`PlayerManager.fpManager` 0x90 release / 0xD0 beta).
 - `game_offsets_active.h` — `go_active::` алиасы, каждый через `BW_OFFSET`, выбирается
   `selected_version`. Все фичи читают только `go_active::`.
-- Проверки: `tools/offsets/verify_release_11991.py`, `verify_release_11989/11985.py`,
-  `verify_beta_11982.py`, `offsets_diff.py`; тесты профиля `test_release_11978_offsets.cpp`,
+- Проверки: `tools/offsets/verify_release_11993.py` (все 481 константа профиля),
+  `verify_release_11991/11989/11985.py` (история), `verify_beta_11982.py`, `offsets_diff.py`; тесты профиля `test_release_11978_offsets.cpp`,
   `test_beta_11982_offsets.cpp`, `test_world_streaming_offsets.cpp`.
 - TypeInfo-слот — одноразовый якорь: обязателен позиционно-независимый резерв по имени
   класса с самого объекта (`class_identity`, побайтовое сравнение с NUL).

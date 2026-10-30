@@ -1,10 +1,11 @@
-// Пин release-профиля сборки 11991 (dump11991.7z).
+// Пин release-профиля сборки 11993 (dump11993.7z).
 //
-// Закрепляет TypeInfo-слоты (script.json 11991) и структурные offsets,
-// сверенные с dump.cs 11991: managed-раскладки сошлись с профилем 11989
-// побайтово (verify_release_11991.py), съехали только TypeInfo-слоты и
-// обфусцированные имена (TOD lI, LayerMask ryl, обработчик rIf).
-// Инварианты: PLH -> PM = 0x38, промисы через 8 байт, TDI 706/21933/21935.
+// Закрепляет TypeInfo-слоты (script.json 11993) и структурные offsets,
+// сверенные с dump.cs 11993 скриптом tools/offsets/verify_release_11993.py
+// (397 полей + 12 слотов + 74 литерала, 0 расхождений). Сдвиг 11991 -> 11993:
+// PlayerManager +0x40 целиком, PlayerWeapon +0x20, хвост KCC +0x8,
+// FPWeaponBase.weaponType 0xD8.
+// Инварианты: PLH -> PM = 0x38, промисы через 8 байт, TDI 708/22061/22063.
 // Актуальная бета и переключение профилей — test_beta_11982_offsets.cpp.
 #include "game_offsets_active.h"
 
@@ -16,20 +17,20 @@ int main() {
 
     // --- Профиль по умолчанию ---
     assert(go_active::selected_version == GameVersion::Release);
-    assert(game_offsets::RELEASE_BUILD == 11991);
+    assert(game_offsets::RELEASE_BUILD == 11993);
 
     // --- TypeInfo-слоты (внутренние .data, одно разыменование) ---
-    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE60B7B8);
-    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE60B780);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE606888);
-    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE60AA70);
-    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE610328);
+    assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA == 0xE9126C8);
+    assert(go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA == 0xE912690);
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA == 0xE90D9A8);
+    assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA == 0xE9119D8);
+    assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA == 0xE918AC0);
     // Инвариант PLH -> PM = 0x38 пережил уже шесть ротаций имён.
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA ==
            go_active::PLAYER_LOOP_HELPER_TYPEINFO_RVA + 0x38);
     // Промисы UniTask: пара классов через 8 байт, вложенный <>c в релизе не нужен.
-    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE61AB58);
-    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE61AB50);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA == 0xE922C70);
+    assert(go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 0xE922C68);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA -
                go_active::FASTLOOT_IGNOREDELAY_TYPEINFO_RVA == 8);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA_ALT == 0);
@@ -42,27 +43,30 @@ int main() {
     assert(go_active::DELAYPROMISE_SCALED_TIMESPAN == 0x1C);
     assert(go_active::DELAYPROMISE_SCALED_ELAPSED == 0x20);
 
-    // --- Окно структурного скана .data (11991: .data 0xE376A48..0xE9D9CA8) ---
-    // Должно накрывать lI_TypeInfo (TOD_Sky, TDI 706, 0xE611560) и
-    // ryl_TypeInfo (25 LayerMask-статик, 0xE612F58); остальные рабочие
-    // слоты (PM/GC/NC/WSC/промисы) тоже внутри.
-    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE600000);
-    assert(go_active::TOD_SCAN_RVA_END == 0xE630000);
+    // --- Окно структурного скана .data (11993: .data 0xE90D9A8..0xE922C70) ---
+    // Скан ищет ровно два статических блока: Zf_TypeInfo (TOD_Sky, TDI 708,
+    // 0xE919750) и UlV_TypeInfo (25 LayerMask-статик, 0xE917638). Оба обязаны
+    // попадать в окно; PM/GC/NC/WSC лежат НИЖЕ окна (0xE90D9A8..0xE9126C8) и
+    // находятся по script.json, поэтому window-ассертов для них нет.
+    assert(go_active::TOD_SCAN_RVA_BEGIN == 0xE910000);
+    assert(go_active::TOD_SCAN_RVA_END == 0xE924000);
     assert(go_active::TOD_SCAN_RVA_BEGIN < go_active::TOD_SCAN_RVA_END);
-    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE611560;  // lI (TOD_Sky, TDI 706) TypeInfo from script.json
+    constexpr std::uint64_t kTodSkyTypeInfoSlot = 0xE919750;  // Zf (TOD_Sky, TDI 708) TypeInfo from script.json
     assert(kTodSkyTypeInfoSlot > go_active::TOD_SCAN_RVA_BEGIN);
     assert(kTodSkyTypeInfoSlot < go_active::TOD_SCAN_RVA_END);
-    assert(go_active::HMJ_TYPEINFO_RVA == 0xE612F58);
+    assert(kTodSkyTypeInfoSlot == go_active::TOD_SKY_TYPEINFO_RVA);
+    assert(go_active::HMJ_TYPEINFO_RVA == 0xE917638);
     assert(go_active::HMJ_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::HMJ_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
+    // GC лежит ниже окна (0xE90D9A8 < 0xE910000), PM/NC/WSC/промисы — внутри.
+    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::PLAYER_MANAGER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
-    assert(go_active::GAME_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::NETWORK_CLIENT_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::WORLD_STREAMING_CONTROLLER_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
+    assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA > go_active::TOD_SCAN_RVA_BEGIN);
     assert(go_active::FASTLOOT_DELAYPROMISE_TYPEINFO_RVA < go_active::TOD_SCAN_RVA_END);
     assert(go_active::TOD_SKY_CYCLE == 0x40);
     assert(go_active::TOD_CYCLE_HOUR == 0x10);
@@ -86,41 +90,41 @@ int main() {
     // --- PlayerManager: голова без изменений ---
     assert(go_active::PLAYER_MANAGER_STATIC_FIELDS_ACTIVE_LIST == 0x08);
     assert(go_active::PLAYER_MANAGER_STATIC_FIELDS_LIST == 0x10);
-    assert(go_active::PLAYER_TRANSFORM == 0x68);
-    assert(go_active::PLAYER_MOUSE_LOOK == 0x70);
-    assert(go_active::PLAYER_EVENT_HANDLER == 0x78);
-    assert(go_active::PLAYER_DEATH_HANDLER == 0x80);
-    assert(go_active::PLAYER_RAYCAST_MANAGER == 0x88);
-    assert(go_active::PLAYER_FP_MANAGER == 0x90);
-    assert(go_active::PLAYER_INVENTORY == 0x98);
-    assert(go_active::PLAYER_KCC_REFERENCE == 0xB0);
-    assert(go_active::PLAYER_VITALS == 0xC8);
-    assert(go_active::PLAYER_WEAPON_REFERENCE == 0xF0);
-    assert(go_active::PLAYER_NICKLABEL == 0x130);
-    assert(go_active::PLAYER_VOICE_PLAYER == 0x140);
-    assert(go_active::PLAYER_CHARACTER_MODEL == 0x150);
-    assert(go_active::PLAYER_VOICE_COLLIDER == 0x168);
-    assert(go_active::PLAYER_TRIGGER_PROBE == 0x170);
-    assert(go_active::PLAYER_AIM_ASSIST_CONFIG == 0x180);
-    assert(go_active::PLAYER_WEAPONS_ARRAY == 0x1B8);
-    assert(go_active::PLAYER_POSITION == 0x1F4);
-    assert(go_active::PLAYER_MANAGER_RESPAWNING == 0x228);
-    assert(go_active::PLAYER_DISPLAY_NAME == 0x240);
-    assert(go_active::PLAYER_AIM_ASSIST == 0x258);
-    assert(go_active::PLAYER_UKX == 0x260);
+    assert(go_active::PLAYER_TRANSFORM == 0xA8);
+    assert(go_active::PLAYER_MOUSE_LOOK == 0xB0);
+    assert(go_active::PLAYER_EVENT_HANDLER == 0xB8);
+    assert(go_active::PLAYER_DEATH_HANDLER == 0xC0);
+    assert(go_active::PLAYER_RAYCAST_MANAGER == 0xC8);
+    assert(go_active::PLAYER_FP_MANAGER == 0xD0);
+    assert(go_active::PLAYER_INVENTORY == 0xD8);
+    assert(go_active::PLAYER_KCC_REFERENCE == 0xF0);
+    assert(go_active::PLAYER_VITALS == 0x108);
+    assert(go_active::PLAYER_WEAPON_REFERENCE == 0x130);
+    assert(go_active::PLAYER_NICKLABEL == 0x170);
+    assert(go_active::PLAYER_VOICE_PLAYER == 0x180);
+    assert(go_active::PLAYER_CHARACTER_MODEL == 0x190);
+    assert(go_active::PLAYER_VOICE_COLLIDER == 0x1A8);
+    assert(go_active::PLAYER_TRIGGER_PROBE == 0x1B0);
+    assert(go_active::PLAYER_AIM_ASSIST_CONFIG == 0x1C0);
+    assert(go_active::PLAYER_WEAPONS_ARRAY == 0x1F8);
+    assert(go_active::PLAYER_POSITION == 0x234);
+    assert(go_active::PLAYER_MANAGER_RESPAWNING == 0x268);
+    assert(go_active::PLAYER_DISPLAY_NAME == 0x280);
+    assert(go_active::PLAYER_AIM_ASSIST == 0x298);
+    assert(go_active::PLAYER_UKX == 0x2A0);
     assert(go_active::UKX_MODEL_INFO == 0x10);
-    assert(go_active::PLAYER_MODEL_INFO_REF == 0x260);
+    assert(go_active::PLAYER_MODEL_INFO_REF == 0x2A0);
 
     // --- Хвост PlayerManager: вставка KSu/KSj (0x270/0x278) сдвинула его на +0x10 ---
-    assert(go_active::PLAYER_USER_ID == 0x2A8);
-    assert(go_active::PLAYER_TEAM_NAME == 0x2B0);
-    assert(go_active::PLAYER_VEHICLE_ID == 0x2B8);
-    assert(go_active::PLAYER_SEAT_ID == 0x2BC);
-    assert(go_active::PLAYER_CLAN_ID == 0x2C0);
-    assert(go_active::PLAYER_CLAN_TAG == 0x2C8);
-    assert(go_active::PLAYER_ZIPLINE_ID == 0x2DC);
-    assert(go_active::PLAYER_VOICE_STATE == 0x338);
-    assert(go_active::PLAYER_HIT_TRACKER == 0x358);
+    assert(go_active::PLAYER_USER_ID == 0x2E8);
+    assert(go_active::PLAYER_TEAM_NAME == 0x2F0);
+    assert(go_active::PLAYER_VEHICLE_ID == 0x2F8);
+    assert(go_active::PLAYER_SEAT_ID == 0x2FC);
+    assert(go_active::PLAYER_CLAN_ID == 0x300);
+    assert(go_active::PLAYER_CLAN_TAG == 0x308);
+    assert(go_active::PLAYER_ZIPLINE_ID == 0x31C);
+    assert(go_active::PLAYER_VOICE_STATE == 0x378);
+    assert(go_active::PLAYER_HIT_TRACKER == 0x398);
     assert(go_active::HIT_TRACKER_HIT_DICT == 0x18);
     assert(go_active::PLAYER_SEAT_ID - go_active::PLAYER_VEHICLE_ID == 4);
     assert(go_active::PLAYER_CLAN_TAG - go_active::PLAYER_CLAN_ID == 8);
@@ -161,10 +165,10 @@ int main() {
     assert(go_active::KCC_NORMAL_HEIGHT == 0xA0);
     assert(go_active::KCC_CROUCH_HEIGHT == 0xA4);
     assert(go_active::KCC_CHARACTER_ANIMATION == 0xE0);
-    assert(go_active::KCC_MOVE == 0x1AC);
-    assert(go_active::KCC_VISIBILITY == 0x308);
-    assert(go_active::KCC_MOTOR_ENABLED == 0x30D);
-    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C0);
+    assert(go_active::KCC_MOVE == 0x1B4);
+    assert(go_active::KCC_VISIBILITY == 0x310);
+    assert(go_active::KCC_MOTOR_ENABLED == 0x315);
+    assert(go_active::KCC_HAS_OBSERVER_MOVE == 0x3C8);
     assert(go_active::KCC_MOTOR_CAPSULE == 0x28);
     assert(go_active::KCC_MOVE_STATE == 0x00);
     assert(go_active::KCC_MOVE_REAL_VELOCITY == 0x18);
@@ -405,9 +409,9 @@ int main() {
     assert(go_active::WAITFORSECONDS_SECONDS == 0x10);
 
     // --- PlayerWeapon: сдвиг +0x10/+0x20 от вставленных полей ---
-    assert(go_active::PLAYERWEAPON_VIEW == 0x100);
-    assert(go_active::PLAYERWEAPON_PIECE == 0x130);
-    assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x160);
+    assert(go_active::PLAYERWEAPON_VIEW == 0x120);
+    assert(go_active::PLAYERWEAPON_PIECE == 0x150);
+    assert(go_active::PLAYERWEAPON_PLAYER_BACKREF == 0x180);
     assert(go_active::WEAPONVIEW_WEAPON_BASE == 0x50);
     assert(go_active::WEAPONVIEW_ROOT_TRANSFORM == 0x70);
     assert(go_active::WEAPONVIEW_INNER == 0x10);

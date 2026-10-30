@@ -319,6 +319,11 @@ inline std::uint64_t OCCLUSION_MOD_NEXT_TIME = BW_OFFSET(game_offsets::OCCLUSION
 inline std::uint64_t OCCLUSION_MOD_HAS_VAL = BW_OFFSET(game_offsets::OCCLUSION_MOD_HAS_VAL);
 inline std::uint64_t OCCLUSION_MOD_IS_OCCLUDED = BW_OFFSET(game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
 inline std::uint64_t HMJ_TYPEINFO_RVA = BW_OFFSET(game_offsets::HMJ_TYPEINFO_RVA);
+// Только-11993 константы: в профиле беты 11982 их нет (раскладка та же,
+// поэтому в Beta-секции остаётся релизное значение).
+inline std::uint64_t TOD_SKY_TYPEINFO_RVA = BW_OFFSET(game_offsets::TOD_SKY_TYPEINFO_RVA);
+inline std::uint64_t PLAYER_INPUT_STRUCT = BW_OFFSET(game_offsets::PLAYER_INPUT_STRUCT);
+inline std::uint64_t MODELINFO_HEAD_MODEL = BW_OFFSET(game_offsets::MODELINFO_HEAD_MODEL);
 inline std::int32_t MARKER_TYPE_NEARBY_PLAYER = game_offsets::MARKER_TYPE_NEARBY_PLAYER;
 inline std::uint64_t RAYCASTHIT_DISTANCE = BW_OFFSET(game_offsets::RAYCASTHIT_DISTANCE);
 inline std::uint64_t RAYCASTHIT_POINT = BW_OFFSET(game_offsets::RAYCASTHIT_POINT);
@@ -781,6 +786,9 @@ inline void Select(GameVersion version) {
         OCCLUSION_MOD_HAS_VAL = BW_OFFSET(game_offsets_beta::OCCLUSION_MOD_HAS_VAL);
         OCCLUSION_MOD_IS_OCCLUDED = BW_OFFSET(game_offsets_beta::OCCLUSION_MOD_IS_OCCLUDED);
         HMJ_TYPEINFO_RVA = BW_OFFSET(game_offsets_beta::HMJ_TYPEINFO_RVA);
+        TOD_SKY_TYPEINFO_RVA = BW_OFFSET(game_offsets::TOD_SKY_TYPEINFO_RVA); // нет в бете
+        PLAYER_INPUT_STRUCT = BW_OFFSET(game_offsets::PLAYER_INPUT_STRUCT);     // нет в бете
+        MODELINFO_HEAD_MODEL = BW_OFFSET(game_offsets::MODELINFO_HEAD_MODEL);   // нет в бете
         MARKER_TYPE_NEARBY_PLAYER = game_offsets_beta::MARKER_TYPE_NEARBY_PLAYER;
         RAYCASTHIT_DISTANCE = BW_OFFSET(game_offsets_beta::RAYCASTHIT_DISTANCE);
         RAYCASTHIT_POINT = BW_OFFSET(game_offsets_beta::RAYCASTHIT_POINT);
@@ -1244,6 +1252,9 @@ inline void Select(GameVersion version) {
         OCCLUSION_MOD_HAS_VAL = BW_OFFSET(game_offsets::OCCLUSION_MOD_HAS_VAL);
         OCCLUSION_MOD_IS_OCCLUDED = BW_OFFSET(game_offsets::OCCLUSION_MOD_IS_OCCLUDED);
         HMJ_TYPEINFO_RVA = BW_OFFSET(game_offsets::HMJ_TYPEINFO_RVA);
+        TOD_SKY_TYPEINFO_RVA = BW_OFFSET(game_offsets::TOD_SKY_TYPEINFO_RVA);
+        PLAYER_INPUT_STRUCT = BW_OFFSET(game_offsets::PLAYER_INPUT_STRUCT);
+        MODELINFO_HEAD_MODEL = BW_OFFSET(game_offsets::MODELINFO_HEAD_MODEL);
         MARKER_TYPE_NEARBY_PLAYER = game_offsets::MARKER_TYPE_NEARBY_PLAYER;
         RAYCASTHIT_DISTANCE = BW_OFFSET(game_offsets::RAYCASTHIT_DISTANCE);
         RAYCASTHIT_POINT = BW_OFFSET(game_offsets::RAYCASTHIT_POINT);

@@ -1,7 +1,20 @@
 # Offset checks
 
-The game dumps are not included in the repository. Extract `dumpbeta11982.7z`
-locally and run:
+The game dumps are not included in the repository. Extract `dump11993.7z`
+(or `dumpbeta11982.7z` for the beta profile) locally and run:
+
+```sh
+python3 tools/offsets/verify_release_11993.py /path/to/dump.cs /path/to/script.json
+```
+
+`verify_release_11993.py` re-derives every constant of the release profile from
+the dump: 397 managed fields (base-class walk), 12 TypeInfo slots from
+`script.json`, 74 pinned literals (native layouts / enum values) and 4 aliases.
+It also asserts the invariants (PlayerLoopHelper slot = PM slot − 0x38, the
+UniTask promise pair 8 bytes apart, TOD_Sky slot inside the scan window) and
+exits non-zero on any drift. `--propose` prints the value each constant should have.
+
+Beta:
 
 ```sh
 python3 tools/offsets/verify_beta_11982.py /path/to/dump.cs /path/to/script.json \

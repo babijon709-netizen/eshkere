@@ -165,8 +165,10 @@ Local:
   PASS (expected glibc ptrace enum warning under `-fpermissive`).
 - `git diff --check`: clean.
 
-Android NDK build / CI: see the commit's GitHub Actions run. Device runtime
-verification was not performed here. On-device acceptance for this guard:
+Android NDK build / CI: run `41033601187` SUCCESS in 2m35s for commit
+`a8fe28b`; artifact `benzware.sh` size 3,012,920, sha256
+`6c3cde7bd92b29973b30a9c1f4d919b6a6bcb45922b09dd86c0146620635f8d3`.
+Device runtime verification was not performed here. On-device acceptance for this guard:
 with the supplied 11991 client, `magic.log` should contain
 `protected client ... injection refused`, the menu should show the protected
 line, `TracerPid` should stay 0, and `libbenzware_magic.so` should not appear

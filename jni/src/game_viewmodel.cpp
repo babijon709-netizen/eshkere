@@ -689,7 +689,7 @@ void esp_viewmodel_tick(const ViewmodelSettings& raw_settings) {
                 ;
         }
     }
-    // Magic-Farm keeps the verified normal hit path (and therefore server-side
+    // Farm keeps the verified normal hit path (and therefore server-side
     // harvesting/cooldowns), but hides every non-ADS first-person tool pose
     // while mining. To the player only the crosshair and hit-streak marker are
     // visible; there is no local swing animation. Walking and aiming remain the

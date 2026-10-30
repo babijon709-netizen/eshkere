@@ -296,7 +296,6 @@ static void WriteExt2Trailer(std::ostream& f) {
               (g_state.farm_on       ? (1u << 14) : 0u) |
               (g_state.esp_pumpkins  ? (1u << 15) : 0u) |
               (g_state.esp_armor     ? (1u << 16) : 0u) |
-              (g_state.farm_magic    ? (1u << 22) : 0u) |
               overlay_capture::config_flag(g_state.streamer_mode) |
               screen_capture::video_config_flags(g_state.capture_video);
     t.esp_arrow_ring   = g_state.esp_arrow_ring;
@@ -782,8 +781,6 @@ static void LoadCfgByName(const char* name, bool announce) {
         // Old profiles have no new bits (or no trailer): restore capture
         // visibility and automatic bitrate even after loading a newer profile.
         ApplyCaptureConfig(hasExt2 ? ext2.flags : 0u);
-        g_state.farm_magic = hasExt2 && (ext2.flags & (1u << 22));
-        g_state.a_farm_magic = g_state.farm_magic ? 1.f : 0.f;
         if (hasExt2) {
             g_state.esp_ore_stone  = (ext2.flags & (1u << 0)) != 0;
             g_state.esp_ore_iron   = (ext2.flags & (1u << 1)) != 0;

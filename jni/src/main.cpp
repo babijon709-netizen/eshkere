@@ -9,7 +9,6 @@
 #include "aim.h"
 #include "silent_aim.h"
 #include "farm.h"
-#include "magic_farm.h"
 #include "widgets.h"
 #include "menu.h"
 #include "config.h"
@@ -504,7 +503,6 @@ int main(int argc, char* argv[]) {
         // остановка здесь пустая, но последовательность та же).
         // Arm the deadline before touching EGL: a wedged compositor must not
         // keep the last overlay frame on screen indefinitely.
-        magicfarm::Shutdown();
         ArmShutdownDeadline();
         g_fakeLag.destroy();
         Blur::Free();
@@ -594,7 +592,6 @@ int main(int argc, char* argv[]) {
     s_touchRetryRun.store(false);
     // Start the deadline before EGL teardown as well: the compositor itself
     // may be the blocked component holding the last overlay frame on screen.
-    magicfarm::Shutdown();
     ArmShutdownDeadline();
     screen_capture::Shutdown();
     g_fakeLag.destroy();

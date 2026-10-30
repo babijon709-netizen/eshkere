@@ -1,5 +1,4 @@
 #include "farm.h"
-#include "magic_farm.h"
 #include "farm_joy.h"          // память-джойстик: движение без тача
 #include "farm_control_core.h"
 #include "cfg.h"
@@ -228,7 +227,6 @@ constexpr float kPitchDeadSpot = 0.50f;  // град: субградусный p
 static void UpdateFarmInner(float dt);
 
 void UpdateFarm(float dt) {
-    static bool magic = false;
 #ifdef __ANDROID__
     static int checked_pid = -1;
     static auto next_check = std::chrono::steady_clock::time_point{};
@@ -244,8 +242,6 @@ void UpdateFarm(float dt) {
             // Release the normal controller's cached press/movement state once.
             const bool enabled = g_state.farm_on;
             g_state.farm_on = false; UpdateFarmInner(dt); g_state.farm_on = enabled;
-            magicfarm::Stop();
-            magic = false;
         }
         farmjoy::release();
         g_farmActive = false; g_farmPaused = true; g_farmPhase = 0;
@@ -253,14 +249,7 @@ void UpdateFarm(float dt) {
         return;
     }
     g_farmProtected = false;
-    if (g_state.farm_magic != magic) {
-        magicfarm::Stop();
-        const bool enabled=g_state.farm_on;
-        g_state.farm_on=false;UpdateFarmInner(dt);g_state.farm_on=enabled;
-        magic=g_state.farm_magic;
-    }
-    if (magic) magicfarm::Update(dt);
-    else UpdateFarmInner(dt);
+    UpdateFarmInner(dt);
 }
 
 static void UpdateFarmInner(float dt) {

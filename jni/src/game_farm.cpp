@@ -838,7 +838,7 @@ constexpr float kAimFixRateDeg   = 0.025F;
 constexpr float kAimFixPullDeg   = 0.010F;
 constexpr int   kAimFixRejectFrames = 90;   // ~1.5 с
 
-static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bool independent) {
+static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id) {
     std::lock_guard<std::recursive_mutex> session_lock(viewmodel_session_mutex());
     out = FarmTarget{};
     if (!g_farm_mask) { g_farm_idle_reason = 1; return false; }
@@ -1029,7 +1029,7 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
             // 1) кора из луча самой игры. Попадание обязано быть на ЭТОМ стволе:
             //    правдоподобный радиус, не дальше декали с запасом и рядом по
             //    высоте — иначе это земля, соседнее дерево или крона.
-            if (!independent && reach.ray_point_valid && reach.ray_hit_object) {
+            if (reach.ray_point_valid && reach.ray_hit_object) {
                 const float hx = reach.ray_point.x - node.pos.x;
                 const float hz = reach.ray_point.z - node.pos.z;
                 const float rh = sqrtf(hx * hx + hz * hz);
@@ -1196,7 +1196,7 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
 
     bool fix_sample_ok = false, fix_geom_steady = false;
     float fix_sample_y = 0.f, fix_sample_p = 0.f;
-    if (!independent && has_spot && reach.ray_valid && reach.ray_point_valid) {
+    if (has_spot && reach.ray_valid && reach.ray_point_valid) {
         const Vec3 e = {spot.x - reach.ray_point.x, spot.y - reach.ray_point.y,
                         spot.z - reach.ray_point.z};
         const float ex = e.x * right.x + e.y * right.y + e.z * right.z;
@@ -1252,8 +1252,8 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
     const float yaw_fix   = aim_fix_yaw;
     const float pitch_fix = aim_fix_pitch;
 
-    const float yaw   = yaw_cam + (independent ? 0.f : yaw_fix);
-    const float pitch = pitch_cam + (independent ? 0.f : pitch_fix);
+    const float yaw   = yaw_cam + yaw_fix;
+    const float pitch = pitch_cam + pitch_fix;
 
     // ---- Точка подхода -------------------------------------------------------
     // Встаём ПЕРЕД КРЕСТИКОМ (standoff наружу от оси узла) всегда, когда он
@@ -1281,15 +1281,6 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
     float walk_yaw = 0.0F, walk_dist = best_dist;
     {
         Vec3 move_right=right,move_forward=fwd;
-        if (independent) {
-            const float len=std::sqrt(right.x*right.x+right.z*right.z);
-            if (!std::isfinite(len) || len<0.01f) {g_farm_idle_reason=5;return false;}
-            move_right={right.x/len,0,right.z/len};
-            move_forward={-move_right.z,0,move_right.x};
-            const float px=aim.x-origin.x,pz=aim.z-origin.z;
-            out.magic_point_yaw=std::atan2(px*move_right.x+pz*move_right.z,
-                                         px*move_forward.x+pz*move_forward.z)*rad2deg;
-        }
         const float gx = goal.x - origin.x, gz = goal.z - origin.z;
         const float gd = sqrtf(gx * gx + gz * gz);
         if (std::isfinite(gd)) {
@@ -1328,7 +1319,6 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
     out.valid = true;
     out.network_id = rd<std::uint32_t>(best->identity + NETID_NET_ID);
     out.game_base = g_il2cpp_base;
-    out.magic_supported = selected_version == GameVersion::Release;
     out.id = best->component;
     out.ext_found = (node.ext_kind != FARM_EXT_NONE);
     out.kind = best->kind;
@@ -1439,16 +1429,9 @@ static bool farm_get_target(FarmTarget& out, unsigned long long preferred_id, bo
     out.node_dist = best_dist;
     out.fraction = (best_fraction >= 0.0F && best_fraction <= 1.001F)
                  ? best_fraction : -1.0F;
-    if (independent) {
-        out.ray_valid=out.ray_self=out.ray_foreign=out.ray_blocked=false;
-        out.aim_fix_valid=false;
-    }
     return true;
 }
 
 bool esp_farm_get_target(FarmTarget& out, unsigned long long preferred) {
-    return farm_get_target(out,preferred,false);
-}
-bool esp_farm_get_magic_target(FarmTarget& out, unsigned long long preferred) {
-    return farm_get_target(out,preferred,true);
+    return farm_get_target(out,preferred);
 }

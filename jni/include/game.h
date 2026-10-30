@@ -150,6 +150,15 @@ enum EspAttachState {
 bool          esp_init(pid_t pid, bool package_verified_release = false);
 void          esp_reset();
 EspAttachState esp_attach_state();
+// Живой статус для журнала attach.log: база libil2cpp (0 — не привязано) и
+// резолв классов игры / локального игрока.
+struct EspAttachStatus {
+    uint64_t il2cpp_base;
+    bool     player_manager;
+    bool     game_controller;
+    bool     local_player;
+};
+EspAttachStatus esp_attach_status();
 // Начало кадра: сброс кэша блоков памяти игры (см. mem_io.h).
 void          esp_mem_frame_begin();
 // Способ доступа к памяти игры. Выбирается один раз на старте, ДО первого
@@ -340,8 +349,6 @@ int         esp_local_aim_source();
 struct FarmTarget {
     unsigned network_id = 0;
     unsigned long long game_base = 0;
-    bool magic_supported = false;
-    float magic_point_yaw = 0.f;
     bool  valid = false;
     unsigned long long id = 0;    // Mineable-компонент: отдельный узел и blacklist
     int   kind = 0;               // 0 дерево, 1 камень, 2 металл, 3 сера
@@ -490,9 +497,6 @@ void        esp_farm_set_range(float meters);
 // Ближайший подходящий узел по состоянию последнего esp_get_boxes() (нужна
 // его камера).
 bool        esp_farm_get_target(FarmTarget& out, unsigned long long preferred_id = 0);
-// Separate geometry path: the player's current aim ray does not choose or
-// invalidate the harvesting point. The companion performs its own raycast.
-bool        esp_farm_get_magic_target(FarmTarget& out, unsigned long long preferred_id = 0);
 // Пин крестика: телепортировать крестик текущего узла в точку, куда реально
 // падает удар (живой луч прицела игры). Дерево — переписывается сегмент
 // MTQ/MTu (проверка серии), руда — мировая позиция маркера (os()). Работает

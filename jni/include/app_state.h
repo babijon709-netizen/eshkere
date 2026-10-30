@@ -88,7 +88,6 @@ struct AppState {
     float gun_str = 5.f, gun_fov = 80.f, gun_trigger_delay = 0.0f;
     // Автофарм: главный выключатель + какие ресурсы добывать.
     bool  farm_on = false;
-    bool  farm_magic = false;
     bool  farm_wood = true, farm_stone = false, farm_metal = false, farm_sulfur = false;
     // Калибровка зон бота (доли экрана 0..1; -1 = не задано, берём дефолт).
     // Джойстик движения и кнопка огня/атаки — у всех раскладки разные.
@@ -173,7 +172,6 @@ struct AppState {
     float a_always_day = 0, a_no_grass = 0;
     float a_ui_dark = 1, a_streamer_mode = 1;
     float a_farm_on = 0, a_farm_wood = 1, a_farm_stone = 0, a_farm_metal = 0, a_farm_sulfur = 0;
-    float a_farm_magic = 0;
     float a_xray_on = 0;
     float a_xray_btn_show = 0;
     float a_freecam_on = 0;

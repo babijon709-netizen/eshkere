@@ -3,6 +3,7 @@
 #include "maps_lookup.h"
 #include "runtime_guard.h"
 #include "scoped_text.h"
+#include "attach_log.h"
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,13 @@
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+
+#ifndef BENZWARE_BUILD_SHA
+#define BENZWARE_BUILD_SHA "host"
+#endif
+#ifndef BENZWARE_BUILD_DATE
+#define BENZWARE_BUILD_DATE "-"
+#endif
 
 // Единственный поддерживаемый клиент: пакет текущего релиза игры.
 static const char* const kTargetPackage = "com.catsbit.oxidesurvivalisland";
@@ -261,17 +269,37 @@ static bool pid_still_game(pid_t pid) {
 void start_attach_thread() {
     g_attach_running.store(true);
     g_attach_thread = std::thread([]() {
+        attachlog::say("сессия: сборка %s от %s, транспорт %s",
+                       BENZWARE_BUILD_SHA, BENZWARE_BUILD_DATE,
+                       attachlog::backend_name(esp_get_mem_backend()));
+        double scan_mark = 0.0;
+        double heartbeat_mark = 0.0;
         while (g_attach_running.load()) {
             if (!g_esp_attached) {
+                const bool report = attachlog::due_every(5.0, scan_mark);
                 pid_t attached_pid = -1;
+                int attached_pass = 0;
                 PidCandidate officials[16] = {};
                 const int official_count = find_official_candidates(officials, 16);
                 g_attach_scanned.store(true);
+                if (report) {
+                    attachlog::say("поиск: процессов пакета %s с libil2cpp — %d",
+                                   kTargetPackage, official_count);
+                    if (official_count == 0) {
+                        attachlog::say("поиск: процесса с cmdline %s и libil2cpp.so в maps нет — игра не запущена или ещё не дошла до il2cpp",
+                                       kTargetPackage);
+                    }
+                    for (int i = 0; i < official_count; ++i) {
+                        attachlog::say("  кандидат: pid=%d, rank=%d, потоков=%d",
+                                       (int)officials[i].pid, officials[i].rank, officials[i].threads);
+                    }
+                }
 
                 // Pass 1: strict TypeInfo resolution across all official PIDs.
                 for (int i = 0; i < official_count; ++i) {
                     if (!esp_init(officials[i].pid, false)) continue;
                     attached_pid = officials[i].pid;
+                    attached_pass = 1;
                     g_target_by_package = true;
                     break;
                 }
@@ -279,9 +307,13 @@ void start_attach_thread() {
                 if (attached_pid <= 0) {
                     pid_t candidates[16] = {};
                     const int count = find_renamed_release_candidates(candidates, 16);
+                    if (report && count > 0) {
+                        attachlog::say("поиск: переименованных/клон-кандидатов с libil2cpp — %d", count);
+                    }
                     for (int i = 0; i < count; ++i) {
                         if (!esp_init(candidates[i], false)) continue;
                         attached_pid = candidates[i];
+                        attached_pass = 2;
                         g_target_by_package = false;
                         break;
                     }
@@ -293,6 +325,7 @@ void start_attach_thread() {
                         if (officials[i].rank < 2 || officials[i].threads < 8) continue;
                         if (!esp_init(officials[i].pid, true)) continue;
                         attached_pid = officials[i].pid;
+                        attached_pass = 3;
                         g_target_by_package = true;
                         break;
                     }
@@ -301,6 +334,12 @@ void start_attach_thread() {
                     g_target_pid = attached_pid;
                     g_esp_attached = true;
                     g_alive_check_failures = 0;
+                    attachlog::say("ПОДКЛЮЧЕНО: pid=%d, пасс=%d, потоков=%d",
+                                   (int)attached_pid, attached_pass,
+                                   proc_thread_count(attached_pid, 64));
+                    heartbeat_mark = 0.0;
+                } else if (report && official_count > 0) {
+                    attachlog::say("не подключено: кандидаты есть, но ни один не прошёл привязку (см. строки привязки выше)");
                 }
             } else {
                 const bool same_process = pid_still_game(g_target_pid);
@@ -316,10 +355,25 @@ void start_attach_thread() {
                     // Process death is immediate; isolated /proc/<pid>/mem EIO
                     // failures are tolerated. They are common under load and
                     // must not make every memory feature blink off together.
+                    if (!same_process) {
+                        attachlog::say("ОТВАЛ: pid=%d больше не игра (процесс умер, cmdline сменился или libil2cpp выгружен)",
+                                       (int)g_target_pid);
+                    } else {
+                        attachlog::say("ОТВАЛ: pid=%d, память недоступна %d проверок подряд (esp_alive_check)",
+                                       (int)g_target_pid, g_alive_check_failures);
+                    }
                     g_esp_attached = false;
                     g_target_pid = -1;
                     g_alive_check_failures = 0;
                     esp_reset();
+                } else if (attachlog::due_every(15.0, heartbeat_mark)) {
+                    const EspAttachStatus st = esp_attach_status();
+                    attachlog::say("жив: pid=%d, база=0x%llx, PlayerManager=%s, GameController=%s, локальный игрок=%s, чтений=%llu, ошибок чтения=%llu",
+                                   (int)g_target_pid, (unsigned long long)st.il2cpp_base,
+                                   st.player_manager ? "ok" : "нет",
+                                   st.game_controller ? "ok" : "нет",
+                                   st.local_player ? "найден" : "не найден",
+                                   esp_mem_reads_total(), esp_mem_read_fails_total());
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));

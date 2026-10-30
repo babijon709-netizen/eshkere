@@ -5,7 +5,6 @@
 #include "farm_joy.h"
 #include "game.h"
 #include "esp_draw.h"
-#include "magic_farm_loader.h"
 #include "runtime_guard.h"
 #include <cassert>
 #include <cstdio>
@@ -32,13 +31,9 @@ void esp_farm_tool_info(int& have, int& need) { have = need = 0; }
 bool esp_farm_get_target(FarmTarget& out, unsigned long long preferred) {
     last_preferred = preferred; out = node; return node.valid;
 }
-bool esp_farm_get_magic_target(FarmTarget&, unsigned long long) { return false; }
 bool esp_silent_target(int) { return false; }
 bool esp_silent_read(uint64_t, void*, size_t) { return false; }
 bool esp_silent_write(uint64_t, const void*, size_t) { return false; }
-namespace magicfarm {
-Loaded load_module(int, std::uintptr_t) { ++load_calls; return {0, State::LoadFailed}; }
-}
 void esp_farm_blacklist(unsigned long long id, float) { blacklisted.push_back(id); }
 bool esp_mem_aim_look_params(float&, bool&, bool&) { return false; }
 bool esp_mem_aim_read_angles(float&, float&) { return false; }
@@ -145,19 +140,15 @@ int main() {
     node.ray_self = node.ray_valid = true;
     node.continuous_tool = true;
     g_state.farm_on = true;
-    g_state.farm_magic = false;
     runtime_guard::reset();
     step(2);
     assert(byte_held);
-    const int loads_before = load_calls;
     const int releases_before = releases;
     runtime_guard::observe_maps(g_target_pid,
         "7000000000-7000001000 r-xp 00000000 fd:00 123 /data/app/lib/arm64/libloader.so\n");
-    g_state.farm_magic = true;
     step(3);
     assert(g_farmProtected && g_farmPaused && !byte_held);
-    assert(releases > releases_before && load_calls == loads_before);
-    g_state.farm_magic = false;
+    assert(releases > releases_before);
     runtime_guard::observe_maps(g_target_pid,
         "7000000000-7000001000 r-xp 00000000 fd:00 123 /data/app/lib/arm64/libil2cpp.so\n");
     step(3);

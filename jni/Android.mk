@@ -2,18 +2,6 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := benzware_magic
-LOCAL_CPPFLAGS := -std=c++17 -O2 -fvisibility=hidden -fexceptions -fno-rtti \
-                  -fstack-protector-strong -D_FORTIFY_SOURCE=2
-LOCAL_LDFLAGS := -Wl,--exclude-libs,ALL,-z,relro,-z,now,-z,noexecstack,-z,text \
-                 -Wl,-z,max-page-size=16384 -Wl,--no-undefined
-LOCAL_C_INCLUDES := $(LOCAL_PATH)/include $(LOCAL_PATH)/src
-LOCAL_SRC_FILES := src/magic_farm_module.cpp
-LOCAL_LDLIBS := -ldl
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-
 LOCAL_MODULE := benzware
 
 # Штамп сборки (commit + UTC-время): попадает в шапку журнала, чтобы строки с
@@ -80,10 +68,9 @@ LOCAL_CFLAGS   := $(_CF) -std=c11
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include $(LOCAL_PATH)/include/ImGui $(LOCAL_PATH)/include/ImGui/backends $(LOCAL_PATH)/src
 
 LOCAL_SRC_FILES := \
-    src/main.cpp src/bw_obf.cpp \
+    src/main.cpp src/bw_obf.cpp src/attach_log.cpp \
     src/process.cpp src/audio.cpp src/theme.cpp src/hud.cpp \
     src/esp_draw.cpp src/aim.cpp src/silent_aim.cpp src/farm.cpp src/farm_joy.cpp \
-    src/magic_farm.cpp src/magic_farm_loader.cpp \
     src/widgets.cpp src/menu.cpp src/config.cpp src/FakeLag.cpp src/screen_capture.cpp src/capture_merge.cpp \
     src/record_capture.cpp src/record_display.cpp src/record_mp4.cpp \
     src/game.cpp src/game_viewmodel.cpp src/game_markers.cpp src/game_farm.cpp \

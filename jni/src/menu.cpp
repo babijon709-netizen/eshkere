@@ -1,6 +1,5 @@
 #include "menu.h"
 #include "farm.h"
-#include "magic_farm.h"
 #include "main.h"
 #include "Android_touch/TouchHelperA.h"   // Touch_GetActive/BlockRect (фрикам)
 #include "game.h"
@@ -874,8 +873,6 @@ float TabContent(int tab, float dt, float cW) {
             CardBg(Layout::RowH * 6.f + Layout::SliderH + 2.f * ImGui::GetTextLineHeightWithSpacing());
             if (g_farmProtected)
                 ImGui::TextDisabled("%s", XS("Клиент под защитой: автофарм и запись в память отключены"));
-            ToggleRow("##farm_magic", XS("Magic Farm"), &g_state.farm_magic, g_state.a_farm_magic, false, true);
-            if (g_state.farm_magic) ImGui::TextDisabled("%s", magicfarm::status_text());
             ToggleRow("##farm_wood", XS("Дерево"), &g_state.farm_wood, g_state.a_farm_wood, false);
             ToggleRow("##farm_stone", XS("Камень"), &g_state.farm_stone, g_state.a_farm_stone, false);
             ToggleRow("##farm_metal", XS("Металл"), &g_state.farm_metal, g_state.a_farm_metal, false);
@@ -1506,7 +1503,6 @@ void RenderMenu() {
     Tick(g_state.a_ui_dark,    g_state.ui_dark_mode,       dt);
     Tick(g_state.a_streamer_mode, g_state.streamer_mode,   dt);
     Tick(g_state.a_farm_on,     g_state.farm_on,     dt);
-    Tick(g_state.a_farm_magic,  g_state.farm_magic,  dt);
     Tick(g_state.a_farm_wood,   g_state.farm_wood,   dt);
     Tick(g_state.a_farm_stone,  g_state.farm_stone,  dt);
     Tick(g_state.a_farm_metal,  g_state.farm_metal,  dt);

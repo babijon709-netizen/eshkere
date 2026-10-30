@@ -19,6 +19,7 @@
 #include "kernel_io.h"             // кернел-транспорт (сокет ядерного драйвера)
 #include "game_internal.h"        // общий срез состояния/помощников для game_markers/farm.cpp
 #include "maps_lookup.h"           // базовый адрес библиотеки по /proc/<pid>/maps
+#include "attach_log.h"
 #include "game_offsets_active.h"   // выбранный Release/Beta профиль
 #include "player_death.h"          // ранний вердикт смерти (хост-проверяемый)
 #include "view_guard.h"            // допуски барьера матрицы вида (хост-проверяемый)
@@ -69,6 +70,7 @@ static int g_mem_backend = ESP_MEM_EXTERNAL;
 void esp_set_mem_backend(int backend) {
     BW_GUARD();
     g_mem_backend = backend;
+    attachlog::say("транспорт памяти: %s (%d)", attachlog::backend_name(backend), backend);
     memio::Transport* t = &memio::procfs_transport();
     if (backend == ESP_MEM_FT || backend == ESP_MEM_DITPRO) {
         if (backend == ESP_MEM_DITPRO && !memio::kernel_transport().use_ditpro()) {
@@ -973,6 +975,10 @@ static bool base_resolves_game(uint64_t base) {
     const int plh_id = class_identity(alt_plh, "PlayerLoopHelper",   "Cysharp.Threading.Tasks");
     const int exact_matches = (pm_id == 1 ? 1 : 0) + (gc_id == 1 ? 1 : 0) + (plh_id == 1 ? 1 : 0);
     if (exact_matches >= 2) {
+        attachlog::say("авто-переключение профиля: %s -> %s (подтверждено классов по имени: %d)",
+                       go_active::VersionName(),
+                       alt_ver == go_active::GameVersion::Beta ? "Beta" : "Release",
+                       exact_matches);
         go_active::Select(alt_ver);
         g_player_manager_class = 0;
         g_player_manager_static_fields = 0;
@@ -9016,6 +9022,10 @@ int esp_camera_state() {
 static EspAttachState g_attach_state = ESP_ATTACH_OK;
 
 EspAttachState esp_attach_state() { return g_attach_state; }
+EspAttachStatus esp_attach_status() {
+    return {g_il2cpp_base, g_player_manager_class != 0,
+            g_game_controller_class != 0, g_local_player != 0};
+}
 
 bool esp_init(pid_t pid, bool package_verified_release) {
     BW_GUARD();
@@ -9027,6 +9037,7 @@ bool esp_init(pid_t pid, bool package_verified_release) {
     uint64_t candidates[16] = {};
     const int candidate_count = get_base_candidates(BW_TEXT("libil2cpp.so").c_str(), candidates, 16);
     if (candidate_count == 0) {
+        attachlog::say("привязка: pid=%d, libil2cpp.so нет в /proc/pid/maps — игра ещё не загрузила il2cpp или это не процесс игры", (int)pid);
         g_attach_state = ESP_ATTACH_NO_LIB;
         g_pid = -1;
         // Без базового адреса читать нечего.
@@ -9066,6 +9077,13 @@ bool esp_init(pid_t pid, bool package_verified_release) {
     }
     if (!chosen) {
         g_attach_state = any_bound ? ESP_ATTACH_BAD_IMAGE : ESP_ATTACH_NO_ACCESS;
+        if (any_bound) {
+            attachlog::say("привязка: pid=%d, баз libil2cpp=%d, доступ есть, но классы игры не резолвятся (профиль %s) — версия игры не совпадает с офсетами или метаданные не читаются",
+                           (int)pid, candidate_count, go_active::VersionName());
+        } else {
+            attachlog::say("привязка: pid=%d, баз libil2cpp=%d, ни одна не открылась — нет доступа к памяти (транспорт %s, errno/статус драйвера см. выше)",
+                           (int)pid, candidate_count, attachlog::backend_name(g_mem_backend));
+        }
         g_il2cpp_base = 0;
         g_pid = -1;
         return false;
@@ -9073,6 +9091,9 @@ bool esp_init(pid_t pid, bool package_verified_release) {
 
     g_il2cpp_base = chosen;
     g_attach_state = ESP_ATTACH_OK;
+    attachlog::say("привязка OK: pid=%d, база libil2cpp=0x%llx, профиль %s, транспорт %s",
+                   (int)pid, (unsigned long long)chosen, go_active::VersionName(),
+                   attachlog::backend_name(g_mem_backend));
     return true;
 }
 

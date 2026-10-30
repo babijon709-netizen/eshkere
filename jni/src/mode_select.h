@@ -29,6 +29,7 @@
 #include "mem_io.h"                  // procfs_transport (дефолт)
 #include "kernel_io.h"               // ditpro_available, kernel_transport
 #include "game.h"                    // esp_set_mem_backend
+#include "attach_log.h"
 #include "game_offsets_active.h"     // runtime Release/Beta profile
 #include "config.h"                  // RestoreLang(), RestoreAccent()
 #include "theme.h"                   // C::/R::, ApplyTheme
@@ -148,6 +149,7 @@ static bool RunVersionSelect() {
     if (picked < 0) return false;
     go_active::Select(picked == 1 ? go_active::GameVersion::Beta
                                   : go_active::GameVersion::Release);
+    attachlog::say("выбран профиль игры: %s", go_active::VersionName());
     return true;
 }
 

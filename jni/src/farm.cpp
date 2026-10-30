@@ -14,8 +14,10 @@
 #include "menu.h"                // g_calibMode
 #include "process.h"             // g_esp_attached
 #include "runtime_guard.h"
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <thread>
 
 // Главный принцип: КАМЕРА НАВОДИТСЯ РОВНО В КРЕСТИК, И УДАРЫ ИДУТ ПО НЕМУ.
 // Крестик (hit-streak marker) читается напрямую из памяти игры: у руды это
@@ -263,20 +265,32 @@ struct FarmLogOnExit {
 
 static void UpdateFarmInner(float dt);
 
+// Снимок /proc/<pid>/maps (нужен runtime_guard для права записи) читает карту
+// игры ЦЕЛИКОМ: у Unity это тысячи отображений и сотни килобайт. Раньше это
+// делалось прямо здесь, раз в секунду, на потоке кадра оверлея — то есть ровно
+// в тот момент, когда ESP/фрикам/иксрей должны были отдать следующий кадр.
+// Работа фоновая и не срочная: держим её в своём потоке, а кадр только читает
+// уже опубликованную политику (attach-путь публикует её и сам, см.
+// get_base_candidates/observe_maps).
+static void EnsureRuntimeGuardWorker() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+    std::thread([] {
+        for (;;) {
+            const pid_t pid = g_target_pid;
+            if (pid > 0) runtime_guard::refresh_proc(pid);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }).detach();
+}
+
 void UpdateFarm(float dt) {
     FarmLogOnExit farm_log_on_exit;
     farm_trace.event=0;farm_trace.target=0;farm_trace.have=false;
     farm_trace.distance=farm_trace.reach=farm_trace.period=0.f;
     farm_trace.ray_self=farm_trace.ray_foreign=false;
 #ifdef __ANDROID__
-    static int checked_pid = -1;
-    static auto next_check = std::chrono::steady_clock::time_point{};
-    const auto now = std::chrono::steady_clock::now();
-    if (g_target_pid != checked_pid || now >= next_check) {
-        runtime_guard::refresh_proc(g_target_pid);
-        checked_pid = g_target_pid;
-        next_check = now + std::chrono::seconds(1);
-    }
+    EnsureRuntimeGuardWorker();
 #endif
     if (!runtime_guard::writes_allowed(g_target_pid)) {
         if (!g_farmWriteBlocked) {

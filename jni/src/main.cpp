@@ -395,6 +395,26 @@ struct FrameWatch {
     }
 };
 
+// Процесс-гигиена в фоне.
+//
+// ProtectProcess обходит /proc/self/task и пишет по несколько файлов на КАЖДЫЙ
+// поток (acct/tasks, cpuctl/tasks, cpuset, stune, oom_score_adj), плюс cgroup
+// листья и /acct: на процесс с 40-60 потоками это сотни open/write. На части
+// прошивок каждый такой write ещё и упирается в SELinux-отказ. Стоя в цикле
+// кадра (раз в 300 кадров), это давало периодический рывок на ровном месте —
+// ровно того класса, на который жалуются («ESP подвис на секунду»). Работа
+// идемпотентная и не срочная: повторяем её в своём потоке раз в 5 секунд.
+static void StartProcessProtectWorker() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+    std::thread([] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            stealth::ProtectProcess(getpid());
+        }
+    }).detach();
+}
+
 // Порог «медленного» кадра: 120 мс — это два кадра игры подряд, пропущенных
 // оверлеем; на глаз такое уже читается как рывок визуалов.
 static constexpr double kSlowFrameSeconds = 0.120;
@@ -566,7 +586,8 @@ int main(int argc, char* argv[]) {
         _exit(0);
     }
     start_attach_thread();
-    stealth::ProtectProcess(getpid());
+    stealth::ProtectProcess(getpid());   // сразу и один раз; дальше — фоном
+    StartProcessProtectWorker();
     LoadTabIcons();
     ApplyTheme();
     RestoreLang();          // язык из прошлого запуска (конфиг ниже может его переписать)
@@ -579,13 +600,8 @@ int main(int argc, char* argv[]) {
     CenterMenuOnDisplay();
     g_menuFadeIn = 0.f;
 
-    unsigned long frame = 0;
     while (main_thread_flag) {
-        ++frame;
         PollScreenCaptures();
-        if ((frame % 300UL) == 1UL) {
-            stealth::ProtectProcess(getpid());
-        }
         g_frame_done.store(false);
         // Стадии кадра: см. FrameWatch — по ним медленный кадр раскладывается на
         // «сколько читали» и «сколько ждали композитор».

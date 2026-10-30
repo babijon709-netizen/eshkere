@@ -3,7 +3,9 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <unistd.h>
 
 namespace {
 const char* kLoader =
@@ -69,6 +71,25 @@ int main() {
     runtime_guard::observe_maps(101, kLoaderDeleted);
     assert(runtime_guard::is_protected(101));
     assert(!runtime_guard::is_protected(100));
+
+    // Построчный разбор карты (потоковое чтение) обязан видеть ровно то же, что
+    // строковый поиск: настоящий libloader.so — да, похожие имена — нет.
+    auto line_says = [](const char* text) {
+        return runtime_guard::detail::line_is_lib_loader(text, std::strlen(text));
+    };
+    assert(line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/lib/arm64/libloader.so"));
+    assert(line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/lib/arm64/libloader.so (deleted)"));
+    assert(line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/base.apk!/lib/arm64-v8a/libloader.so"));
+    assert(!line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/lib/arm64/mylibloader.so"));
+    assert(!line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/lib/arm64/libloader.so.bak"));
+    assert(!line_says("7000000000-7000001000 r-xp 00000000 fd:00 10 /data/app/lib/arm64/libloaderXso"));
+    assert(!line_says("7000000000-7000001000 r--p 00000000 fd:00 10 /data/app/lib/arm64/libil2cpp.so"));
+
+    // Живая карта процесса: читается целиком, libloader.so в ней нет -> Clear.
+    runtime_guard::reset();
+    const int self = (int)::getpid();
+    assert(runtime_guard::refresh_proc(self));
+    assert(runtime_guard::policy(self) == runtime_guard::Policy::Clear);
 
     assert(!runtime_guard::refresh_proc(-1));
     runtime_guard::reset();
